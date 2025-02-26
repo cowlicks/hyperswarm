@@ -33,7 +33,7 @@ use futures::{
 use futuresmap::FuturesMap;
 use prost::Message as ProstMessage;
 use queries::{
-    AnnounceInner, AunnounceClearInner, LookupResponse, QueryStreamInner, UnannounceInner,
+    AnnounceInner, AunnounceClearInner, LookupInner, LookupResponse, UnannounceInner,
     UnannounceResult,
 };
 use smallvec::alloc::collections::VecDeque;
@@ -310,7 +310,7 @@ impl HyperDht {
         );
         self.queries.insert(
             query_id,
-            QueryStreamType::Lookup(QueryStreamInner::new(query_id, target)),
+            QueryStreamType::Lookup(LookupInner::new(query_id, target)),
         );
         query_id
     }
@@ -690,7 +690,7 @@ pub struct Peers {
 #[allow(unused)]
 #[pin_project::pin_project(project = QueryStreamTypeProj)]
 enum QueryStreamType {
-    Lookup(QueryStreamInner),
+    Lookup(LookupInner),
     Announce(AnnounceInner),
     UnAnnounce(#[pin] UnannounceInner),
     AnnounceClear(AunnounceClearInner),

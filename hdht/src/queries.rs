@@ -16,14 +16,14 @@ use dht_rpc::{
 use tracing::{error, instrument, warn};
 
 #[derive(Debug)]
-pub struct QueryStreamInner {
+pub struct LookupInner {
     done: bool,
     pub query_id: QueryId,
     pub topic: IdBytes,
     pub peers: Vec<Arc<InResponse>>,
 }
 
-impl QueryStreamInner {
+impl LookupInner {
     #[allow(unused)] // TODO FIXME
     pub fn new(query_id: QueryId, topic: IdBytes) -> Self {
         Self {
@@ -201,7 +201,7 @@ impl Future for AnnounceInner {
         Poll::Pending
     }
 }
-impl Future for QueryStreamInner {
+impl Future for LookupInner {
     type Output = Result<QueryResult>;
 
     fn poll(mut self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
