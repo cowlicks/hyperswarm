@@ -32,7 +32,10 @@ use futures::{
 };
 use futuresmap::FuturesMap;
 use prost::Message as ProstMessage;
-use queries::{AnnounceInner, LookupResponse, QueryStreamInner, UnannounceInner, UnannounceResult};
+use queries::{
+    AnnounceInner, AunnounceClearInner, LookupResponse, QueryStreamInner, UnannounceInner,
+    UnannounceResult,
+};
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{debug, error, instrument, trace, warn};
@@ -334,6 +337,28 @@ impl HyperDht {
         qid
     }
 
+    /// Announce the topic to the closest peers, send unnanounce while doing so
+    ///
+    /// Query result is a [`HyperDhtEvent::AnnounceResult`].
+    pub fn announce_clear(
+        &mut self,
+        target: IdBytes,
+        key_pair: &Keypair2,
+        _relay_addresses: &[SocketAddr],
+    ) -> QueryId {
+        let qid = self.rpc.query(
+            Command::External(ExternalCommand(commands::LOOKUP)),
+            target,
+            None,
+            Commit::Custom(Progress::default()),
+        );
+        self.queries.insert(
+            qid,
+            QueryStreamType::AnnounceClear(AunnounceClearInner::new(target, key_pair.clone())),
+        );
+        qid
+    }
+
     /// Initiates an iterative query to unannounce the topic to the closest
     /// peers.
     ///
@@ -384,6 +409,10 @@ impl HyperDht {
                         Err(e) => error!(error = display(e), "Error decoding lookup response"),
                     }
                     inner.inject_response(resp);
+                }
+                QueryStreamType::AnnounceClear(_inner) => {
+                    todo!()
+                    //inner.inject_response(resp);
                 }
             }
         }
@@ -664,6 +693,7 @@ enum QueryStreamType {
     Lookup(QueryStreamInner),
     Announce(AnnounceInner),
     UnAnnounce(#[pin] UnannounceInner),
+    AnnounceClear(AunnounceClearInner),
 }
 
 #[derive(Debug)]
@@ -706,6 +736,9 @@ impl Future for QueryStreamType {
                     }
                 }
                 Poll::Pending
+            }
+            qstp::AnnounceClear(_inner) => {
+                todo!()
             }
         }
     }
@@ -752,6 +785,7 @@ impl QueryStreamType {
                 debug!("Emit CommitMessage::Done for query.id = {}", q.id);
                 channel.try_send(CommitMessage::Done).unwrap();
             }
+            QueryStreamType::AnnounceClear(_) => todo!(),
         }
     }
 
@@ -760,6 +794,7 @@ impl QueryStreamType {
             QueryStreamType::Lookup(ref mut inner) => inner.finalize(),
             QueryStreamType::Announce(ref mut inner) => inner.finalize(),
             QueryStreamType::UnAnnounce(ref mut inner) => inner.finalize(),
+            QueryStreamType::AnnounceClear(_) => todo!(),
         }
     }
 }

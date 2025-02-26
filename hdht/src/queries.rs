@@ -102,7 +102,6 @@ impl AnnounceInner {
     }
 }
 
-// this should store info about the unannounce requests and
 #[derive(Debug)]
 pub struct UnannounceInner {
     /// switched on when query is completed
@@ -265,6 +264,30 @@ impl From<UnannounceRequest> for RequestMsgDataInner {
             command: Command::External(ExternalCommand(commands::UNANNOUNCE)),
             target: Some(topic.0),
             value: Some(value),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AunnounceClearInner {
+    /// switched on when query is completed
+    done: bool,
+    pub topic: IdBytes,
+    pub keypair: Keypair2,
+    pub responses: Vec<Result<Arc<InResponse>>>,
+    pub inflight_unannounces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
+    pub inflight_announces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
+}
+
+impl AunnounceClearInner {
+    pub fn new(topic: IdBytes, keypair: Keypair2) -> Self {
+        Self {
+            done: false,
+            topic,
+            keypair,
+            responses: Default::default(),
+            inflight_unannounces: Default::default(),
+            inflight_announces: Default::default(),
         }
     }
 }
