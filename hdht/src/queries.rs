@@ -13,7 +13,7 @@ use dht_rpc::{
     query::QueryId,
     Command, ExternalCommand, IdBytes, Peer, PeerId, RequestFuture, RequestMsgDataInner,
 };
-use tracing::{error, instrument, warn};
+use tracing::{error, instrument, trace, warn};
 
 #[derive(Debug)]
 pub struct LookupInner {
@@ -40,8 +40,22 @@ impl LookupInner {
 
     /// Store the decoded peers from the `Response` value
     #[instrument(skip_all)]
-    pub fn inject_response(&mut self, resp: Arc<InResponse>) {
-        self.peers.push(resp);
+    pub fn inject_response(&mut self, resp: Arc<InResponse>) -> Option<HyperDhtEvent> {
+        self.peers.push(resp.clone());
+        match LookupResponse::from_response(resp) {
+            Ok(Some(evt)) => {
+                trace!("Decoded valid lookup response");
+                Some(evt.into())
+            }
+            Ok(None) => {
+                trace!("Lookup respones missing value field");
+                None
+            }
+            Err(e) => {
+                error!(error = display(e), "Error decoding lookup response");
+                None
+            }
+        }
     }
 }
 

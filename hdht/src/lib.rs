@@ -392,28 +392,25 @@ impl HyperDht {
             .query_id
             .and_then(|qid| self.queries.get_mut(&qid).map(|q| (q, qid)))
         {
-            match query.deref_mut() {
-                QueryStreamType::Announce(inner) => {
-                    inner.inject_response(resp);
-                }
-                QueryStreamType::UnAnnounce(inner) => {
-                    inner.inject_response(&mut self.rpc.io, resp, qid);
-                }
-                QueryStreamType::Lookup(inner) => {
-                    match LookupResponse::from_response(resp.clone()) {
-                        Ok(Some(evt)) => {
-                            trace!("Decoded valid lookup response");
-                            self.queued_events.push_back(evt.into());
-                        }
-                        Ok(None) => trace!("Lookup respones missing value field"),
-                        Err(e) => error!(error = display(e), "Error decoding lookup response"),
+            let event = {
+                match query.deref_mut() {
+                    QueryStreamType::Announce(inner) => {
+                        inner.inject_response(resp);
+                        None
                     }
-                    inner.inject_response(resp);
+                    QueryStreamType::UnAnnounce(inner) => {
+                        inner.inject_response(&mut self.rpc.io, resp, qid);
+                        None
+                    }
+                    QueryStreamType::Lookup(inner) => inner.inject_response(resp.clone()),
+                    QueryStreamType::AnnounceClear(_inner) => {
+                        todo!()
+                        //inner.inject_response(resp);
+                    }
                 }
-                QueryStreamType::AnnounceClear(_inner) => {
-                    todo!()
-                    //inner.inject_response(resp);
-                }
+            };
+            if let Some(e) = event {
+                self.queued_events.push_back(e);
             }
         }
     }
