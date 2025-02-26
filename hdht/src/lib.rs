@@ -403,9 +403,9 @@ impl HyperDht {
                         None
                     }
                     QueryStreamType::Lookup(inner) => inner.inject_response(resp.clone()),
-                    QueryStreamType::AnnounceClear(_inner) => {
-                        todo!()
-                        //inner.inject_response(resp);
+                    QueryStreamType::AnnounceClear(inner) => {
+                        inner.inject_response(&mut self.rpc.io, resp, qid);
+                        None
                     }
                 }
             };
