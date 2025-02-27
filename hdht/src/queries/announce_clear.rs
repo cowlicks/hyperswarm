@@ -1,11 +1,11 @@
-use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
+use std::{future::Future, mem::take, pin::Pin, sync::Arc, task::Poll};
 
 use dht_rpc::{
     io::{InResponse, IoHandler},
     query::QueryId,
     Command, ExternalCommand, IdBytes, PeerId, RequestFuture,
 };
-use futures::stream::FuturesUnordered;
+use futures::{stream::FuturesUnordered, Stream};
 use tracing::{error, warn};
 
 use crate::{commands::LOOKUP, crypto::Keypair2, Result};
@@ -70,17 +70,41 @@ impl AunnounceClearInner {
             );
         };
     }
+    pub fn finalize(&mut self) {
+        todo!()
+    }
 }
 
 #[derive(Debug)]
 pub struct AnnounceClearResult {
+    #[allow(unused)]
     pub responses: Vec<Result<Arc<InResponse>>>,
+}
+
+impl AnnounceClearResult {
+    fn new(responses: Vec<Result<Arc<InResponse>>>) -> Self {
+        Self { responses }
+    }
 }
 
 impl Future for AunnounceClearInner {
     type Output = Result<AnnounceClearResult>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        todo!()
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        while let Poll::Ready(Some(result)) = Pin::new(&mut self.inflight_unannounces).poll_next(cx)
+        {
+            self.responses.push(result.map_err(|e| e.into()))
+        }
+
+        while let Poll::Ready(Some(result)) = Pin::new(&mut self.inflight_announces).poll_next(cx) {
+            self.responses.push(result.map_err(|e| e.into()))
+        }
+
+        // NB we check results not empty to prevent resolving before an unannounces are sent
+        if self.inflight_unannounces.is_empty() && self.inflight_announces.is_empty() && self.done {
+            Poll::Ready(Ok(AnnounceClearResult::new(take(&mut self.responses))))
+        } else {
+            Poll::Pending
+        }
     }
 }

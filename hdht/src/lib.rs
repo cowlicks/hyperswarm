@@ -543,12 +543,9 @@ impl Stream for HyperDht {
                     } => {
                         pin.commit(query, tx_commit_messages);
                     }
-                    RpcDhtEvent::QueryResult {
-                        id,
-                        cmd: _,
-                        stats: _,
-                        closest_replies,
-                    } => pin.query_finished(id),
+                    RpcDhtEvent::QueryResult(qr) => {
+                        pin.query_finished(qr.query_id);
+                    }
                     _ => {}
                 }
             }
@@ -792,7 +789,7 @@ impl QueryStreamType {
             QueryStreamType::Lookup(ref mut inner) => inner.finalize(),
             QueryStreamType::Announce(ref mut inner) => inner.finalize(),
             QueryStreamType::UnAnnounce(ref mut inner) => inner.finalize(),
-            QueryStreamType::AnnounceClear(_) => todo!(),
+            QueryStreamType::AnnounceClear(ref mut inner) => inner.finalize(),
         }
     }
 }
