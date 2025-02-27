@@ -424,10 +424,10 @@ impl Query {
     }
 
     /// Consumes the query, producing the final `QueryResult`.
-    pub fn into_result(&self) -> QueryResult<QueryId, impl Iterator<Item = (PeerId, PeerState)>> {
+    pub fn into_result(&self) -> QueryResult {
         QueryResult {
             peers: self.inner.peers_iter(),
-            inner: self.id,
+            query_id: self.id,
             stats: self.stats.clone(),
             cmd: self.cmd,
             closest_replies: self.closest_replies.clone(),
@@ -546,11 +546,11 @@ impl From<CommandQuery> for CommandQueryResponse {
 }
 /// The result of a `Query`.
 #[derive(Debug)]
-pub struct QueryResult<TInner, TPeers> {
-    /// The opaque inner query state.
-    pub inner: TInner,
+pub struct QueryResult {
+    /// the query id
+    pub query_id: QueryId,
     /// The successfully contacted peers.
-    pub peers: TPeers,
+    pub peers: Vec<(PeerId, PeerState)>,
     /// The collected query statistics.
     pub stats: QueryStats,
     /// The Command of the query.

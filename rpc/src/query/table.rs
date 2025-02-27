@@ -94,8 +94,12 @@ impl QueryTable {
         }
     }
 
-    pub(crate) fn peers_iter(&self) -> impl Iterator<Item = (PeerId, PeerState)> {
-        self.peers.clone().into_iter().map(|(k, v)| (k.clone(), v))
+    pub(crate) fn peers_iter(&self) -> Vec<(PeerId, PeerState)> {
+        self.peers
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v))
+            .collect()
     }
 }
 

@@ -951,7 +951,7 @@ impl RpcDht {
                 "Query result ready"
             );
             RpcDhtEvent::QueryResult {
-                id: result.inner,
+                id: result.query_id,
                 cmd: result.cmd,
                 stats: result.stats,
                 closest_replies: result.closest_replies,
