@@ -9,8 +9,6 @@ use wasm_timer::Instant;
 
 use futures::{channel::oneshot, FutureExt};
 
-use crate::Tid;
-
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(32);
 
 #[derive(Debug, thiserror::Error)]

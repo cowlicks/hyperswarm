@@ -111,6 +111,8 @@ pub enum Error {
     Ipv6NotSupported,
     #[error("Request failed with: {0}")]
     RequestFailed(#[from] RequestFutureError),
+    #[error("Error trying to send message to IoHandler")]
+    RequestChannelSendError(),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -7,6 +7,7 @@ use crate::{
 };
 use fnv::FnvHashMap;
 use futures::{
+    channel::mpsc,
     task::{Context, Poll},
     Sink, Stream,
 };
@@ -18,7 +19,7 @@ use std::{
     sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
-use tracing::trace;
+use tracing::{error, trace};
 use wasm_timer::Instant;
 
 use super::{
@@ -33,6 +34,8 @@ use super::{
 pub const VERSION: u64 = 1;
 
 const ROTATE_INTERVAL: u64 = 300_000;
+
+const IO_TX_RX_CHANNEL_DEFAULT_SIZE: usize = 1024;
 
 pub type Tid = u16;
 
@@ -159,6 +162,36 @@ struct InflightRequestFuture {
     query_id: Option<QueryId>,
 }
 
+type MessageChannelItem = (
+    RequestSender<Arc<InResponse>>,
+    (Option<QueryId>, RequestMsgDataInner),
+);
+
+/// A channel that can be used to send messages.
+pub struct MessageSender {
+    tx: mpsc::Sender<MessageChannelItem>,
+}
+
+impl MessageSender {
+    fn new(tx: mpsc::Sender<MessageChannelItem>) -> Self {
+        Self { tx }
+    }
+    /// Sends a message to IoHandler. Get a future back witch will resolve with the result
+    pub fn send(
+        &mut self,
+        msg: (Option<QueryId>, RequestMsgDataInner),
+    ) -> Result<RequestFuture<Arc<InResponse>>> {
+        let (result_tx, result_rx) = new_request_channel();
+        self.tx
+            .try_send((result_tx, msg))
+            .map(|_| result_rx)
+            .map_err(|e| {
+                error!("Got an eror sending into MessageSender channel: {e:?}");
+                crate::Error::RequestChannelSendError()
+            })
+    }
+}
+
 #[derive(Debug)]
 pub struct IoHandler {
     id: Observer<IdBytes>,
@@ -174,6 +207,11 @@ pub struct IoHandler {
     inflight: BTreeMap<Tid, InflightRequestFuture>,
     secrets: Secrets,
     tid: AtomicU16,
+    /// sender / reciever handles to recieve messages to send through
+    txrx: (
+        mpsc::Sender<MessageChannelItem>,
+        mpsc::Receiver<MessageChannelItem>,
+    ),
 }
 
 impl IoHandler {
@@ -192,6 +230,7 @@ impl IoHandler {
             inflight: Default::default(),
             secrets: Default::default(),
             tid: AtomicU16::new(rand::thread_rng().gen()),
+            txrx: mpsc::channel(IO_TX_RX_CHANNEL_DEFAULT_SIZE),
         }
     }
 
@@ -311,6 +350,12 @@ impl IoHandler {
         });
         Ok(())
     }
+
+    pub fn create_sender(&mut self) -> MessageSender {
+        let tx = self.txrx.0.clone();
+        MessageSender::new(tx)
+    }
+
     fn on_response(&mut self, recv: ReplyMsgData, peer: Peer) -> IoHandlerEvent {
         if let Some(InflightRequestFuture {
             message: request,
@@ -349,6 +394,7 @@ impl IoHandler {
             MsgData::Reply(rep) => self.on_response(rep, peer),
         }
     }
+
     pub fn start_send_next_fut_no_id(
         &mut self,
         query_id: Option<QueryId>,
@@ -358,6 +404,23 @@ impl IoHandler {
         let id = self.id().0;
         let msg = RequestMsgData::from_ids_and_inner_data(tid, Some(id), data);
         self.start_send_next_fut((query_id, msg))
+    }
+
+    pub fn start_send_next_fut_no_id_with_tx(
+        &mut self,
+        (sender, (query_id, data)): MessageChannelItem,
+    ) -> crate::Result<()> {
+        let tid = self.new_tid();
+        let id = self.id().0;
+        let full_req = RequestMsgData::from_ids_and_inner_data(tid, Some(id), data);
+        self.inner_send(OutMessage::Request((query_id, full_req.clone())))?;
+        let inflight_req = InflightRequestFuture {
+            message: full_req,
+            sender,
+            query_id,
+        };
+        self.inflight.insert(tid, inflight_req);
+        Ok(())
     }
 
     pub fn start_send_next_fut(
@@ -403,6 +466,11 @@ impl Stream for IoHandler {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
 
+        while let Poll::Ready(Some((tx, msg))) = Stream::poll_next(Pin::new(&mut pin.txrx.1), cx) {
+            if let Err(e) = pin.start_send_next_fut_no_id_with_tx((tx, msg)) {
+                error!("Error sending message = {e:?}");
+            }
+        }
         // queue in the next message if not currently flushing
         // moves msg pending_flush = pending_send[0]
         // and sends it
