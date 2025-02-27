@@ -2,7 +2,7 @@ use std::{future::Future, mem::take, pin::Pin, sync::Arc, task::Poll};
 
 use dht_rpc::{
     io::{InResponse, IoHandler},
-    query::QueryId,
+    query::{QueryId, QueryResult},
     Command, ExternalCommand, IdBytes, PeerId, RequestFuture,
 };
 use futures::{stream::FuturesUnordered, Stream};
@@ -70,8 +70,13 @@ impl AunnounceClearInner {
             );
         };
     }
-    pub fn finalize(&mut self) {
-        todo!()
+    pub fn finalize(&mut self, io: &mut IoHandler, query_result: QueryResult) {
+        // ...wait for unannounces to finish
+        // gather info to build announce msgs
+        // send them add future to self.
+        // NO
+        // pass through a handler for sending messages
+        todo!("send announces messages messages")
     }
 }
 

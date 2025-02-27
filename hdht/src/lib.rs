@@ -21,7 +21,7 @@ use compact_encoding::{types::CompactEncodable, EncodingError};
 use crypto::{sign_announce_or_unannounce, Keypair2, PublicKey2};
 use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
-    io::InResponse,
+    io::{InResponse, IoHandler},
     query::{Query, QueryResult as RpcQueryResult},
     RequestFutureError, Tid,
 };
@@ -416,9 +416,9 @@ impl HyperDht {
     }
 
     // A query was completed
-    fn query_target_search_finished(&mut self, query_result: RpcQueryResult) {
+    fn query_target_search_done(&mut self, query_result: RpcQueryResult) {
         if let Some(query) = self.queries.get_mut(&query_result.query_id) {
-            query.finalize(query_result.query_id);
+            query.target_search_done(&mut self.rpc.io, query_result);
         } else {
             warn!(
                 id = ?query_result.query_id,
@@ -544,7 +544,7 @@ impl Stream for HyperDht {
                         pin.commit(query, tx_commit_messages);
                     }
                     RpcDhtEvent::QueryResult(qr) => {
-                        pin.query_target_search_finished(qr);
+                        pin.query_target_search_done(qr);
                     }
                     _ => {}
                 }
@@ -784,12 +784,12 @@ impl QueryStreamType {
         }
     }
 
-    fn finalize(&mut self, _query_id: QueryId) {
+    fn target_search_done(&mut self, io: &mut IoHandler, query_result: RpcQueryResult) {
         match self {
             QueryStreamType::Lookup(ref mut inner) => inner.finalize(),
             QueryStreamType::Announce(ref mut inner) => inner.finalize(),
             QueryStreamType::UnAnnounce(ref mut inner) => inner.finalize(),
-            QueryStreamType::AnnounceClear(ref mut inner) => inner.finalize(),
+            QueryStreamType::AnnounceClear(ref mut inner) => inner.finalize(io, query_result),
         }
     }
 }
