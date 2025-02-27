@@ -22,7 +22,7 @@ use crypto::{sign_announce_or_unannounce, Keypair2, PublicKey2};
 use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
     io::InResponse,
-    query::Query,
+    query::{Query, QueryResult as RpcQueryResult},
     RequestFutureError, Tid,
 };
 use futures::{
@@ -416,12 +416,12 @@ impl HyperDht {
     }
 
     // A query was completed
-    fn query_finished(&mut self, id: QueryId) {
-        if let Some(query) = self.queries.get_mut(&id) {
-            query.finalize(id);
+    fn query_target_search_finished(&mut self, query_result: RpcQueryResult) {
+        if let Some(query) = self.queries.get_mut(&query_result.query_id) {
+            query.finalize(query_result.query_id);
         } else {
             warn!(
-                id = ?id,
+                id = ?query_result.query_id,
                 "Query with unknown id finished"
             );
         }
@@ -544,7 +544,7 @@ impl Stream for HyperDht {
                         pin.commit(query, tx_commit_messages);
                     }
                     RpcDhtEvent::QueryResult(qr) => {
-                        pin.query_finished(qr.query_id);
+                        pin.query_target_search_finished(qr);
                     }
                     _ => {}
                 }

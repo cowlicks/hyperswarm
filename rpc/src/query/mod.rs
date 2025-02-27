@@ -547,7 +547,7 @@ impl From<CommandQuery> for CommandQueryResponse {
 /// The result of a `Query`.
 #[derive(Debug)]
 pub struct QueryResult {
-    /// the query id
+    /// The ID of the query that finished.
     pub query_id: QueryId,
     /// The Command of the query.
     pub cmd: Command,
