@@ -549,12 +549,12 @@ impl From<CommandQuery> for CommandQueryResponse {
 pub struct QueryResult {
     /// the query id
     pub query_id: QueryId,
-    /// The successfully contacted peers.
-    pub peers: Vec<(PeerId, PeerState)>,
-    /// The collected query statistics.
-    pub stats: QueryStats,
     /// The Command of the query.
     pub cmd: Command,
+    /// The collected query statistics.
+    pub stats: QueryStats,
+    /// The successfully contacted peers.
+    pub peers: Vec<(PeerId, PeerState)>,
     /// Closest replies to the target
     pub closest_replies: Vec<Arc<InResponse>>,
 }

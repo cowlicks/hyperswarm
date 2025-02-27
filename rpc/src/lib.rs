@@ -25,7 +25,7 @@ mod s_test;
 pub mod test;
 use constants::ID_BYTES_LENGTH;
 use futures::{channel::mpsc, Stream};
-use query::CommandQueryResponse;
+use query::{CommandQueryResponse, QueryResult};
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
@@ -919,7 +919,7 @@ impl RpcDht {
         let result = query.read().unwrap().into_result();
 
         // add nodes to the table
-        for (peer, state) in result.peers {
+        for (peer, state) in result.peers.iter() {
             match state {
                 PeerState::Failed => {
                     debug!("peer.id = [{:?}] Failed - removing", peer.id);
@@ -930,7 +930,12 @@ impl RpcDht {
                     to,
                 } => {
                     debug!("peer.id = [{:?}] Succeeded", peer.id);
-                    self.add_node(peer.id, Peer::from(peer.addr), Some(roundtrip_token), to);
+                    self.add_node(
+                        peer.id,
+                        Peer::from(peer.addr),
+                        Some(roundtrip_token.clone()),
+                        *to,
+                    );
                 }
                 PeerState::NotContacted => {
                     trace!("peer.id = [{:?}] NotContacted", peer.id);
@@ -950,12 +955,7 @@ impl RpcDht {
                 cmd = tracing::field::display(result.cmd),
                 "Query result ready"
             );
-            RpcDhtEvent::QueryResult {
-                id: result.query_id,
-                cmd: result.cmd,
-                stats: result.stats,
-                closest_replies: result.closest_replies,
-            }
+            RpcDhtEvent::QueryResult(result)
         }
     }
     /// Handles a query that timed out.
@@ -1003,16 +1003,7 @@ pub enum RpcDhtEvent {
     /// A completed query.
     ///
     /// No more responses are expected for this query
-    QueryResult {
-        /// The ID of the query that finished.
-        id: QueryId,
-        /// The command of the executed query.
-        cmd: Command,
-        /// Execution statistics from the query.
-        stats: QueryStats,
-        /// Closest replies to the target
-        closest_replies: Vec<Arc<InResponse>>,
-    },
+    QueryResult(QueryResult),
 }
 
 pub type RequestResult = std::result::Result<RequestOk, RequestError>;
