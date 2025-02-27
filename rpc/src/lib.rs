@@ -954,6 +954,7 @@ impl RpcDht {
                 id: result.inner,
                 cmd: result.cmd,
                 stats: result.stats,
+                closest_replies: result.closest_replies,
             }
         }
     }
@@ -1009,6 +1010,8 @@ pub enum RpcDhtEvent {
         cmd: Command,
         /// Execution statistics from the query.
         stats: QueryStats,
+        /// Closest replies to the target
+        closest_replies: Vec<Arc<InResponse>>,
     },
 }
 

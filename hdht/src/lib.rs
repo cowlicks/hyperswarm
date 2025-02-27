@@ -547,6 +547,7 @@ impl Stream for HyperDht {
                         id,
                         cmd: _,
                         stats: _,
+                        closest_replies,
                     } => pin.query_finished(id),
                     _ => {}
                 }

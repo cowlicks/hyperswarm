@@ -430,6 +430,7 @@ impl Query {
             inner: self.id,
             stats: self.stats.clone(),
             cmd: self.cmd,
+            closest_replies: self.closest_replies.clone(),
         }
     }
 }
@@ -554,6 +555,8 @@ pub struct QueryResult<TInner, TPeers> {
     pub stats: QueryStats,
     /// The Command of the query.
     pub cmd: Command,
+    /// Closest replies to the target
+    pub closest_replies: Vec<Arc<InResponse>>,
 }
 
 /// Execution statistics of a query.
