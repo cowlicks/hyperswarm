@@ -23,14 +23,12 @@ pub enum Error {
 
 #[derive(Debug)]
 pub struct RequestFuture<T> {
-    pub tid: Tid,
     rx: oneshot::Receiver<T>,
     started_at: Instant,
 }
 
 #[derive(Debug)]
 pub struct RequestSender<T> {
-    pub tid: Tid,
     tx: oneshot::Sender<T>,
 }
 
@@ -40,17 +38,10 @@ impl<T> RequestSender<T> {
     }
 }
 
-pub fn new_request_channel<T>(tid: Tid) -> (RequestSender<T>, RequestFuture<T>) {
+pub fn new_request_channel<T>() -> (RequestSender<T>, RequestFuture<T>) {
     let (tx, rx) = oneshot::channel();
     let started_at = Instant::now();
-    (
-        RequestSender::<T> { tid, tx },
-        RequestFuture {
-            tid,
-            rx,
-            started_at,
-        },
-    )
+    (RequestSender::<T> { tx }, RequestFuture { rx, started_at })
 }
 
 impl<T> Future for RequestFuture<T> {
@@ -91,8 +82,7 @@ mod test {
 
     #[tokio::test]
     async fn send_and_recv() -> Result<(), Box<dyn std::error::Error>> {
-        let tid = 15;
-        let (tx, mut rx) = new_request_channel::<usize>(tid);
+        let (tx, mut rx) = new_request_channel::<usize>();
         assert!(is_pending(&mut rx));
 
         let _ = tx.send(42);

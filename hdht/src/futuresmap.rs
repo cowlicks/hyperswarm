@@ -100,7 +100,7 @@ mod test {
 
         let mut senders = vec![];
         for c in counts.iter() {
-            let (tx, rx) = new_request_channel(*c);
+            let (tx, rx) = new_request_channel();
             senders.push(tx);
             map.insert(*c, rx);
         }

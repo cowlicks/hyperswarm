@@ -366,7 +366,7 @@ impl IoHandler {
     ) -> crate::Result<RequestFuture<Arc<InResponse>>> {
         let tid = msg.1.tid;
         self.inner_send(OutMessage::Request(msg.clone()))?;
-        let (sender, reciever) = new_request_channel(tid);
+        let (sender, reciever) = new_request_channel();
         let inflight_req = InflightRequestFuture {
             message: msg.1,
             sender,
