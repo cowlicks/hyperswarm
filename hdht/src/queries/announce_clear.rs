@@ -1,14 +1,18 @@
 use std::{future::Future, mem::take, pin::Pin, sync::Arc, task::Poll};
 
 use dht_rpc::{
-    io::{InResponse, IoHandler},
+    io::{InResponse, IoHandler, MessageSender},
     query::{QueryId, QueryResult},
-    Command, ExternalCommand, IdBytes, PeerId, RequestFuture,
+    Command, ExternalCommand, IdBytes, PeerId, RequestFuture, RequestMsgDataInner,
 };
 use futures::{stream::FuturesUnordered, Stream};
 use tracing::{error, warn};
 
-use crate::{commands::LOOKUP, crypto::Keypair2, Result};
+use crate::{
+    commands::{ANNOUNCE, LOOKUP},
+    crypto::Keypair2,
+    request_announce_or_unannounce_value, Result,
+};
 
 use super::UnannounceRequest;
 
@@ -21,6 +25,7 @@ pub struct AunnounceClearInner {
     pub responses: Vec<Result<Arc<InResponse>>>,
     pub inflight_unannounces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
     pub inflight_announces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
+    pub search_complete: Option<(MessageSender, QueryResult)>,
 }
 
 impl AunnounceClearInner {
@@ -32,6 +37,7 @@ impl AunnounceClearInner {
             responses: Default::default(),
             inflight_unannounces: Default::default(),
             inflight_announces: Default::default(),
+            search_complete: None,
         }
     }
     /// For each response send an unannounce
@@ -70,13 +76,8 @@ impl AunnounceClearInner {
             );
         };
     }
-    pub fn finalize(&mut self, io: &mut IoHandler, query_result: QueryResult) {
-        // ...wait for unannounces to finish
-        // gather info to build announce msgs
-        // send them add future to self.
-        // NO
-        // pass through a handler for sending messages
-        todo!("send announces messages messages")
+    pub fn finalize(&mut self, sender: MessageSender, query_result: QueryResult) {
+        self.search_complete = Some((sender, query_result));
     }
 }
 
@@ -103,6 +104,32 @@ impl Future for AunnounceClearInner {
 
         while let Poll::Ready(Some(result)) = Pin::new(&mut self.inflight_announces).poll_next(cx) {
             self.responses.push(result.map_err(|e| e.into()))
+        }
+
+        // When we have search_complete, take it, and make the commits
+        if let Some((mut tx, query_result)) = std::mem::take(&mut self.search_complete) {
+            for cr in query_result.closest_replies.iter() {
+                let value = Some(request_announce_or_unannounce_value(
+                    &self.keypair,
+                    self.topic,
+                    &cr.response.token.expect("TODO"),
+                    cr.request.to.id.expect("TODO").into(),
+                    &[],
+                    &crate::crypto::namespace::ANNOUNCE,
+                ));
+                let msg = RequestMsgDataInner {
+                    to: cr.peer.clone(),
+                    // TODO we should have token here. assert?
+                    token: cr.response.token,
+                    command: Command::External(ExternalCommand(ANNOUNCE)),
+                    target: Some(self.topic.0),
+                    value,
+                };
+                let req_fut = tx.send((Some(query_result.query_id), msg)).expect("TODO");
+                self.inflight_announces.push(req_fut);
+            }
+            // No more work to do, we just wait for all requests to finish.
+            self.done = true;
         }
 
         // NB we check results not empty to prevent resolving before an unannounces are sent
