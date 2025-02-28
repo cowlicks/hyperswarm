@@ -168,6 +168,7 @@ type MessageChannelItem = (
 );
 
 /// A channel that can be used to send messages.
+#[derive(Debug)]
 pub struct MessageSender {
     tx: mpsc::Sender<MessageChannelItem>,
 }
