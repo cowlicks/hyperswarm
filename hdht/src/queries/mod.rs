@@ -3,7 +3,7 @@ use std::{future::Future, mem::take, pin::Pin, sync::Arc, task::Poll};
 use crate::{
     commands::{self, LOOKUP},
     crypto::{namespace, Keypair2},
-    request_announce_or_unannounce_value, HyperDhtEvent, QueryResult, Result,
+    request_announce_or_unannounce_value, HyperDhtEvent, Result,
 };
 use futures::{stream::FuturesUnordered, Stream};
 
@@ -16,7 +16,24 @@ use dht_rpc::{
 use tracing::{error, instrument, trace, warn};
 
 mod announce_clear;
-pub use announce_clear::AunnounceClearInner;
+pub use announce_clear::{AnnounceClearResult, AunnounceClearInner};
+
+#[derive(Debug)]
+pub struct QueryResult {
+    pub topic: IdBytes,
+    pub responses: Vec<Arc<InResponse>>,
+    pub query_id: QueryId,
+}
+
+impl QueryResult {
+    fn new(topic: IdBytes, responses: Vec<Arc<InResponse>>, query_id: QueryId) -> Self {
+        Self {
+            topic,
+            responses,
+            query_id,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct LookupInner {

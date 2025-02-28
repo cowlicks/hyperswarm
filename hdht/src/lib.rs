@@ -3,9 +3,9 @@
 #![allow(unreachable_code)]
 #![deny(clippy::enum_glob_use)]
 
-use core::cmp;
 use std::{
     array::TryFromSliceError,
+    cmp,
     convert::{TryFrom, TryInto},
     fmt,
     future::Future,
@@ -33,8 +33,8 @@ use futures::{
 use futuresmap::FuturesMap;
 use prost::Message as ProstMessage;
 use queries::{
-    AnnounceInner, AunnounceClearInner, LookupInner, LookupResponse, UnannounceInner,
-    UnannounceResult,
+    AnnounceClearResult, AnnounceInner, AunnounceClearInner, LookupInner, LookupResponse,
+    QueryResult, UnannounceInner, UnannounceResult,
 };
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
@@ -555,11 +555,12 @@ impl Stream for HyperDht {
                 use HyperDhtEvent as hde;
                 use QueryStreamResult as qsr;
                 pin.queued_events.push_back(match query_result {
-                    Err(_) => todo!("this should be an event. when does this happen?"),
+                    Err(_) => todo!("we should just emit this as an error"),
                     Ok(res) => match res {
                         qsr::Lookup(r) => hde::LookupResult(r),
                         qsr::Announce(r) => hde::AnnounceResult(r),
                         qsr::UnAnnounce(r) => hde::UnAnnounceResult(Ok(r)),
+                        qsr::AnnounceClear(r) => hde::AnnouncClearResult(Ok(r)),
                     },
                 })
             }
@@ -605,6 +606,8 @@ pub enum HyperDhtEvent {
     LookupResult(QueryResult),
     /// The result of [`HyperDht::unannounce`].
     UnAnnounceResult(Result<UnannounceResult>),
+    /// The result of [`HyperDht::announce_clear`]
+    AnnouncClearResult(Result<AnnounceClearResult>),
     /// Received a query with a custom command that is not automatically handled
     /// by the DHT
     CustomCommandQuery {
@@ -625,6 +628,7 @@ impl HyperDhtEvent {
             HyperDhtEvent::LookupResponse(_) => "LookupResponse",
             HyperDhtEvent::LookupResult(_) => "LookupResult",
             HyperDhtEvent::UnAnnounceResult(_) => "UnAnnounceResult",
+            HyperDhtEvent::AnnouncClearResult(_) => "AnnouncClearResult",
             HyperDhtEvent::CustomCommandQuery { .. } => "CustomCommandQuery",
         }
     }
@@ -648,23 +652,6 @@ pub struct Lookup {
     pub topic: IdBytes,
     /// The gathered responses
     pub peers: Vec<Peers>,
-}
-
-#[derive(Debug)]
-pub struct QueryResult {
-    pub topic: IdBytes,
-    pub responses: Vec<Arc<InResponse>>,
-    pub query_id: QueryId,
-}
-
-impl QueryResult {
-    fn new(topic: IdBytes, responses: Vec<Arc<InResponse>>, query_id: QueryId) -> Self {
-        Self {
-            topic,
-            responses,
-            query_id,
-        }
-    }
 }
 
 /// A Response to a query request from a peer
@@ -696,6 +683,7 @@ enum QueryStreamResult {
     Lookup(QueryResult),
     Announce(QueryResult),
     UnAnnounce(UnannounceResult),
+    AnnounceClear(AnnounceClearResult),
 }
 
 impl Future for QueryStreamType {
@@ -732,8 +720,14 @@ impl Future for QueryStreamType {
                 }
                 Poll::Pending
             }
-            qstp::AnnounceClear(_inner) => {
-                todo!()
+            qstp::AnnounceClear(mut inner) => {
+                if let Poll::Ready(x) = Future::poll(Pin::new(&mut inner), cx) {
+                    match x {
+                        Ok(res) => return Poll::Ready(Ok(qsr::AnnounceClear(res))),
+                        Err(e) => return Poll::Ready(Err(e)),
+                    }
+                }
+                Poll::Pending
             }
         }
     }
