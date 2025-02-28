@@ -21,7 +21,7 @@ use compact_encoding::{types::CompactEncodable, EncodingError};
 use crypto::{sign_announce_or_unannounce, Keypair2, PublicKey2};
 use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
-    io::{InResponse, IoHandler, MessageSender},
+    io::{InResponse, MessageSender},
     query::{Query, QueryResult as RpcQueryResult},
     RequestFutureError, Tid,
 };
