@@ -4,9 +4,8 @@ use std::net::SocketAddr;
 use compact_encoding::types::CompactEncodable;
 use dht_rpc::IdBytes;
 use hyperdht::{
-    cenc::Announce,
-    crypto::{namespace, sign_announce_or_unannounce, Keypair2},
-    request_announce_or_unannounce_value,
+    cenc::Announce, namespace, request_announce_or_unannounce_value, sign_announce_or_unannounce,
+    Keypair2,
 };
 
 use common::{
@@ -237,7 +236,7 @@ write(stringify([...c.encode(m.announce, ann)]))
         &token,
         from_id.into(),
         &[],
-        &hyperdht::crypto::namespace::ANNOUNCE,
+        &namespace::ANNOUNCE,
     );
     assert_eq!(buff, expected);
     Ok(())
@@ -289,7 +288,7 @@ write(stringify([...c.encode(m.announce, ann)]))
         &token,
         from_id.into(),
         &relay_addresses,
-        &hyperdht::crypto::namespace::ANNOUNCE,
+        &namespace::ANNOUNCE,
     );
     assert_eq!(buff, expected);
     Ok(())
@@ -334,7 +333,7 @@ write(stringify([...encoded_announce]))
         &token,
         from_id.into(),
         &[],
-        &hyperdht::crypto::namespace::ANNOUNCE,
+        &namespace::ANNOUNCE,
     );
 
     let (ann, rest): (Announce, _) = CompactEncodable::decode(&rs_ann_enc)?;

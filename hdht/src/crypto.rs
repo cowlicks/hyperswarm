@@ -3,7 +3,7 @@ use std::{net::SocketAddr, ops::Deref};
 use blake2::VarBlake2b;
 use compact_encoding::types::{write_array, CompactEncodable};
 use ed25519_dalek::SignatureError;
-pub use ed25519_dalek::{ExpandedSecretKey, Keypair, PublicKey, SecretKey, Signature, Verifier};
+pub use ed25519_dalek::{PublicKey, Signature, Verifier};
 use libsodium_sys::{
     crypto_sign_BYTES, crypto_sign_PUBLICKEYBYTES, crypto_sign_SECRETKEYBYTES,
     crypto_sign_SEEDBYTES, crypto_sign_keypair, crypto_sign_seed_keypair,
@@ -21,18 +21,6 @@ const SEQ_SEG: &[u8; 6] = b"3:seqi";
 const V_SEG: &[u8; 3] = b"1:v";
 
 /// Sign the value as [`signable`] using the keypair.
-#[inline]
-pub fn sign(
-    public_key: &PublicKey,
-    secret: &SecretKey,
-    value: &[u8],
-    salt: Option<&Vec<u8>>,
-    seq: u64,
-) -> Signature {
-    let msg = signable(value, salt, seq).expect("salt exceeds max len");
-    ExpandedSecretKey::from(secret).sign(&msg, public_key)
-}
-
 /// Verify a signature on a message with a keypair's public key.
 #[inline]
 pub fn verify(public: &PublicKey, msg: &[u8], sig: &Signature) -> Result<(), SignatureError> {

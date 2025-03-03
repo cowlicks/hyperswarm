@@ -17,7 +17,7 @@ use std::{
 
 use commands::ANNOUNCE;
 use compact_encoding::{types::CompactEncodable, EncodingError};
-use crypto::{sign_announce_or_unannounce, Keypair2, PublicKey2};
+use crypto::PublicKey2;
 use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
     io::{InResponse, MessageSender},
@@ -58,11 +58,15 @@ mod dht_proto {
 }
 pub mod cenc;
 pub mod connect;
-pub mod crypto;
+mod crypto;
 mod futuresmap;
 pub mod lru;
 mod queries;
 pub mod store;
+
+pub use crypto::{
+    make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair2,
+};
 
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [

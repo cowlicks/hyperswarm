@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use common::{js::make_repl, Result};
 use dht_rpc::DhtConfig;
 use futures::StreamExt;
-use hyperdht::{crypto::Keypair2, HyperDht, HyperDhtEvent};
+use hyperdht::{HyperDht, HyperDhtEvent, Keypair2};
 use rusty_nodejs_repl::Repl;
 
 #[allow(unused)]

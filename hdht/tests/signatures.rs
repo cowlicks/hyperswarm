@@ -4,7 +4,7 @@
 use common::{js::make_repl, Result};
 use compact_encoding::types::CompactEncodable;
 use dht_rpc::IdBytes;
-use hyperdht::{cenc::Announce, crypto::make_signable_announce_or_unannounce};
+use hyperdht::{cenc::Announce, make_signable_announce_or_unannounce, namespace};
 use rusty_nodejs_repl::Repl;
 
 mod common;
@@ -40,13 +40,8 @@ async fn check_in_rs_known_good_sig_created_in_js() -> Result<()> {
     announce.peer.encoded_bytes(&mut peer_buff).unwrap();
 
     println!("rsep = {:?}", &peer_buff);
-    let signable = make_signable_announce_or_unannounce(
-        target,
-        &TOKEN,
-        &ID,
-        &peer_buff,
-        &hyperdht::crypto::namespace::ANNOUNCE,
-    );
+    let signable =
+        make_signable_announce_or_unannounce(target, &TOKEN, &ID, &peer_buff, &namespace::ANNOUNCE);
     announce
         .peer
         .public_key
