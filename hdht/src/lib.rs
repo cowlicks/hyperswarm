@@ -149,6 +149,8 @@ pub struct HyperDht {
     store: Store,
     /// Queued events to return when being polled.
     queued_events: VecDeque<HyperDhtEvent>,
+    /// Default keypair
+    default_keypair: Keypair,
 }
 
 impl HyperDht {
@@ -172,6 +174,7 @@ impl HyperDht {
             peers: PeerCache::new(65536, Duration::from_secs(60 * 25)),
             store: Store::new(5000),
             queued_events: Default::default(),
+            default_keypair: Default::default(),
         })
     }
 
