@@ -1,10 +1,11 @@
+#![allow(unused)]
 use std::hash::Hash;
 
 use ::dht_rpc::{
     query::{CommandQuery, CommandQueryResponse},
     IdBytes,
 };
-use ed25519_dalek::PublicKey;
+use ed25519_dalek::{PublicKey, Signature, SignatureError, Verifier};
 use lru::LruCache;
 use prost::Message;
 
@@ -186,9 +187,20 @@ impl Store {
 #[inline]
 pub fn verify(pk: &IdBytes, mutable: &Mutable) -> Result<(), usize> {
     let public_key = PublicKey::from_bytes(pk.as_ref()).map_err(|_| ERR_INVALID_INPUT)?;
-    let sig = crypto::signature(mutable).ok_or(ERR_INVALID_INPUT)?;
+    let sig = signature(mutable).ok_or(ERR_INVALID_INPUT)?;
     let msg = crypto::signable_mutable(mutable).map_err(|_| ERR_INVALID_INPUT)?;
-    crypto::verify(&public_key, &msg, &sig).map_err(|_| ERR_INVALID_INPUT)
+    crypto_verify(&public_key, &msg, &sig).map_err(|_| ERR_INVALID_INPUT)
+}
+
+/// Sign the value as [`signable`] using the keypair.
+/// Verify a signature on a message with a keypair's public key.
+#[inline]
+pub fn crypto_verify(
+    public: &PublicKey,
+    msg: &[u8],
+    sig: &Signature,
+) -> Result<(), SignatureError> {
+    public.verify(msg, sig)
 }
 
 #[inline]
@@ -202,5 +214,14 @@ pub fn maybe_seq_error(a: &Mutable, b: &Mutable) -> Result<(), usize> {
         Err(ERR_SEQ_MUST_EXCEED_CURRENT)
     } else {
         Ok(())
+    }
+}
+
+#[inline]
+pub fn signature(mutable: &Mutable) -> Option<Signature> {
+    if let Some(ref sig) = mutable.signature {
+        Signature::from_bytes(sig).ok()
+    } else {
+        None
     }
 }

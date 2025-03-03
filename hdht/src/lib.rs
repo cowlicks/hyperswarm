@@ -62,7 +62,7 @@ mod crypto;
 mod futuresmap;
 pub mod lru;
 mod queries;
-pub mod store;
+mod store;
 
 pub use crypto::{
     make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair2,

@@ -2,8 +2,6 @@ use std::{net::SocketAddr, ops::Deref};
 
 use blake2::VarBlake2b;
 use compact_encoding::types::{write_array, CompactEncodable};
-use ed25519_dalek::SignatureError;
-pub use ed25519_dalek::{PublicKey, Signature, Verifier};
 use libsodium_sys::{
     crypto_sign_BYTES, crypto_sign_PUBLICKEYBYTES, crypto_sign_SECRETKEYBYTES,
     crypto_sign_SEEDBYTES, crypto_sign_keypair, crypto_sign_seed_keypair,
@@ -19,13 +17,6 @@ pub const VALUE_MAX_SIZE: usize = 1000;
 const SALT_SEG: &[u8; 6] = b"4:salt";
 const SEQ_SEG: &[u8; 6] = b"3:seqi";
 const V_SEG: &[u8; 3] = b"1:v";
-
-/// Sign the value as [`signable`] using the keypair.
-/// Verify a signature on a message with a keypair's public key.
-#[inline]
-pub fn verify(public: &PublicKey, msg: &[u8], sig: &Signature) -> Result<(), SignatureError> {
-    public.verify(msg, sig)
-}
 
 /// hash the `val` with a key size of U32 and put it into [`IdBytes`]
 pub fn hash_id(val: &[u8]) -> IdBytes {
@@ -137,15 +128,6 @@ impl Deref for Signature2 {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-#[inline]
-pub fn signature(mutable: &Mutable) -> Option<Signature> {
-    if let Some(ref sig) = mutable.signature {
-        Signature::from_bytes(sig).ok()
-    } else {
-        None
     }
 }
 
