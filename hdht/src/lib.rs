@@ -17,7 +17,7 @@ use std::{
 
 use commands::ANNOUNCE;
 use compact_encoding::{types::CompactEncodable, EncodingError};
-use crypto::PublicKey2;
+use crypto::PublicKey;
 use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
     io::{InResponse, MessageSender},
@@ -203,7 +203,7 @@ impl HyperDht {
         }
     }
 
-    pub fn find_peer(&mut self, pub_key: PublicKey2) -> QueryId {
+    pub fn find_peer(&mut self, pub_key: PublicKey) -> QueryId {
         let target = IdBytes(generic_hash(&*pub_key));
 
         self.rpc.query(

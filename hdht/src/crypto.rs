@@ -31,15 +31,15 @@ pub fn hash_id(val: &[u8]) -> IdBytes {
 type PublicKey2Bytes = [u8; crypto_sign_PUBLICKEYBYTES as usize];
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PublicKey2(PublicKey2Bytes);
+pub struct PublicKey(PublicKey2Bytes);
 
-impl From<PublicKey2Bytes> for PublicKey2 {
+impl From<PublicKey2Bytes> for PublicKey {
     fn from(value: PublicKey2Bytes) -> Self {
         Self(value)
     }
 }
 
-impl Deref for PublicKey2 {
+impl Deref for PublicKey {
     type Target = PublicKey2Bytes;
 
     fn deref(&self) -> &Self::Target {
@@ -47,7 +47,7 @@ impl Deref for PublicKey2 {
     }
 }
 
-impl PublicKey2 {
+impl PublicKey {
     pub fn verify(&self, signature: Signature2, message: &[u8]) -> crate::Result<()> {
         let res = unsafe {
             libsodium_sys::crypto_sign_verify_detached(
@@ -68,7 +68,7 @@ impl PublicKey2 {
 #[derive(Debug, Clone)]
 pub struct Keypair {
     /// The public half of this keypair.
-    pub public: PublicKey2,
+    pub public: PublicKey,
     /// The secret half of this keypair.
     pub secret: [u8; crypto_sign_SECRETKEYBYTES as usize],
 }

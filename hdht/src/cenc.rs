@@ -7,7 +7,7 @@ use compact_encoding::{
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use crate::crypto::{PublicKey2, Signature2};
+use crate::crypto::{PublicKey, Signature2};
 
 #[derive(Debug)]
 struct SocketAddr2(pub SocketAddr);
@@ -52,7 +52,7 @@ impl CompactEncodable for SocketAddr2 {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct Peer {
-    pub public_key: PublicKey2,
+    pub public_key: PublicKey,
     pub relay_addresses: Vec<SocketAddr>,
 }
 
