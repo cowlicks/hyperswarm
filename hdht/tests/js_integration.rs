@@ -5,7 +5,7 @@ use compact_encoding::types::CompactEncodable;
 use dht_rpc::IdBytes;
 use hyperdht::{
     cenc::Announce, namespace, request_announce_or_unannounce_value, sign_announce_or_unannounce,
-    Keypair2,
+    Keypair,
 };
 
 use common::{
@@ -19,7 +19,7 @@ const DEFAULT_SEED: [u8; 32] = [
 ];
 
 fn sign_announce(
-    keypair: &Keypair2,
+    keypair: &Keypair,
     target: IdBytes,
     token: &[u8; 32],
     from_id: &[u8; 32],
@@ -92,7 +92,7 @@ write(stringify([[...keyPair.publicKey], [...keyPair.secretKey]]))
         )
         .await?;
 
-    let k2 = Keypair2::from_seed(DEFAULT_SEED);
+    let k2 = Keypair::from_seed(DEFAULT_SEED);
     assert_eq!(k2.public.as_slice(), &result[0]);
     assert_eq!(k2.secret.as_slice(), &result[1]);
     Ok(())
@@ -143,7 +143,7 @@ write(stringify([...signature]))
         )
         .await?;
 
-    let kp = Keypair2::from_seed(DEFAULT_SEED);
+    let kp = Keypair::from_seed(DEFAULT_SEED);
     let announce = sign_announce(&kp, target.into(), &token, &from_id, &[])?;
     assert_eq!(announce.signature.0.as_slice(), &expected);
     Ok(())
@@ -189,7 +189,7 @@ write(stringify([...signature]))
         )
         .await?;
 
-    let kp = Keypair2::from_seed(DEFAULT_SEED);
+    let kp = Keypair::from_seed(DEFAULT_SEED);
     let announce = sign_announce(&kp, target.into(), &token, &from_id, &relay_addresses)?;
     assert_eq!(announce.signature.0.as_slice(), &expected);
     Ok(())
@@ -229,7 +229,7 @@ write(stringify([...c.encode(m.announce, ann)]))
         )
         .await?;
 
-    let kp = Keypair2::from_seed(DEFAULT_SEED);
+    let kp = Keypair::from_seed(DEFAULT_SEED);
     let buff = request_announce_or_unannounce_value(
         &kp,
         target.into(),
@@ -281,7 +281,7 @@ write(stringify([...c.encode(m.announce, ann)]))
         )
         .await?;
 
-    let kp = Keypair2::from_seed(DEFAULT_SEED);
+    let kp = Keypair::from_seed(DEFAULT_SEED);
     let buff = request_announce_or_unannounce_value(
         &kp,
         target.into(),
@@ -326,7 +326,7 @@ write(stringify([...encoded_announce]))
         )
         .await?;
 
-    let kp = Keypair2::from_seed(DEFAULT_SEED);
+    let kp = Keypair::from_seed(DEFAULT_SEED);
     let rs_ann_enc = request_announce_or_unannounce_value(
         &kp,
         target.into(),

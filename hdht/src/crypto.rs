@@ -66,14 +66,14 @@ impl PublicKey2 {
 }
 
 #[derive(Debug, Clone)]
-pub struct Keypair2 {
+pub struct Keypair {
     /// The public half of this keypair.
     pub public: PublicKey2,
     /// The secret half of this keypair.
     pub secret: [u8; crypto_sign_SECRETKEYBYTES as usize],
 }
 
-impl Default for Keypair2 {
+impl Default for Keypair {
     fn default() -> Self {
         let mut public = [0; crypto_sign_PUBLICKEYBYTES as usize];
         let mut secret = [0; crypto_sign_SECRETKEYBYTES as usize];
@@ -88,7 +88,7 @@ impl Default for Keypair2 {
     }
 }
 
-impl Keypair2 {
+impl Keypair {
     pub fn from_seed(seed: [u8; crypto_sign_SEEDBYTES as usize]) -> Self {
         let mut public = [0; crypto_sign_PUBLICKEYBYTES as usize];
         let mut secret = [0; crypto_sign_SECRETKEYBYTES as usize];
@@ -242,7 +242,7 @@ pub fn make_signable_announce_or_unannounce(
 }
 
 pub fn sign_announce_or_unannounce(
-    keypair: &Keypair2,
+    keypair: &Keypair,
     target: IdBytes,
     token: &[u8; 32],
     from_id: &[u8; 32],

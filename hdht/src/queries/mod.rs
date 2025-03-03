@@ -2,7 +2,7 @@ use std::{future::Future, mem::take, pin::Pin, sync::Arc, task::Poll};
 
 use crate::{
     commands::{self, LOOKUP},
-    crypto::{namespace, Keypair2},
+    crypto::{namespace, Keypair},
     request_announce_or_unannounce_value, HyperDhtEvent, Result,
 };
 use futures::{stream::FuturesUnordered, Stream};
@@ -112,11 +112,11 @@ pub struct AnnounceInner {
     query_id: QueryId,
     pub topic: IdBytes,
     pub responses: Vec<Arc<InResponse>>,
-    pub keypair: Keypair2,
+    pub keypair: Keypair,
 }
 
 impl AnnounceInner {
-    pub fn new(query_id: QueryId, topic: IdBytes, keypair: Keypair2) -> Self {
+    pub fn new(query_id: QueryId, topic: IdBytes, keypair: Keypair) -> Self {
         Self {
             done: false,
             query_id,
@@ -142,12 +142,12 @@ pub struct UnannounceInner {
     done: bool,
     pub topic: IdBytes,
     pub inflight_unannounces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
-    pub keypair: Keypair2,
+    pub keypair: Keypair,
     pub results: Vec<Result<Arc<InResponse>>>,
 }
 
 impl UnannounceInner {
-    pub fn new(topic: IdBytes, keypair: Keypair2) -> Self {
+    pub fn new(topic: IdBytes, keypair: Keypair) -> Self {
         Self {
             done: false,
             topic,
@@ -262,7 +262,7 @@ impl UnannounceResult {
 
 #[derive(Debug)]
 pub struct UnannounceRequest {
-    pub keypair: Keypair2,
+    pub keypair: Keypair,
     pub topic: IdBytes,
     pub token: [u8; 32],
     pub destination: PeerId,

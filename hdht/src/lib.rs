@@ -65,7 +65,7 @@ mod queries;
 mod store;
 
 pub use crypto::{
-    make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair2,
+    make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair,
 };
 
 /// The publicly available hyperswarm DHT addresses
@@ -322,7 +322,7 @@ impl HyperDht {
     pub fn announce(
         &mut self,
         target: IdBytes,
-        key_pair: &Keypair2,
+        key_pair: &Keypair,
         _relay_addresses: &[SocketAddr],
     ) -> QueryId {
         let qid = self.rpc.query(
@@ -344,7 +344,7 @@ impl HyperDht {
     pub fn announce_clear(
         &mut self,
         target: IdBytes,
-        key_pair: &Keypair2,
+        key_pair: &Keypair,
         _relay_addresses: &[SocketAddr],
     ) -> QueryId {
         let qid = self.rpc.query(
@@ -365,7 +365,7 @@ impl HyperDht {
     ///
     /// The result of the query is delivered in a
     /// [`HyperDhtEvent::UnAnnounceResult`].
-    pub fn unannounce(&mut self, target: IdBytes, key_pair: &Keypair2) -> QueryId {
+    pub fn unannounce(&mut self, target: IdBytes, key_pair: &Keypair) -> QueryId {
         let qid = self.rpc.query(
             Command::External(ExternalCommand(commands::LOOKUP)),
             target,
@@ -439,7 +439,7 @@ impl HyperDht {
 
     fn request_announce_or_unannounce(
         &mut self,
-        keypair: &Keypair2,
+        keypair: &Keypair,
         target: IdBytes,
         token: &[u8; 32],
         destination: PeerId,
@@ -474,7 +474,7 @@ impl HyperDht {
     #[allow(unused)] // TODO FIXME
     fn request_announce(
         &mut self,
-        keypair: &Keypair2,
+        keypair: &Keypair,
         target: IdBytes,
         token: &[u8; 32],
         destination: PeerId,
@@ -495,7 +495,7 @@ impl HyperDht {
     #[allow(unused)] // TODO FIXME
     fn request_unannounce(
         &mut self,
-        keypair: &Keypair2,
+        keypair: &Keypair,
         target: IdBytes,
         token: &[u8; 32],
         destination: PeerId,
@@ -789,7 +789,7 @@ impl QueryStreamType {
 }
 
 pub fn request_announce_or_unannounce_value(
-    keypair: &Keypair2,
+    keypair: &Keypair,
     target: IdBytes,
     token: &[u8; 32],
     from: IdBytes,

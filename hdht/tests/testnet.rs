@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use common::{js::make_repl, Result};
 use dht_rpc::DhtConfig;
 use futures::StreamExt;
-use hyperdht::{HyperDht, HyperDhtEvent, Keypair2};
+use hyperdht::{HyperDht, HyperDhtEvent, Keypair};
 use rusty_nodejs_repl::Repl;
 
 #[allow(unused)]
@@ -173,7 +173,7 @@ async fn rs_announces_js_looksup() -> Result<()> {
     let (mut testnet, mut hdht) = setup_rs_node_and_js_testnet!();
 
     let topic = testnet.make_topic("hello").await?;
-    let keypair = Keypair2::default();
+    let keypair = Keypair::default();
     let _qid = hdht.announce(topic.into(), &keypair, &[]);
 
     // Run announce to completion
@@ -197,7 +197,7 @@ async fn rs_announces_js_looksup() -> Result<()> {
 async fn test_rs_unannounce() -> Result<()> {
     let (mut testnet, mut hdht) = setup_rs_node_and_js_testnet!();
     let topic = testnet.make_topic("hello").await?;
-    let keypair = Keypair2::default();
+    let keypair = Keypair::default();
 
     // announce our rust node with `topic` and `keypair`
     let _qid = hdht.announce(topic.into(), &keypair, &[]);

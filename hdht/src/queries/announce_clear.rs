@@ -10,7 +10,7 @@ use tracing::{error, warn};
 
 use crate::{
     commands::{ANNOUNCE, LOOKUP},
-    crypto::Keypair2,
+    crypto::Keypair,
     request_announce_or_unannounce_value, Result,
 };
 
@@ -21,7 +21,7 @@ pub struct AunnounceClearInner {
     /// switched on when query is completed
     done: bool,
     pub topic: IdBytes,
-    pub keypair: Keypair2,
+    pub keypair: Keypair,
     pub responses: Vec<Result<Arc<InResponse>>>,
     pub inflight_unannounces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
     pub inflight_announces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
@@ -29,7 +29,7 @@ pub struct AunnounceClearInner {
 }
 
 impl AunnounceClearInner {
-    pub fn new(topic: IdBytes, keypair: Keypair2) -> Self {
+    pub fn new(topic: IdBytes, keypair: Keypair) -> Self {
         Self {
             done: false,
             topic,
