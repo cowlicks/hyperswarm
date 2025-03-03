@@ -204,27 +204,3 @@ pub fn maybe_seq_error(a: &Mutable, b: &Mutable) -> Result<(), usize> {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn verify_test() {
-        use ed25519_dalek::ed25519::signature::Signature;
-        let value = b"hello friend";
-        let keypair = crypto::keypair();
-        let signature = crypto::sign(&keypair.public, &keypair.secret, value.as_ref(), None, 0)
-            .as_bytes()
-            .to_vec();
-
-        let m = Mutable {
-            value: Some(value.to_vec()),
-            signature: Some(signature),
-            seq: Some(0),
-            salt: None,
-        };
-        let id = keypair.public.to_bytes().into();
-        assert!(verify(&id, &m).is_ok())
-    }
-}

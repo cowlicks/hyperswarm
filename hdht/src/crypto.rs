@@ -151,25 +151,6 @@ impl Deref for Signature2 {
         &self.0
     }
 }
-/*
-impl Default for Keypair2 {
-    fn default() -> Self {
-        Self {
-            secret: Default::default(),
-            public: Default::default(),
-        }
-    }
-}
-*/
-/// Generate a new `Ed25519` key pair.
-#[inline]
-pub fn keypair() -> Keypair {
-    use rand::{
-        rngs::{OsRng, StdRng},
-        SeedableRng,
-    };
-    Keypair::generate(&mut StdRng::from_rng(OsRng).unwrap())
-}
 
 #[inline]
 pub fn signature(mutable: &Mutable) -> Option<Signature> {
