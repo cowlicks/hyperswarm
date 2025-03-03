@@ -1,6 +1,5 @@
 //! Rust Implementation of the hyperswarm DHT
 #![warn(rust_2018_idioms)]
-#![allow(unreachable_code)]
 #![deny(clippy::enum_glob_use)]
 
 use std::{
@@ -58,14 +57,12 @@ mod dht_proto {
     include!(concat!(env!("OUT_DIR"), "/dht_pb.rs"));
 }
 pub mod cenc;
+pub mod connect;
 pub mod crypto;
 mod futuresmap;
 pub mod lru;
 mod queries;
 pub mod store;
-
-#[allow(dead_code)]
-const EPH_AFTER: u64 = 1000 * 60 * 20;
 
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
@@ -669,7 +666,6 @@ pub struct Peers {
 
 /// Type to keep track of the responses for queries in progress.
 #[derive(Debug)]
-#[allow(unused)]
 #[pin_project::pin_project(project = QueryStreamTypeProj)]
 enum QueryStreamType {
     Lookup(LookupInner),
