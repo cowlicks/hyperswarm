@@ -20,9 +20,9 @@ pub struct ReplyMsgData {
 pub struct RequestMsgData {
     pub tid: u16,
     pub to: Peer,
+    pub command: Command,
     pub id: Option<[u8; 32]>,
     pub token: Option<[u8; 32]>,
-    pub command: Command,
     pub target: Option<[u8; 32]>,
     pub value: Option<Vec<u8>>,
 }
@@ -42,6 +42,12 @@ impl RequestMsgData {
             target: data.target,
             value: data.value,
         }
+    }
+}
+
+impl ReplyMsgData {
+    pub fn is_error(&self) -> bool {
+        self.error != 0
     }
 }
 

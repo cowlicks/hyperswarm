@@ -6,6 +6,7 @@ use std::{
 };
 
 use async_udx::UdxSocket;
+use compact_encoding::CompactEncoding;
 use futures::{Future, Sink, Stream};
 use tracing::trace;
 
@@ -65,7 +66,7 @@ impl Stream for MessageDataStream {
             Poll::Ready(Ok((addr, buff))) => {
                 // Try to decode the received message
                 match MsgData::decode(&buff) {
-                    Ok(msg) => {
+                    Ok((msg, _rest)) => {
                         trace!(
                             msg.tid = msg.tid(),
                             to =?addr,
@@ -73,7 +74,7 @@ impl Stream for MessageDataStream {
                         );
                         Poll::Ready(Some(Ok((msg, addr))))
                     }
-                    Err(e) => Poll::Ready(Some(Err(e))),
+                    Err(e) => Poll::Ready(Some(Err(e.into()))),
                 }
             }
             Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e.into()))),
@@ -96,7 +97,7 @@ impl Sink<(MsgData, SocketAddr)> for MessageDataStream {
             from =?addr,
             "TX"
         );
-        let buff = MsgData::encode(&message)?;
+        let buff = message.to_encoded_bytes()?;
         self.socket.send(addr, &buff);
         Ok(())
     }

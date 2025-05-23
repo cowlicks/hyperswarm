@@ -158,6 +158,12 @@ impl From<InternalCommand> for Command {
 #[derive(Copy, Debug, Clone, PartialEq)]
 pub struct ExternalCommand(pub usize);
 
+impl From<ExternalCommand> for Command {
+    fn from(value: ExternalCommand) -> Self {
+        Command::External(value)
+    }
+}
+
 /// TODO This is encoded as u8 which might not always be true
 #[derive(Copy, Debug, Clone, PartialEq)]
 pub enum Command {
@@ -1207,6 +1213,11 @@ pub struct Peer {
     pub addr: SocketAddr,
     /// Referrer that told us about this node.
     pub referrer: Option<SocketAddr>,
+}
+
+impl Peer {
+    /// Encoded size of a peer: 4 bytes for a Ipv4Addr and 2 bytes for a u16.
+    const ENCODED_SIZE: usize = 6;
 }
 
 impl std::fmt::Debug for Peer {

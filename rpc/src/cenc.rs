@@ -1,9 +1,13 @@
 use std::{
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
-use compact_encoding::{CompactEncoding, EncodingError, EncodingErrorKind, State};
+use compact_encoding::{
+    decode_usize, encode_usize_var, encoded_size_usize, map_decode, take_array,
+    vec_encoded_size_for_fixed_sized_elements, write_array, CompactEncoding, EncodingError,
+    VecEncodable,
+};
 
 use crate::{
     constants::{HASH_SIZE, ID_SIZE, REQUEST_ID, RESPONSE_ID},
@@ -12,25 +16,22 @@ use crate::{
     Command, Error, ExternalCommand, IdBytes, InternalCommand, Peer, Result,
 };
 
-impl CompactEncoding<InternalCommand> for State {
-    fn preencode(&mut self, _value: &InternalCommand) -> std::result::Result<usize, EncodingError> {
-        self.add_end(1)
+impl CompactEncoding for InternalCommand {
+    fn encoded_size(&self) -> std::result::Result<usize, EncodingError> {
+        Ok(1)
     }
 
-    fn encode(
-        &mut self,
-        value: &InternalCommand,
-        buff: &mut [u8],
-    ) -> std::result::Result<usize, EncodingError> {
-        buff[self.start()] = *value as u8;
-        self.add_start(1)?;
-        Ok(self.start())
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> std::result::Result<&'a mut [u8], EncodingError> {
+        write_array(&[*self as u8], buffer)
     }
 
-    fn decode(&mut self, buff: &[u8]) -> std::result::Result<InternalCommand, EncodingError> {
-        let cmd = InternalCommand::try_from(buff[self.start()]).map_err(EncodingError::from)?;
-        self.add_start(1)?;
-        Ok(cmd)
+    fn decode(buffer: &[u8]) -> std::result::Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let ([value], rest) = take_array::<1>(buffer)?;
+        let cmd = InternalCommand::try_from(value).map_err(EncodingError::from)?;
+        Ok((cmd, rest))
     }
 }
 
@@ -43,57 +44,45 @@ impl From<Error> for EncodingError {
     }
 }
 
-fn encode_ip(
-    ip: &Ipv4Addr,
-    buff: &mut [u8],
-    state: &mut State,
-) -> std::result::Result<(), EncodingError> {
-    let ip_bytes = ip.octets();
-    buff[state.start()] = ip_bytes[0];
-    state.add_start(1)?;
-    buff[state.start()] = ip_bytes[1];
-    state.add_start(1)?;
-    buff[state.start()] = ip_bytes[2];
-    state.add_start(1)?;
-    buff[state.start()] = ip_bytes[3];
-    state.add_start(1)?;
-    Ok(())
-}
-
-impl CompactEncoding<Peer> for State {
-    fn preencode(&mut self, _value: &Peer) -> std::result::Result<usize, EncodingError> {
-        self.add_end(6)
+impl CompactEncoding for Peer {
+    fn encoded_size(&self) -> std::result::Result<usize, EncodingError> {
+        Ok(6)
     }
 
-    fn encode(
-        &mut self,
-        value: &Peer,
-        buff: &mut [u8],
-    ) -> std::result::Result<usize, EncodingError> {
-        if let IpAddr::V4(ip) = value.addr.ip() {
-            encode_ip(&ip, buff, self)?;
-            self.encode_u16(value.addr.port(), buff)?;
-            return Ok(self.start());
-        }
-        Err(EncodingError {
-            kind: EncodingErrorKind::InvalidData,
-            message: "ipv6 not supported".to_string(),
-        })
-    }
-
-    fn decode(&mut self, buff: &[u8]) -> std::result::Result<Peer, EncodingError> {
-        let ip_start = self.start();
-        let [ip1, ip2, ip3, ip4, port_1, port_2] = buff[ip_start..(ip_start + 4 + 2)] else {
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> std::result::Result<&'a mut [u8], EncodingError> {
+        let rest = if let IpAddr::V4(ip) = self.addr.ip() {
+            ip.encode(buffer)?
+        } else {
             todo!()
         };
-        self.add_start(4 + 2)?;
-        let host = Ipv4Addr::from([ip1, ip2, ip3, ip4]);
-        let port = u16::from_le_bytes([port_1, port_2]);
-        Ok(Peer {
-            id: None,
-            addr: SocketAddr::from((host, port)),
-            referrer: None,
-        })
+        self.addr.port().encode(rest)
+    }
+
+    fn decode(buffer: &[u8]) -> std::result::Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let ((ip, port), rest) = map_decode!(buffer, [Ipv4Addr, u16]);
+        Ok((
+            Peer {
+                id: None,
+                addr: SocketAddr::from((ip, port)),
+                referrer: None,
+            },
+            rest,
+        ))
+    }
+}
+
+impl VecEncodable for Peer {
+    fn vec_encoded_size(vec: &[Self]) -> std::result::Result<usize, EncodingError>
+    where
+        Self: Sized,
+    {
+        Ok(vec_encoded_size_for_fixed_sized_elements(
+            vec,
+            Peer::ENCODED_SIZE,
+        ))
     }
 }
 
@@ -109,12 +98,13 @@ const IP_AND_PORT_NUM_BYTES: usize = 6;
 /// TODO this will panic for ipv6
 fn id_from_socket(addr: &SocketAddr) -> [u8; ID_SIZE] {
     let mut from_buff = vec![0; IP_AND_PORT_NUM_BYTES];
-    let mut state = State::new_with_start_and_end(0, IP_AND_PORT_NUM_BYTES);
-    let ip = ipv4(addr).expect("TODO what to do about ipv6");
-    encode_ip(&ip, &mut from_buff, &mut state).expect("IP_AND_PORT_NUM_BYTES is correct");
-    state
-        .encode_u16(addr.port(), &mut from_buff)
-        .expect("IP_AND_PORT_NUM_BYTES is correct");
+    let rest = if let IpAddr::V4(ip) = addr.ip() {
+        ip.encode(&mut from_buff).expect("TODO")
+    } else {
+        todo!()
+    };
+
+    let _ = addr.port().encode(rest).expect("TODO");
     generic_hash(&from_buff)
 }
 
@@ -167,271 +157,226 @@ pub(crate) fn validate_id(id: &Option<[u8; ID_SIZE]>, from: &Peer) -> Option<IdB
     None
 }
 
-pub(crate) fn decode_fixed_32_flag(
-    flags: u8,
-    shift: u8,
-    state: &mut State,
-    buff: &[u8],
-) -> Result<Option<[u8; 32]>> {
-    if flags & shift > 0 {
-        return Ok(Some(
-            state.decode_fixed_32(buff)?.as_ref().try_into().unwrap(),
-        ));
-    }
-    Ok(None)
-}
-/// Decode an u32 array
-pub fn decode_addr_array(state: &mut State, buffer: &[u8]) -> Result<Vec<Peer>> {
-    let len = state.decode_usize_var(buffer)?;
-    let mut value: Vec<Peer> = Vec::with_capacity(len);
-    for _ in 0..len {
-        let add: Peer = state.decode(buffer)?;
-        value.push(add);
-    }
-    Ok(value)
+macro_rules! maybe_add_flag {
+    ($cond:expr, $shift:expr) => {
+        if $cond {
+            1 << $shift
+        } else {
+            0
+        }
+    };
 }
 
-impl RequestMsgData {
-    pub fn encode(&self) -> Result<Vec<u8>> {
-        let mut state = State::new();
-        state.add_end(1 + 1 + 6 + 2)?;
+macro_rules! maybe_decode {
+    ($type:ty, $cond:expr, $buf:expr) => {
+        if $cond {
+            let (out, rest) = <$type>::decode($buf)?;
+            (Some(out), rest)
+        } else {
+            (None, $buf)
+        }
+    };
+}
 
+impl CompactEncoding for RequestMsgData {
+    fn encoded_size(&self) -> std::result::Result<usize, EncodingError> {
+        let mut out = 1 + // REQUEST_ID
+                      1 + // flags
+                      2 + // tid
+                      6 + // peer
+                      1   // command byte
+                    ;
         if self.id.is_some() {
-            state.add_end(ID_SIZE)?;
+            out += ID_SIZE;
         }
         if self.token.is_some() {
-            state.add_end(32)?;
+            out += 32;
         }
-
-        //let cmd = self.command.clone() as usize;
-        //state.preencode_usize_var(&self.command)?;
-        // One byte for command as u8
-        state.add_end(1)?;
-
         if self.target.is_some() {
-            state.add_end(32)?;
+            out += 32;
         }
-
         if let Some(v) = &self.value {
-            state.preencode_buffer(v)?;
+            out += v.encoded_size()?;
         }
+        Ok(out)
+    }
 
-        let mut buff = state.create_buffer();
-
-        buff[state.start()] = REQUEST_ID;
-        state.add_start(1)?;
-
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> std::result::Result<&'a mut [u8], EncodingError> {
         let mut flags: u8 = 0;
-        if self.id.is_some() {
-            flags |= 1 << 0;
-        }
-        if self.token.is_some() {
-            flags |= 1 << 1;
-        }
-        if matches!(self.command, Command::Internal(_)) {
-            flags |= 1 << 2;
-        }
-        if self.target.is_some() {
-            flags |= 1 << 3;
-        }
-        if self.value.is_some() {
-            flags |= 1 << 4;
-        }
-        buff[state.start()] = flags;
-        state.add_start(1)?;
+        flags |= maybe_add_flag!(self.id.is_some(), 0);
+        flags |= maybe_add_flag!(self.token.is_some(), 1);
+        flags |= maybe_add_flag!(matches!(self.command, Command::Internal(_)), 2);
+        flags |= maybe_add_flag!(self.target.is_some(), 3);
+        flags |= maybe_add_flag!(self.value.is_some(), 4);
 
-        state.encode_u16(self.tid, &mut buff)?;
-
-        state.encode(&self.to, &mut buff)?;
-
+        let mut rest = write_array(&[REQUEST_ID, flags], buffer)?;
+        rest = self.tid.encode(rest)?;
+        rest = CompactEncoding::encode(&self.to, rest)?;
         if let Some(id) = &self.id {
-            state.encode_fixed_32(id, &mut buff)?;
+            rest = id.encode(rest)?;
         }
-        if let Some(t) = self.token {
-            // c.fixed32.encode(state, token)
-            state.encode_fixed_32(&t, &mut buff)?;
+        if let Some(token) = &self.token {
+            rest = token.encode(rest)?;
         }
-
-        buff[state.start()] = self.command.encode();
-        state.add_start(1)?;
-
-        // c.uint.encode(state, this.command)
-        if let Some(t) = &self.target {
-            // c.fixed32.encode(state, this.target)
-            state.encode_fixed_32(t, &mut buff)?;
+        rest = u8::encode(&self.command.encode(), rest)?;
+        if let Some(target) = &self.target {
+            rest = target.encode(rest)?;
         }
         if let Some(v) = &self.value {
-            state.encode_buffer(v, &mut buff)?;
+            rest = v.encode(rest)?
         }
-        Ok(buff.to_vec())
+        Ok(rest)
     }
-    pub fn decode(buff: &[u8], state: &mut State) -> Result<RequestMsgData> {
-        let flags = buff[state.start()];
-        state.add_start(1)?;
 
-        let tid = state.decode_u16(buff)?;
-
-        let to = state.decode(buff)?;
-
-        let id = decode_fixed_32_flag(flags, 1, state, buff)?;
-        let token = decode_fixed_32_flag(flags, 2, state, buff)?;
-
-        let internal = (flags & 4) != 0;
+    fn decode(buffer: &[u8]) -> std::result::Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let (([_req_flag, flags], tid, to), rest) = map_decode!(buffer, [[u8; 2], u16, Peer]);
+        // assert_eq!(_req_flag, REQUEST_ID)
+        let (id, rest) = maybe_decode!([u8; 32], flags & (1 << 0) != 0, rest);
+        let (token, rest) = maybe_decode!([u8; 32], flags & (1 << 1) != 0, rest);
+        let internal = (flags & 1 << 2) != 0;
+        let ([cmd_u8], rest) = take_array::<1>(rest)?;
         let command = if internal {
-            let cmd: InternalCommand = state.decode(buff)?;
-            Command::Internal(cmd)
+            Command::from(InternalCommand::try_from(cmd_u8).map_err(EncodingError::from)?)
         } else {
-            let cmd: u8 = state.decode(buff)?;
-            Command::External(ExternalCommand(cmd as usize))
+            Command::from(ExternalCommand(cmd_u8 as usize))
         };
-
-        let target = decode_fixed_32_flag(flags, 8, state, buff)?;
-
-        let value = if flags & 16 > 0 {
-            Some(state.decode_buffer(buff)?.as_ref().to_vec())
-        } else {
-            None
-        };
-
-        Ok(RequestMsgData {
-            tid,
-            to,
-            id,
-            token,
-            command,
-            target,
-            value,
-        })
+        let (target, rest) = maybe_decode!([u8; 32], flags & (1 << 3) != 0, rest);
+        let (value, rest) = maybe_decode!(Vec<u8>, flags & (1 << 4) != 0, rest);
+        Ok((
+            Self {
+                tid,
+                to,
+                id,
+                token,
+                command,
+                target,
+                value,
+            },
+            rest,
+        ))
     }
 }
 
-impl ReplyMsgData {
-    pub fn is_error(&self) -> bool {
-        self.error != 0
-    }
-
-    fn encode(&self) -> Result<Vec<u8>> {
-        let mut state = State::new();
-        // (type | version) + flags + to + tid
-        state.add_end(1 + 1 + 6 + 2)?;
+impl CompactEncoding for ReplyMsgData {
+    fn encoded_size(&self) -> std::result::Result<usize, EncodingError> {
+        let mut out: usize = 1 + // RESPONSE_ID
+                             1 + // flags
+                             6 + // to
+                             2   // tid
+                            ;
         if self.id.is_some() {
-            state.add_end(32)?;
+            out += 32;
         }
         if self.token.is_some() {
-            state.add_end(32)?;
+            out += 32;
         }
         if !self.closer_nodes.is_empty() {
-            state.preencode_usize_var(&self.closer_nodes.len())?;
-            for n in &self.closer_nodes {
-                state.preencode(n)?;
-            }
+            todo!()
         }
         if self.error > 0 {
-            state.preencode(&self.error)?;
+            out += encoded_size_usize(self.error);
         }
         if let Some(v) = &self.value {
-            state.preencode(v)?;
+            out += v.encoded_size()?;
         }
 
-        let mut buff = state.create_buffer();
-        buff[state.start()] = RESPONSE_ID;
-        state.add_start(1)?;
-
-        let mut flags: u8 = 0;
-
-        if self.id.is_some() {
-            flags |= 1 << 0;
-        }
-        if self.token.is_some() {
-            flags |= 1 << 1;
-        }
-        if !self.closer_nodes.is_empty() {
-            flags |= 1 << 2;
-        }
-        if self.error > 0 {
-            flags |= 1 << 3;
-        }
-        if self.value.is_some() {
-            flags |= 1 << 4;
-        }
-        buff[state.start()] = flags;
-        state.add_start(1)?;
-
-        state.encode_u16(self.tid, &mut buff)?;
-        state.encode(&self.to, &mut buff)?;
-
-        if let Some(id) = &self.id {
-            state.encode_fixed_32(id, &mut buff)?;
-        }
-        if let Some(token) = self.token {
-            state.encode_fixed_32(&token, &mut buff)?;
-        }
-        if !self.closer_nodes.is_empty() {
-            state.encode_usize_var(&self.closer_nodes.len(), &mut buff)?;
-            for n in &self.closer_nodes {
-                state.encode(n, &mut buff)?;
-            }
-        }
-        if self.error > 0 {
-            state.encode(&self.error, &mut buff)?;
-        }
-        if let Some(value) = &self.value {
-            state.encode_fixed_32(value, &mut buff)?;
-        }
-        Ok(buff.into())
+        Ok(out)
     }
 
-    pub fn decode(buff: &[u8], state: &mut State) -> Result<ReplyMsgData> {
-        let flags = buff[state.start()];
-        state.add_start(1)?;
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> std::result::Result<&'a mut [u8], EncodingError> {
+        let mut flags: u8 = 0;
+        flags |= maybe_add_flag!(self.id.is_some(), 0);
+        flags |= maybe_add_flag!(self.token.is_some(), 1);
+        flags |= maybe_add_flag!(!self.closer_nodes.is_empty(), 2);
+        flags |= maybe_add_flag!(self.error > 0, 3);
+        flags |= maybe_add_flag!(self.value.is_some(), 4);
 
-        let tid = state.decode_u16(buff)?;
-        let to: Peer = state.decode(buff)?;
+        let mut rest = write_array(&[RESPONSE_ID, flags], buffer)?;
+        rest = self.tid.encode(rest)?;
+        rest = CompactEncoding::encode(&self.to, rest)?;
+        if let Some(id) = &self.id {
+            rest = id.encode(rest)?;
+        }
+        if let Some(token) = &self.token {
+            rest = token.encode(rest)?;
+        }
+        if !self.closer_nodes.is_empty() {
+            todo!()
+        }
+        if self.error > 0 {
+            rest = encode_usize_var(&self.error, rest)?;
+        }
+        if let Some(v) = &self.value {
+            rest = v.encode(rest)?
+        }
+        Ok(rest)
+    }
 
-        let id = decode_fixed_32_flag(flags, 1, state, buff)?;
-        let token = decode_fixed_32_flag(flags, 2, state, buff)?;
-
-        let closer_nodes: Vec<Peer> = if flags & 4 > 0 {
-            decode_addr_array(state, buff)?
+    fn decode(buffer: &[u8]) -> std::result::Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let (([_, flags], tid, to), rest) = map_decode!(buffer, [[u8; 2], u16, Peer]);
+        let (id, rest) = maybe_decode!([u8; 32], flags & (1 << 0) != 0, rest);
+        let (token, rest) = maybe_decode!([u8; 32], flags & (1 << 1) != 0, rest);
+        let closer_nodes = if flags & (1 << 2) != 0 {
+            todo!()
         } else {
             vec![]
         };
-
-        let error = if flags & 8 > 0 {
-            state.decode_usize_var(buff)?
+        let (error, rest) = if flags & (1 << 3) != 0 {
+            decode_usize(rest)?
         } else {
-            0
+            (0, rest)
         };
-
-        let value = if flags & 16 > 0 {
-            Some(state.decode_buffer(buff)?.to_vec())
-        } else {
-            None
-        };
-        Ok(ReplyMsgData {
-            tid,
-            to,
-            id,
-            token,
-            closer_nodes,
-            error,
-            value,
-        })
+        let (value, rest) = maybe_decode!(Vec<u8>, flags & (1 << 4) != 0, rest);
+        Ok((
+            Self {
+                tid,
+                to,
+                id,
+                token,
+                closer_nodes,
+                error,
+                value,
+            },
+            rest,
+        ))
     }
 }
 
-impl MsgData {
-    pub fn encode(&self) -> Result<Vec<u8>> {
+impl CompactEncoding for MsgData {
+    fn encoded_size(&self) -> std::result::Result<usize, EncodingError> {
         match self {
-            MsgData::Request(request) => request.encode(),
-            MsgData::Reply(reply) => reply.encode(),
+            MsgData::Request(x) => x.encoded_size(),
+            MsgData::Reply(x) => x.encoded_size(),
         }
     }
-    pub fn decode(buff: &[u8]) -> Result<MsgData> {
-        let mut state = State::new_with_start_and_end(1, buff.len());
-        Ok(match buff[0] {
-            REQUEST_ID => MsgData::Request(RequestMsgData::decode(buff, &mut state)?),
-            RESPONSE_ID => MsgData::Reply(ReplyMsgData::decode(buff, &mut state)?),
+
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> std::result::Result<&'a mut [u8], EncodingError> {
+        match self {
+            MsgData::Request(x) => x.encode(buffer),
+            MsgData::Reply(x) => x.encode(buffer),
+        }
+    }
+
+    fn decode(buffer: &[u8]) -> std::result::Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let req_resp_flag = buffer[0];
+        Ok(match req_resp_flag {
+            REQUEST_ID => {
+                let (msg, rest) = RequestMsgData::decode(buffer)?;
+                (MsgData::Request(msg), rest)
+            }
+            RESPONSE_ID => {
+                let (msg, rest) = ReplyMsgData::decode(buffer)?;
+                (MsgData::Reply(msg), rest)
+            }
             _ => todo!(),
         })
     }
