@@ -53,7 +53,7 @@ impl CompactEncoding for Peer {
         let rest = if let IpAddr::V4(ip) = self.addr.ip() {
             ip.encode(buffer)?
         } else {
-            todo!()
+            panic!("Peer's only support ipv4")
         };
         self.addr.port().encode(rest)
     }
@@ -101,7 +101,7 @@ fn id_from_socket(addr: &SocketAddr) -> [u8; ID_SIZE] {
     let rest = if let IpAddr::V4(ip) = addr.ip() {
         ip.encode(&mut from_buff).expect("TODO")
     } else {
-        todo!()
+        panic!("We only support ipv4")
     };
 
     let _ = addr.port().encode(rest).expect("TODO");
@@ -274,7 +274,7 @@ impl CompactEncoding for ReplyMsgData {
             out += 32;
         }
         if !self.closer_nodes.is_empty() {
-            todo!()
+            out += self.closer_nodes.encoded_size()?;
         }
         if self.error > 0 {
             out += encoded_size_usize(self.error);
@@ -304,7 +304,7 @@ impl CompactEncoding for ReplyMsgData {
             rest = token.encode(rest)?;
         }
         if !self.closer_nodes.is_empty() {
-            todo!()
+            rest = self.closer_nodes.encode(rest)?;
         }
         if self.error > 0 {
             rest = encode_usize_var(&self.error, rest)?;
@@ -322,10 +322,10 @@ impl CompactEncoding for ReplyMsgData {
         let (([_, flags], tid, to), rest) = map_decode!(buffer, [[u8; 2], u16, Peer]);
         let (id, rest) = maybe_decode!([u8; 32], flags & (1 << 0) != 0, rest);
         let (token, rest) = maybe_decode!([u8; 32], flags & (1 << 1) != 0, rest);
-        let closer_nodes = if flags & (1 << 2) != 0 {
-            todo!()
+        let (closer_nodes, rest) = if flags & (1 << 2) != 0 {
+            <Vec<Peer> as CompactEncoding>::decode(rest)?
         } else {
-            vec![]
+            (vec![], rest)
         };
         let (error, rest) = if flags & (1 << 3) != 0 {
             decode_usize(rest)?
@@ -377,7 +377,7 @@ impl CompactEncoding for MsgData {
                 let (msg, rest) = ReplyMsgData::decode(buffer)?;
                 (MsgData::Reply(msg), rest)
             }
-            _ => todo!(),
+            _ => return Err(EncodingError::invalid_data(&format!("Colud not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"))),
         })
     }
 }
