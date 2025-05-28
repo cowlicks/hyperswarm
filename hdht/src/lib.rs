@@ -802,6 +802,7 @@ pub fn request_announce_or_unannounce_value(
     let announce =
         sign_announce_or_unannounce(keypair, target, token, &from.0, relay_addresses, namespace);
     announce
-        .to_bytes()
+        .to_encoded_bytes()
         .expect("known to succeed for all `Announce` values")
+        .to_vec()
 }

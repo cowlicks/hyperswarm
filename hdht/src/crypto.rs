@@ -255,7 +255,7 @@ pub fn sign_announce_or_unannounce(
         relay_addresses: relay_addresses.to_vec(),
     };
     let encoded = peer
-        .to_bytes()
+        .to_encoded_bytes()
         .expect("Known to succeed for all values of `Peer`");
 
     let signable =

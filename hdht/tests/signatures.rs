@@ -2,7 +2,7 @@
 //! Check that the signature RS creates from values is verified by JS
 //! And likewise JS signature is verified by RS
 use common::{js::make_repl, Result};
-use compact_encoding::types::CompactEncodable;
+use compact_encoding::CompactEncoding;
 use dht_rpc::IdBytes;
 use hyperdht::{cenc::Announce, make_signable_announce_or_unannounce, namespace};
 use rusty_nodejs_repl::Repl;
@@ -34,10 +34,10 @@ const TARGET: &[u8] = &[
 async fn check_in_rs_known_good_sig_created_in_js() -> Result<()> {
     let target: IdBytes = TryInto::<[u8; 32]>::try_into(TARGET).unwrap().into();
 
-    let (announce, _) = <Announce as CompactEncodable>::decode(VALUE)?;
+    let (announce, _) = <Announce as CompactEncoding>::decode(VALUE)?;
 
-    let mut peer_buff = vec![0u8; CompactEncodable::encoded_size(&announce.peer).unwrap()];
-    announce.peer.encoded_bytes(&mut peer_buff).unwrap();
+    let mut peer_buff = vec![0u8; CompactEncoding::encoded_size(&announce.peer).unwrap()];
+    announce.peer.encode(&mut peer_buff).unwrap();
 
     println!("rsep = {:?}", &peer_buff);
     let signable =

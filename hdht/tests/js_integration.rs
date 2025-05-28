@@ -1,7 +1,7 @@
 mod common;
 use std::net::SocketAddr;
 
-use compact_encoding::types::CompactEncodable;
+use compact_encoding::CompactEncoding;
 use dht_rpc::IdBytes;
 use hyperdht::{
     cenc::Announce, namespace, request_announce_or_unannounce_value, sign_announce_or_unannounce,
@@ -336,7 +336,7 @@ write(stringify([...encoded_announce]))
         &namespace::ANNOUNCE,
     );
 
-    let (ann, rest): (Announce, _) = CompactEncodable::decode(&rs_ann_enc)?;
+    let (ann, rest) = <Announce as CompactEncoding>::decode(&rs_ann_enc)?;
     assert!(rest.is_empty());
 
     repl.run(
