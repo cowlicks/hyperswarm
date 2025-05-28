@@ -16,7 +16,7 @@ use std::{
 };
 
 use commands::ANNOUNCE;
-use compact_encoding::{types::CompactEncodable, EncodingError};
+use compact_encoding::{CompactEncoding, EncodingError};
 use crypto::PublicKey;
 use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},

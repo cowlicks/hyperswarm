@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, ops::Deref};
 
 use blake2::VarBlake2b;
-use compact_encoding::types::{write_array, CompactEncodable};
+use compact_encoding::{write_array, CompactEncoding};
 use libsodium_sys::{
     crypto_sign_BYTES, crypto_sign_PUBLICKEYBYTES, crypto_sign_SECRETKEYBYTES,
     crypto_sign_SEEDBYTES, crypto_sign_keypair, crypto_sign_seed_keypair,

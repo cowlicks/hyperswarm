@@ -7,7 +7,7 @@ use crate::{
 };
 use futures::{stream::FuturesUnordered, Stream};
 
-use compact_encoding::types::CompactEncodable;
+use compact_encoding::CompactEncoding;
 use dht_rpc::{
     io::{InResponse, IoHandler},
     query::QueryId,
@@ -92,7 +92,7 @@ impl LookupResponse {
             return Ok(None);
         };
         let (peers, _rest): (Vec<crate::cenc::Peer>, &[u8]) =
-            <Vec<crate::cenc::Peer> as CompactEncodable>::decode(value)?;
+            <Vec<crate::cenc::Peer> as CompactEncoding>::decode(value)?;
         Ok(Some(LookupResponse {
             response: resp,
             peers,
