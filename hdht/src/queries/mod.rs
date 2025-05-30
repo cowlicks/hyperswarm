@@ -62,7 +62,7 @@ impl LookupInner {
     #[instrument(skip_all)]
     pub fn inject_response(&mut self, resp: Arc<InResponse>) -> Option<HyperDhtEvent> {
         self.peers.push(resp.clone());
-        match LookupResponse::from_response(resp) {
+        match PeersResponse::from_response(resp) {
             Ok(Some(evt)) => {
                 trace!("Decoded valid lookup response");
                 Some(evt.into())
@@ -80,12 +80,12 @@ impl LookupInner {
 }
 
 #[derive(Debug)]
-pub struct LookupResponse {
+pub struct PeersResponse {
     pub response: Arc<InResponse>,
     pub peers: Vec<crate::cenc::Peer>,
 }
 
-impl LookupResponse {
+impl PeersResponse {
     /// `Ok(None)` when lookup response is missing value field.
     pub fn from_response(resp: Arc<InResponse>) -> Result<Option<Self>> {
         let Some(value) = &resp.response.value else {
@@ -93,15 +93,15 @@ impl LookupResponse {
         };
         let (peers, _rest): (Vec<crate::cenc::Peer>, &[u8]) =
             <Vec<crate::cenc::Peer> as CompactEncoding>::decode(value)?;
-        Ok(Some(LookupResponse {
+        Ok(Some(PeersResponse {
             response: resp,
             peers,
         }))
     }
 }
 
-impl From<LookupResponse> for HyperDhtEvent {
-    fn from(value: LookupResponse) -> Self {
+impl From<PeersResponse> for HyperDhtEvent {
+    fn from(value: PeersResponse) -> Self {
         HyperDhtEvent::LookupResponse(value)
     }
 }
