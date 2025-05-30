@@ -250,6 +250,21 @@ impl Future for LookupInner {
     }
 }
 
+impl Future for FindPeerInner {
+    type Output = Result<QueryResult>;
+
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        if self.done {
+            return Poll::Ready(Ok(QueryResult {
+                topic: self.topic,
+                responses: take(&mut self.peers),
+                query_id: self.query_id,
+            }));
+        }
+        Poll::Pending
+    }
+}
+
 #[derive(Debug)]
 pub struct UnannounceResult {
     pub responses: Vec<Result<Arc<InResponse>>>,
@@ -299,5 +314,33 @@ impl From<UnannounceRequest> for RequestMsgDataInner {
             target: Some(topic.0),
             value: Some(value),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct FindPeerInner {
+    done: bool,
+    pub query_id: QueryId,
+    pub topic: IdBytes,
+    pub peers: Vec<Arc<InResponse>>,
+}
+impl FindPeerInner {
+    pub fn new(query_id: QueryId, topic: IdBytes) -> Self {
+        Self {
+            done: false,
+            query_id,
+            topic,
+            peers: Vec::new(),
+        }
+    }
+    pub fn finalize(&mut self) {
+        self.done = true;
+    }
+
+    /// Store the decoded peers from the `Response` value
+    #[instrument(skip_all)]
+    pub fn inject_response(&mut self, resp: Arc<InResponse>) -> Option<HyperDhtEvent> {
+        self.peers.push(resp.clone());
+        None
     }
 }

@@ -32,12 +32,12 @@ use futures::{
 use futuresmap::FuturesMap;
 use prost::Message as ProstMessage;
 use queries::{
-    AnnounceClearResult, AnnounceInner, AunnounceClearInner, LookupInner, LookupResponse,
-    QueryResult, UnannounceInner, UnannounceResult,
+    AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, LookupInner,
+    LookupResponse, QueryResult, UnannounceInner, UnannounceResult,
 };
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::{
     dht_proto::{PeersInput, PeersOutput},
@@ -205,18 +205,6 @@ impl HyperDht {
                 }),
         }
     }
-
-    pub fn find_peer(&mut self, pub_key: PublicKey) -> QueryId {
-        let target = IdBytes(generic_hash(&*pub_key));
-
-        self.rpc.query(
-            Command::External(ExternalCommand(commands::FIND_PEER)),
-            target,
-            None,
-            Commit::No,
-        )
-    }
-
     /// Callback for an incoming `peers` command query
     fn on_peers(&mut self, mut query: CommandQuery) {
         // decode the received value
@@ -299,6 +287,22 @@ impl HyperDht {
                 self.rpc.reply_command(query.into());
             }
         }
+    }
+
+    pub fn find_peer(&mut self, pub_key: PublicKey) -> QueryId {
+        let target = IdBytes(generic_hash(&*pub_key));
+
+        let query_id = self.rpc.query(
+            Command::External(ExternalCommand(commands::FIND_PEER)),
+            target,
+            None,
+            Commit::No,
+        );
+        self.queries.insert(
+            query_id,
+            QueryStreamType::FindPeer(FindPeerInner::new(query_id, target)),
+        );
+        query_id
     }
 
     /// Initiates an iterative query to the closest peers to lookup the topic.
@@ -409,6 +413,10 @@ impl HyperDht {
                     QueryStreamType::Lookup(inner) => inner.inject_response(resp.clone()),
                     QueryStreamType::AnnounceClear(inner) => {
                         inner.inject_response(&mut self.rpc.io, resp, qid);
+                        None
+                    }
+                    QueryStreamType::FindPeer(inner) => {
+                        inner.inject_response(resp.clone());
                         None
                     }
                 }
@@ -550,7 +558,7 @@ impl Stream for HyperDht {
                     RpcDhtEvent::QueryResult(qr) => {
                         pin.query_target_search_done(qr);
                     }
-                    _ => {}
+                    other => warn!("unhandled rpc event"),
                 }
             }
 
@@ -565,6 +573,7 @@ impl Stream for HyperDht {
                         qsr::Announce(r) => hde::AnnounceResult(r),
                         qsr::UnAnnounce(r) => hde::UnAnnounceResult(Ok(r)),
                         qsr::AnnounceClear(r) => hde::AnnouncClearResult(Ok(r)),
+                        qsr::FindPeer(r) => hde::FindPeerResult(Ok(r)),
                     },
                 })
             }
@@ -612,6 +621,8 @@ pub enum HyperDhtEvent {
     UnAnnounceResult(Result<UnannounceResult>),
     /// The result of [`HyperDht::announce_clear`]
     AnnouncClearResult(Result<AnnounceClearResult>),
+    /// The result of [`HyperDht::find_peer`].
+    FindPeerResult(Result<QueryResult>),
     /// Received a query with a custom command that is not automatically handled
     /// by the DHT
     CustomCommandQuery {
@@ -633,6 +644,7 @@ impl HyperDhtEvent {
             HyperDhtEvent::LookupResult(_) => "LookupResult",
             HyperDhtEvent::UnAnnounceResult(_) => "UnAnnounceResult",
             HyperDhtEvent::AnnouncClearResult(_) => "AnnouncClearResult",
+            HyperDhtEvent::FindPeerResult(_) => "FindPeerResult",
             HyperDhtEvent::CustomCommandQuery { .. } => "CustomCommandQuery",
         }
     }
@@ -679,6 +691,7 @@ enum QueryStreamType {
     Announce(AnnounceInner),
     UnAnnounce(#[pin] UnannounceInner),
     AnnounceClear(AunnounceClearInner),
+    FindPeer(FindPeerInner),
 }
 
 #[derive(Debug)]
@@ -687,6 +700,7 @@ enum QueryStreamResult {
     Announce(QueryResult),
     UnAnnounce(UnannounceResult),
     AnnounceClear(AnnounceClearResult),
+    FindPeer(QueryResult),
 }
 
 impl Future for QueryStreamType {
@@ -727,6 +741,15 @@ impl Future for QueryStreamType {
                 if let Poll::Ready(x) = Future::poll(Pin::new(&mut inner), cx) {
                     match x {
                         Ok(res) => return Poll::Ready(Ok(qsr::AnnounceClear(res))),
+                        Err(e) => return Poll::Ready(Err(e)),
+                    }
+                }
+                Poll::Pending
+            }
+            qstp::FindPeer(mut inner) => {
+                if let Poll::Ready(x) = Future::poll(Pin::new(&mut inner), cx) {
+                    match x {
+                        Ok(res) => return Poll::Ready(Ok(qsr::FindPeer(res))),
                         Err(e) => return Poll::Ready(Err(e)),
                     }
                 }
@@ -778,6 +801,7 @@ impl QueryStreamType {
                 channel.try_send(CommitMessage::Done).unwrap();
             }
             QueryStreamType::AnnounceClear(_) => todo!(),
+            QueryStreamType::FindPeer(_inner) => todo!(),
         }
     }
 
@@ -787,6 +811,7 @@ impl QueryStreamType {
             QueryStreamType::Announce(ref mut inner) => inner.finalize(),
             QueryStreamType::UnAnnounce(ref mut inner) => inner.finalize(),
             QueryStreamType::AnnounceClear(ref mut inner) => inner.finalize(msg_tx, query_result),
+            QueryStreamType::FindPeer(ref mut inner) => inner.finalize(),
         }
     }
 }
