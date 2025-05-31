@@ -33,7 +33,7 @@ use futuresmap::FuturesMap;
 use prost::Message as ProstMessage;
 use queries::{
     AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,
-    LookupInner, PeersResponse, QueryResult, UnannounceInner, UnannounceResult,
+    LookupInner, LookupResponse, QueryResult, UnannounceInner, UnannounceResult,
 };
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
@@ -614,7 +614,7 @@ pub enum HyperDhtEvent {
     /// The result of [`HyperDht::announce`].
     AnnounceResult(QueryResult),
     /// A response to part of a lookup query
-    LookupResponse(PeersResponse),
+    LookupResponse(LookupResponse),
     /// The result of [`HyperDht::lookup`].
     LookupResult(QueryResult),
     /// The result of [`HyperDht::unannounce`].
