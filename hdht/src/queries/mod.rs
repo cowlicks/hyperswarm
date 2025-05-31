@@ -65,7 +65,7 @@ impl LookupInner {
         match PeersResponse::from_response(resp) {
             Ok(Some(evt)) => {
                 trace!("Decoded valid lookup response");
-                Some(evt.into())
+                Some(HyperDhtEvent::LookupResponse(evt))
             }
             Ok(None) => {
                 trace!("Lookup respones missing value field");
@@ -100,9 +100,24 @@ impl PeersResponse {
     }
 }
 
-impl From<PeersResponse> for HyperDhtEvent {
-    fn from(value: PeersResponse) -> Self {
-        HyperDhtEvent::LookupResponse(value)
+#[derive(Debug)]
+pub struct FindPeerResponse {
+    pub response: Arc<InResponse>,
+    pub peer: crate::cenc::Peer,
+}
+impl FindPeerResponse {
+    /// `Ok(None)` when lookup response is missing value field.
+    #[instrument(skip_all, err)]
+    pub fn from_response(resp: Arc<InResponse>) -> Result<Option<Self>> {
+        let Some(value) = &resp.response.value else {
+            return Ok(None);
+        };
+        let (peer, _rest) = <crate::cenc::Peer as CompactEncoding>::decode(value)?;
+        dbg!(&value);
+        Ok(Some(FindPeerResponse {
+            response: resp,
+            peer,
+        }))
     }
 }
 
@@ -337,10 +352,22 @@ impl FindPeerInner {
         self.done = true;
     }
 
-    /// Store the decoded peers from the `Response` value
     #[instrument(skip_all)]
     pub fn inject_response(&mut self, resp: Arc<InResponse>) -> Option<HyperDhtEvent> {
         self.peers.push(resp.clone());
-        None
+        match FindPeerResponse::from_response(resp) {
+            Ok(Some(evt)) => {
+                trace!("Decoded valid lookup response");
+                Some(HyperDhtEvent::FindPeerResponse(evt))
+            }
+            Ok(None) => {
+                trace!("Lookup respones missing value field");
+                None
+            }
+            Err(e) => {
+                error!(error = display(e), "Error decoding lookup response");
+                None
+            }
+        }
     }
 }

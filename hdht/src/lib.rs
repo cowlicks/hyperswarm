@@ -32,8 +32,8 @@ use futures::{
 use futuresmap::FuturesMap;
 use prost::Message as ProstMessage;
 use queries::{
-    AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, LookupInner,
-    PeersResponse, QueryResult, UnannounceInner, UnannounceResult,
+    AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,
+    LookupInner, PeersResponse, QueryResult, UnannounceInner, UnannounceResult,
 };
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
@@ -621,6 +621,8 @@ pub enum HyperDhtEvent {
     UnAnnounceResult(Result<UnannounceResult>),
     /// The result of [`HyperDht::announce_clear`]
     AnnouncClearResult(Result<AnnounceClearResult>),
+    /// A response to part of a find_peer query
+    FindPeerResponse(FindPeerResponse),
     /// The result of [`HyperDht::find_peer`].
     FindPeerResult(Result<QueryResult>),
     /// Received a query with a custom command that is not automatically handled
@@ -644,6 +646,7 @@ impl HyperDhtEvent {
             HyperDhtEvent::LookupResult(_) => "LookupResult",
             HyperDhtEvent::UnAnnounceResult(_) => "UnAnnounceResult",
             HyperDhtEvent::AnnouncClearResult(_) => "AnnouncClearResult",
+            HyperDhtEvent::FindPeerResponse(_) => "FindPeerResponse",
             HyperDhtEvent::FindPeerResult(_) => "FindPeerResult",
             HyperDhtEvent::CustomCommandQuery { .. } => "CustomCommandQuery",
         }
