@@ -37,7 +37,7 @@ use queries::{
 };
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
 
 use crate::{
     dht_proto::{PeersInput, PeersOutput},
@@ -415,10 +415,7 @@ impl HyperDht {
                         inner.inject_response(&mut self.rpc.io, resp, qid);
                         None
                     }
-                    QueryStreamType::FindPeer(inner) => {
-                        inner.inject_response(resp.clone());
-                        None
-                    }
+                    QueryStreamType::FindPeer(inner) => inner.inject_response(resp.clone()),
                 }
             };
             if let Some(e) = event {
@@ -558,7 +555,7 @@ impl Stream for HyperDht {
                     RpcDhtEvent::QueryResult(qr) => {
                         pin.query_target_search_done(qr);
                     }
-                    other => warn!("unhandled rpc event"),
+                    _other => warn!("unhandled rpc event"),
                 }
             }
 
