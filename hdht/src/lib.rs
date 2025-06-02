@@ -60,6 +60,7 @@ pub mod cenc;
 pub mod connect;
 mod crypto;
 mod futuresmap;
+mod handshake;
 pub mod lru;
 mod queries;
 mod store;

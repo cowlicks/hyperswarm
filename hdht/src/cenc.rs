@@ -7,8 +7,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use crate::crypto::{PublicKey, Signature2};
 
 #[derive(Debug)]
-struct SocketAddr2(pub SocketAddr);
+pub(crate) struct SocketAddr2(pub SocketAddr);
 
+impl SocketAddr2 {
+    pub const ENCODED_SIZE: usize = 6;
+}
 impl From<SocketAddr> for SocketAddr2 {
     fn from(value: SocketAddr) -> Self {
         Self(value)
@@ -182,6 +185,7 @@ impl CompactEncoding for Announce {
         ))
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::*;

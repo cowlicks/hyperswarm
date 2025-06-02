@@ -113,7 +113,6 @@ impl FindPeerResponse {
             return Ok(None);
         };
         let (peer, _rest) = <crate::cenc::Peer as CompactEncoding>::decode(value)?;
-        dbg!(&value);
         Ok(Some(FindPeerResponse {
             response: resp,
             peer,
