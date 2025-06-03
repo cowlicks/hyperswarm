@@ -1,3 +1,6 @@
+// TODO remove magic numbers
+// - 4 = number of bytes in an ipv4 addresses
+// - 2 = number of bytes in a port
 use compact_encoding::{
     decode_usize, encoded_size_usize, take_array, write_array, CompactEncoding, EncodingError,
     VecEncodable,
