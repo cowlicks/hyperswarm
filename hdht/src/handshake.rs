@@ -1,4 +1,6 @@
-use compact_encoding::{decode_usize, encode_usize_var, CompactEncoding, EncodingError};
+use compact_encoding::{
+    decode_usize, encode_usize_var, encoded_size_usize, CompactEncoding, EncodingError,
+};
 
 use crate::cenc::SocketAddr2;
 
@@ -99,6 +101,59 @@ impl CompactEncoding for Handshake {
                 noise,
                 peer_address,
                 relay_address,
+            },
+            rest,
+        ))
+    }
+}
+
+struct Holepunch {
+    mode: HandshakeParts,
+    id: usize,
+    payload: Vec<u8>,
+    peer_address: Option<SocketAddr2>,
+}
+
+impl CompactEncoding for Holepunch {
+    fn encoded_size(&self) -> Result<usize, EncodingError> {
+        Ok(
+            1 /* flags */ + self.mode.encoded_size()? + encoded_size_usize(self.id)
+             + (if self.peer_address.is_some() { SocketAddr2::ENCODED_SIZE } else { 0 }),
+        )
+    }
+
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
+        let flags = self.peer_address.as_ref().map(|_| 1).unwrap_or_default();
+        let mut rest = encode_usize_var(&flags, buffer)?;
+        rest = self.mode.encode(rest)?;
+        rest = encode_usize_var(&self.id, rest)?;
+        rest = self.payload.encode(rest)?;
+        if let Some(addr) = &self.peer_address {
+            rest = addr.encode(rest)?;
+        }
+        Ok(rest)
+    }
+
+    fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let (flags, rest) = decode_usize(buffer)?;
+        let (mode, rest) = HandshakeParts::decode(rest)?;
+        let (id, rest) = decode_usize(rest)?;
+        let (payload, rest) = <Vec<u8> as CompactEncoding>::decode(rest)?;
+        let (peer_address, rest) = if flags & 1 != 0 {
+            let (addr, rest) = SocketAddr2::decode(rest)?;
+            (Some(addr), rest)
+        } else {
+            (None, rest)
+        };
+        Ok((
+            Self {
+                mode,
+                id,
+                payload,
+                peer_address,
             },
             rest,
         ))
