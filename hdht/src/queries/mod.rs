@@ -44,7 +44,6 @@ pub struct LookupInner {
 }
 
 impl LookupInner {
-    #[allow(unused)] // TODO FIXME
     pub fn new(query_id: QueryId, topic: IdBytes) -> Self {
         Self {
             done: false,

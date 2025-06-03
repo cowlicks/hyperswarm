@@ -31,24 +31,20 @@ impl CompactEncoding for SocketAddr2 {
     where
         Self: Sized,
     {
-        let Some((src, rest)) = buffer.split_first_chunk::<4>() else {
-            todo!()
-        };
-        let ip = Ipv4Addr::from(*src);
-        let Some((src, rest)) = rest.split_first_chunk::<2>() else {
-            todo!()
-        };
-        let port = u16::from_le_bytes(*src);
+        let (src, rest) = take_array::<4>(buffer)?;
+        let ip = Ipv4Addr::from(src);
+
+        let (src, rest) = take_array::<2>(rest)?;
+        let port = u16::from_le_bytes(src);
         Ok((SocketAddr2(SocketAddr::new(IpAddr::V4(ip), port)), rest))
     }
 
     fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
-        let IpAddr::V4(ip) = self.0.ip() else { todo!() };
-        let rest = ip.encode(buffer)?;
-        let Some((dest, rest)) = rest.split_first_chunk_mut::<2>() else {
-            todo!()
+        let IpAddr::V4(ip) = self.0.ip() else {
+            panic!()
         };
-        dest.copy_from_slice(&self.0.port().to_le_bytes());
+        let rest = ip.encode(buffer)?;
+        let rest = write_array(&self.0.port().to_le_bytes(), rest)?;
         Ok(rest)
     }
 }
