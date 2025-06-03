@@ -11,3 +11,6 @@
 [submodule "hdht/tests/common/js/sodium-native"]
 	path = hdht/tests/common/js/sodium-native
 	url = git@github.com:cowlicks/sodium-native.git
+[submodule "hdht/tests/common/js/noise-handshake"]
+	path = hdht/tests/common/js/noise-handshake
+	url = git@github.com:holepunchto/noise-handshake.git
