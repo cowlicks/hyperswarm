@@ -5,7 +5,7 @@ use compact_encoding::{
 use crate::cenc::SocketAddr2;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum HandshakeParts {
+pub enum HandshakeParts {
     FromClient = 0,
     FromServer = 1,
     FromRelay = 2,
@@ -43,11 +43,28 @@ impl CompactEncoding for HandshakeParts {
     }
 }
 
-struct Handshake {
+#[derive(Debug)]
+pub struct Handshake {
     peer_address: Option<SocketAddr2>,
     relay_address: Option<SocketAddr2>,
     mode: HandshakeParts, // TODO
     noise: Vec<u8>,
+}
+
+impl Handshake {
+    fn new(
+        mode: HandshakeParts,
+        noise: Vec<u8>,
+        peer_address: Option<SocketAddr2>,
+        relay_address: Option<SocketAddr2>,
+    ) -> Self {
+        Self {
+            mode,
+            noise,
+            peer_address,
+            relay_address,
+        }
+    }
 }
 
 impl CompactEncoding for Handshake {
@@ -107,7 +124,8 @@ impl CompactEncoding for Handshake {
     }
 }
 
-struct Holepunch {
+#[derive(Debug)]
+pub struct Holepunch {
     mode: HandshakeParts,
     id: usize,
     payload: Vec<u8>,
