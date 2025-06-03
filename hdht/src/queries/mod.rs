@@ -87,6 +87,7 @@ pub struct LookupResponse {
 
 impl LookupResponse {
     /// `Ok(None)` when lookup response is missing value field.
+    #[instrument(skip_all, err)]
     pub fn from_response(resp: Arc<InResponse>) -> Result<Option<Self>> {
         let Some(value) = &resp.response.value else {
             return Ok(None);
