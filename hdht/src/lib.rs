@@ -57,7 +57,6 @@ mod dht_proto {
     include!(concat!(env!("OUT_DIR"), "/dht_pb.rs"));
 }
 pub mod cenc;
-pub mod connect;
 mod crypto;
 mod futuresmap;
 mod handshake;
