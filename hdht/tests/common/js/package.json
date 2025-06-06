@@ -7,6 +7,7 @@
     "t": "node index.js"
   },
   "dependencies": {
+    "noise-curve-ed": "^2.0.0",
     "dht-rpc": "file:./rpc",
     "hyperdht": "file:./hyperdht",
     "noise-handshake": "file:./noise-handshake",
