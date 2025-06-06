@@ -2,11 +2,14 @@
 mod common;
 use std::net::SocketAddr;
 
+use async_udx::UdxSocket;
 use common::{js::make_repl, Result};
 use dht_rpc::DhtConfig;
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
+use hypercore_protocol::encrypted_framed_message_channel;
 use hyperdht::{HyperDht, HyperDhtEvent, Keypair};
-use rusty_nodejs_repl::Repl;
+use rusty_nodejs_repl::{integration_utils::log, wait, Repl};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[allow(unused)]
 fn show_bytes<T: AsRef<[u8]>>(x: T) {
@@ -221,5 +224,106 @@ async fn test_rs_unannounce() -> Result<()> {
     let found_pk_js = get_pub_keys_for_lookup!(testnet);
     // assert no keys found for the topic
     assert_eq!(found_pk_js.len(), 0);
+    Ok(())
+}
+
+/// Check that Rust's find_peer can find JavaScript server
+/// The steps:
+/// js does a 'listen' on it's own public key
+/// rs does a 'find_peer' on the public key, records the responses.
+#[tokio::test]
+async fn js_server_listen_rs_find_peer() -> Result<()> {
+    let (mut tn, mut hdht) = setup_rs_node_and_js_testnet!();
+
+    // with js announc on topic with the node's default keypair
+    let pub_key: [u8; 32] = tn
+        .repl
+        .json_run(
+            "
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+
+writeJson([...server_node.defaultKeyPair.publicKey]);
+await server.listen(server_node.defaultKeyPair);
+    ",
+        )
+        .await?;
+    // with RS do a find peer
+    let _query_id = hdht.find_peer(pub_key.into());
+
+    let mut resps = vec![];
+    loop {
+        match hdht.next().await {
+            Some(HyperDhtEvent::Bootstrapped { .. }) => {}
+            Some(HyperDhtEvent::FindPeerResult(_)) => break,
+            Some(HyperDhtEvent::FindPeerResponse(r)) => resps.push(r),
+            Some(_) => todo!(),
+            None => todo!(),
+        }
+    }
+    assert!(!resps.is_empty());
+    for r in resps {
+        assert_eq!(r.peer.public_key.as_slice(), pub_key);
+    }
+
+    Ok(())
+}
+
+/// In Rust create a "Server" and do a "listen" on `public_key`
+/// Then in JavaScript do a `dht.findPeer(public_key)`.
+/// And verify it finds the rust Server
+#[tokio::test]
+async fn js_server_rs_connects() -> Result<()> {
+    use async_compat::CompatExt;
+
+    let (mut tn, mut hdht) = setup_rs_node_and_js_testnet!();
+
+    // with js announc on topic with the node's default keypair
+    let pub_key: [u8; 32] = tn
+        .repl
+        .json_run(
+            "
+connected = false;
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+server.on('connection', socket => {
+    connected = true;
+});
+
+writeJson([...server_node.defaultKeyPair.publicKey]);
+await server.listen(server_node.defaultKeyPair);
+    ",
+        )
+        .await?;
+    // with RS do a find peer
+    let _query_id = hdht.find_peer(pub_key.into());
+
+    let mut resps = vec![];
+    loop {
+        match hdht.next().await {
+            Some(HyperDhtEvent::Bootstrapped { .. }) => {}
+            Some(HyperDhtEvent::FindPeerResult(_)) => break,
+            Some(HyperDhtEvent::FindPeerResponse(r)) => resps.push(r),
+            Some(_) => todo!(),
+            None => todo!(),
+        }
+    }
+    assert!(!resps.is_empty());
+    for r in resps.iter() {
+        assert_eq!(r.peer.public_key.as_slice(), pub_key);
+    }
+
+    // with js announc on topic with the node's default keypair
+    let addr: String = tn
+        .repl
+        .json_run(
+            "
+const { host, port } = server_node.address();
+        writeJson(`${host}:${port}`);",
+        )
+        .await?;
+    let server_addr: SocketAddr = addr.parse()?;
+
+    todo!("start connecting to the  peer");
     Ok(())
 }
