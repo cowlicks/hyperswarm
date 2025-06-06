@@ -176,6 +176,14 @@ impl Display for Command {
         match self {
             Command::Internal(c) => write!(f, "Internal({})", c),
             Command::External(ExternalCommand(x)) => {
+                // NB: magic numbers & strings here: the names and number values for external command are defined in the hyperdht
+                // crate, which depends on this crate.The numbers & names are just copied here to
+                // avoid doing something more complicated to get a nice Dislpay impl.
+                // Alternatively we could do:
+                // struct ExternalCommand(struct ExternalCommandKind( { number: usize, name:
+                // 'static &str })
+                // Display would do:
+                // write(f, "External({})", ext_command_kind.name)
                 let cmd_name = match x {
                     0 => "PEER_HANDSHAKE",
                     1 => "PEER_HOLEPUNCH",
