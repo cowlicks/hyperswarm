@@ -2,14 +2,12 @@ use std::net::{SocketAddrV4, SocketAddrV6};
 
 use compact_encoding::{
     decode_usize, encode_usize_var, encoded_size_usize, map_decode, map_encode, map_first,
-    sum_encoded_size, vec_encoded_size_for_fixed_sized_elements, write_array, CompactEncoding,
-    EncodingError, VecEncodable,
+    sum_encoded_size, vec_encoded_size_for_fixed_sized_elements, CompactEncoding, EncodingError,
+    VecEncodable, SOCKET_ADDR_V4_ENCODED_SIZE,
 };
 
-use crate::cenc::SocketAddr2;
-
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum HandshakeParts {
+pub enum HandshakeSteps {
     FromClient = 0,
     FromServer = 1,
     FromRelay = 2,
@@ -17,7 +15,7 @@ pub enum HandshakeParts {
     Repl = 4,
 }
 
-impl CompactEncoding for HandshakeParts {
+impl CompactEncoding for HandshakeSteps {
     fn encoded_size(&self) -> Result<usize, EncodingError> {
         Ok(1)
     }
@@ -32,11 +30,11 @@ impl CompactEncoding for HandshakeParts {
     {
         let (discriminant, rest) = decode_usize(buffer)?;
         let mode = match discriminant {
-            0 => HandshakeParts::FromClient,
-            1 => HandshakeParts::FromServer,
-            2 => HandshakeParts::FromRelay,
-            3 => HandshakeParts::FromSecondRelay,
-            4 => HandshakeParts::Repl,
+            0 => HandshakeSteps::FromClient,
+            1 => HandshakeSteps::FromServer,
+            2 => HandshakeSteps::FromRelay,
+            3 => HandshakeSteps::FromSecondRelay,
+            4 => HandshakeSteps::Repl,
             x => {
                 return Err(EncodingError::invalid_data(&format!(
                     "Invalid value [{x}] for decoding HandshakeParts"
@@ -49,18 +47,18 @@ impl CompactEncoding for HandshakeParts {
 
 #[derive(Debug)]
 pub struct Handshake {
-    peer_address: Option<SocketAddr2>,
-    relay_address: Option<SocketAddr2>,
-    mode: HandshakeParts, // TODO
+    peer_address: Option<SocketAddrV4>,
+    relay_address: Option<SocketAddrV4>,
+    mode: HandshakeSteps,
     noise: Vec<u8>,
 }
 
 impl Handshake {
-    fn new(
-        mode: HandshakeParts,
+    pub fn new(
+        mode: HandshakeSteps,
         noise: Vec<u8>,
-        peer_address: Option<SocketAddr2>,
-        relay_address: Option<SocketAddr2>,
+        peer_address: Option<SocketAddrV4>,
+        relay_address: Option<SocketAddrV4>,
     ) -> Self {
         Self {
             mode,
@@ -74,8 +72,8 @@ impl Handshake {
 impl CompactEncoding for Handshake {
     fn encoded_size(&self) -> Result<usize, compact_encoding::EncodingError> {
         Ok(1 /* flags */ + self.mode.encoded_size()?
-            + (if self.peer_address.is_some() { SocketAddr2::ENCODED_SIZE } else { 0 })
-            + (if self.relay_address.is_some() { SocketAddr2::ENCODED_SIZE } else {0})
+            + (if self.peer_address.is_some() { SOCKET_ADDR_V4_ENCODED_SIZE } else { 0 })
+            + (if self.relay_address.is_some() { SOCKET_ADDR_V4_ENCODED_SIZE } else {0})
             + self.noise.encoded_size()?)
     }
 
@@ -102,16 +100,16 @@ impl CompactEncoding for Handshake {
         Self: Sized,
     {
         let (flags, rest) = decode_usize(buffer)?;
-        let (mode, rest) = HandshakeParts::decode(rest)?;
+        let (mode, rest) = HandshakeSteps::decode(rest)?;
         let (noise, rest) = <Vec<u8> as CompactEncoding>::decode(rest)?;
         let (peer_address, rest) = if flags & 1 != 0 {
-            let (addr, rest) = SocketAddr2::decode(rest)?;
+            let (addr, rest) = SocketAddrV4::decode(rest)?;
             (Some(addr), rest)
         } else {
             (None, rest)
         };
         let (relay_address, rest) = if flags & 2 != 0 {
-            let (addr, rest) = SocketAddr2::decode(rest)?;
+            let (addr, rest) = SocketAddrV4::decode(rest)?;
             (Some(addr), rest)
         } else {
             (None, rest)
@@ -130,17 +128,17 @@ impl CompactEncoding for Handshake {
 
 #[derive(Debug)]
 pub struct Holepunch {
-    mode: HandshakeParts,
+    mode: HandshakeSteps,
     id: usize,
     payload: Vec<u8>,
-    peer_address: Option<SocketAddr2>,
+    peer_address: Option<SocketAddrV4>,
 }
 
 impl CompactEncoding for Holepunch {
     fn encoded_size(&self) -> Result<usize, EncodingError> {
         Ok(
             1 /* flags */ + self.mode.encoded_size()? + encoded_size_usize(self.id)
-             + (if self.peer_address.is_some() { SocketAddr2::ENCODED_SIZE } else { 0 }),
+             + (if self.peer_address.is_some() { SOCKET_ADDR_V4_ENCODED_SIZE } else { 0 }),
         )
     }
 
@@ -161,11 +159,11 @@ impl CompactEncoding for Holepunch {
         Self: Sized,
     {
         let (flags, rest) = decode_usize(buffer)?;
-        let (mode, rest) = HandshakeParts::decode(rest)?;
+        let (mode, rest) = HandshakeSteps::decode(rest)?;
         let (id, rest) = decode_usize(rest)?;
         let (payload, rest) = <Vec<u8> as CompactEncoding>::decode(rest)?;
         let (peer_address, rest) = if flags & 1 != 0 {
-            let (addr, rest) = SocketAddr2::decode(rest)?;
+            let (addr, rest) = SocketAddrV4::decode(rest)?;
             (Some(addr), rest)
         } else {
             (None, rest)
@@ -183,28 +181,29 @@ impl CompactEncoding for Holepunch {
 }
 
 #[derive(Debug)]
-struct RelayInfo {
-    relay_address: SocketAddr2,
-    peer_address: SocketAddr2,
+pub struct RelayInfo {
+    relay_address: SocketAddrV4,
+    peer_address: SocketAddrV4,
 }
 impl RelayInfo {
-    const ENCODED_SIZE: usize = SocketAddr2::ENCODED_SIZE * 2;
+    const ENCODED_SIZE: usize = SOCKET_ADDR_V4_ENCODED_SIZE * 2;
 }
 impl CompactEncoding for RelayInfo {
     fn encoded_size(&self) -> Result<usize, EncodingError> {
-        Ok(SocketAddr2::ENCODED_SIZE * 2)
+        Ok(SOCKET_ADDR_V4_ENCODED_SIZE * 2)
     }
 
     fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
-        let rest = SocketAddr2::encode(&self.relay_address, buffer)?;
-        SocketAddr2::encode(&self.peer_address, rest)
+        let rest = SocketAddrV4::encode(&self.relay_address, buffer)?;
+        SocketAddrV4::encode(&self.peer_address, rest)
     }
 
     fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
     where
         Self: Sized,
     {
-        let ((relay_address, peer_address), rest) = map_decode!(buffer, [SocketAddr2, SocketAddr2]);
+        let ((relay_address, peer_address), rest) =
+            map_decode!(buffer, [SocketAddrV4, SocketAddrV4]);
         Ok((
             Self {
                 relay_address,
@@ -228,7 +227,7 @@ impl VecEncodable for RelayInfo {
 }
 
 #[derive(Debug)]
-struct HolepunchInfo {
+pub struct HolepunchInfo {
     id: usize,
     relays: Vec<RelayInfo>,
 }
@@ -252,11 +251,11 @@ impl CompactEncoding for HolepunchInfo {
 
 const UDX_INFO_VERSION: usize = 1;
 #[derive(Debug)]
-struct UdxInfo {
-    version: usize,
-    reusable_socket: bool,
-    id: usize,
-    seq: usize,
+pub struct UdxInfo {
+    pub version: usize,
+    pub reusable_socket: bool,
+    pub id: usize,
+    pub seq: usize,
 }
 
 impl CompactEncoding for UdxInfo {
@@ -290,7 +289,7 @@ impl CompactEncoding for UdxInfo {
 
 const SECRET_STREAM_INFO_VERSION: usize = 1;
 #[derive(Debug)]
-struct SecretStreamInfo {
+pub struct SecretStreamInfo {
     version: usize,
 }
 
@@ -315,7 +314,7 @@ impl CompactEncoding for SecretStreamInfo {
 const RELAY_THROUGH_INFO_VERSION: usize = 1;
 
 #[derive(Debug)]
-struct RelayThroughInfo {
+pub struct RelayThroughInfo {
     version: usize,
     public_key: [u8; 32],
     token: [u8; 32],
@@ -384,16 +383,16 @@ macro_rules! else_zero {
 // constant "1" byte for each. Which could possibly break if these valuse get too big.
 // Here and elsewhere I choose to copy this behavior.
 #[derive(Debug)]
-struct NoisePayload {
-    version: usize,
-    error: usize,
-    firewall: usize,
-    holepunch: Option<HolepunchInfo>,
-    addresses4: Option<Vec<SocketAddrV4>>,
-    addresses6: Option<Vec<SocketAddrV6>>,
-    udx: Option<UdxInfo>,
-    secret_stream: Option<SecretStreamInfo>,
-    relay_through: Option<RelayThroughInfo>,
+pub struct NoisePayload {
+    pub version: usize,
+    pub error: usize,
+    pub firewall: usize,
+    pub holepunch: Option<HolepunchInfo>,
+    pub addresses4: Option<Vec<SocketAddrV4>>,
+    pub addresses6: Option<Vec<SocketAddrV6>>,
+    pub udx: Option<UdxInfo>,
+    pub secret_stream: Option<SecretStreamInfo>,
+    pub relay_through: Option<RelayThroughInfo>,
 }
 
 impl CompactEncoding for NoisePayload {
@@ -528,6 +527,6 @@ mod test {
     use super::*;
     #[test]
     fn handshake_parts_discriminant() {
-        assert_eq!(HandshakeParts::FromClient as isize, 0);
+        assert_eq!(HandshakeSteps::FromClient as isize, 0);
     }
 }
