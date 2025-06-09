@@ -19,7 +19,7 @@ use std::{
     sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
-use tracing::{error, trace};
+use tracing::{error, instrument, trace};
 use wasm_timer::Instant;
 
 use super::{
@@ -464,6 +464,7 @@ pub struct IoConfig {
 impl Stream for IoHandler {
     type Item = IoHandlerEvent;
 
+    #[instrument(skip_all, ret)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
 
