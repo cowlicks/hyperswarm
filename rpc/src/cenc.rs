@@ -377,7 +377,7 @@ impl CompactEncoding for MsgData {
                 let (msg, rest) = ReplyMsgData::decode(buffer)?;
                 (MsgData::Reply(msg), rest)
             }
-            _ => return Err(EncodingError::invalid_data(&format!("Colud not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"))),
+            _ => return Err(EncodingError::invalid_data(&format!("Could not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"))),
         })
     }
 }
