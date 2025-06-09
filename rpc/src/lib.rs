@@ -246,7 +246,8 @@ pub struct RpcDht {
     /// The currently active (i.e. in-progress) queries.
     queries: QueryPool,
     /// Custom commands
-    #[allow(unused)] // TODO FIXME
+    // TODO remove me
+    #[allow(unused)]
     commands: HashSet<usize>,
     /// Queued events to return when being polled.
     queued_events: VecDeque<RpcDhtEvent>,
