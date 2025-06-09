@@ -544,19 +544,17 @@ impl RpcDht {
                     debug!("Recieved response for missing query with id: {:?}. It could have been removed already", resp_data.query_id);
                 }
             }
-            None => {
-                if matches!(
-                    resp_data.request.command,
-                    Command::Internal(InternalCommand::Ping)
-                ) {
-                    if resp_data.query_id.is_some() {
-                        error!("Ping has a QueryId?");
-                    }
+            None => match resp_data.request.command {
+                Command::Internal(InternalCommand::Ping) => {
                     self.on_pong(&resp_data.response, resp_data.peer.clone());
-                    return;
                 }
-                panic!("TODO");
-            }
+                Command::External(_) => {
+                    self.queued_events.push_back(RpcDhtEvent::ResponseResult(Ok(
+                        ResponseOk::Response(resp_data),
+                    )));
+                }
+                Command::Internal(_) => panic!(),
+            },
         }
     }
 
