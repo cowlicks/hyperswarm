@@ -156,8 +156,6 @@ pub struct HyperDht {
 impl HyperDht {
     /// Create a new DHT based on the configuration
     pub async fn with_config(mut config: DhtConfig) -> Result<Self> {
-        config = config.register_commands(&[MUTABLE_STORE_CMD, IMMUTABLE_STORE_CMD, PEERS_CMD]);
-
         if config.bootstrap_nodes.is_empty() {
             for addr_str in DEFAULT_BOOTSTRAP.iter() {
                 if let Some(addr) = addr_str.to_socket_addrs()?.last() {
