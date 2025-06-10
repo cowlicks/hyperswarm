@@ -15,7 +15,6 @@ use std::{
     time::Duration,
 };
 
-use commands::ANNOUNCE;
 use compact_encoding::{CompactEncoding, EncodingError};
 use crypto::PublicKey;
 use dht_rpc::{
@@ -779,7 +778,7 @@ impl QueryStreamType {
                     );
                     channel
                         .try_send(CommitMessage::Send(CommitRequestParams {
-                            command: Command::External(ExternalCommand(ANNOUNCE)),
+                            command: Command::External(ExternalCommand(commands::ANNOUNCE)),
                             target: Some(inner.topic),
                             value: Some(request_announce_or_unannounce_value(
                                 &inner.keypair,
