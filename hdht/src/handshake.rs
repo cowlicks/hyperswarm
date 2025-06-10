@@ -187,52 +187,6 @@ impl CompactEncoding for Holepunch {
 }
 
 #[derive(Debug)]
-pub struct RelayInfo {
-    relay_address: SocketAddrV4,
-    peer_address: SocketAddrV4,
-}
-impl RelayInfo {
-    const ENCODED_SIZE: usize = SOCKET_ADDR_V4_ENCODED_SIZE * 2;
-}
-impl CompactEncoding for RelayInfo {
-    fn encoded_size(&self) -> Result<usize, EncodingError> {
-        Ok(SOCKET_ADDR_V4_ENCODED_SIZE * 2)
-    }
-
-    fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
-        let rest = SocketAddrV4::encode(&self.relay_address, buffer)?;
-        SocketAddrV4::encode(&self.peer_address, rest)
-    }
-
-    fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
-    where
-        Self: Sized,
-    {
-        let ((relay_address, peer_address), rest) =
-            map_decode!(buffer, [SocketAddrV4, SocketAddrV4]);
-        Ok((
-            Self {
-                relay_address,
-                peer_address,
-            },
-            rest,
-        ))
-    }
-}
-
-impl VecEncodable for RelayInfo {
-    fn vec_encoded_size(vec: &[Self]) -> Result<usize, EncodingError>
-    where
-        Self: Sized,
-    {
-        Ok(vec_encoded_size_for_fixed_sized_elements(
-            vec,
-            RelayInfo::ENCODED_SIZE,
-        ))
-    }
-}
-
-#[derive(Debug)]
 pub struct HolepunchInfo {
     id: usize,
     relays: Vec<RelayInfo>,

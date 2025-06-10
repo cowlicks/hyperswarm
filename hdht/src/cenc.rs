@@ -2,69 +2,17 @@
 // - 4 = number of bytes in an ipv4 addresses
 // - 2 = number of bytes in a port
 use compact_encoding::{
-    decode_usize, encoded_size_usize, take_array, write_array, CompactEncoding, EncodingError,
-    VecEncodable,
+    decode_usize, encoded_size_usize, map_decode, take_array, write_array, CompactEncoding,
+    EncodingError, VecEncodable,
 };
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddrV4;
 
 use crate::crypto::{PublicKey, Signature2};
-
-#[derive(Debug)]
-pub(crate) struct SocketAddr2(pub SocketAddr);
-
-impl SocketAddr2 {
-    pub const ENCODED_SIZE: usize = 6;
-}
-impl From<SocketAddr> for SocketAddr2 {
-    fn from(value: SocketAddr) -> Self {
-        Self(value)
-    }
-}
-impl From<SocketAddr2> for SocketAddr {
-    fn from(value: SocketAddr2) -> Self {
-        value.0
-    }
-}
-impl CompactEncoding for SocketAddr2 {
-    fn encoded_size(&self) -> Result<usize, EncodingError> {
-        Ok(4 + 2) // ipv4 addr + port
-    }
-
-    fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
-    where
-        Self: Sized,
-    {
-        let (src, rest) = take_array::<4>(buffer)?;
-        let ip = Ipv4Addr::from(src);
-
-        let (src, rest) = take_array::<2>(rest)?;
-        let port = u16::from_le_bytes(src);
-        Ok((SocketAddr2(SocketAddr::new(IpAddr::V4(ip), port)), rest))
-    }
-
-    fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
-        let IpAddr::V4(ip) = self.0.ip() else {
-            panic!()
-        };
-        let rest = ip.encode(buffer)?;
-        let rest = write_array(&self.0.port().to_le_bytes(), rest)?;
-        Ok(rest)
-    }
-}
-
-impl VecEncodable for SocketAddr2 {
-    fn vec_encoded_size(vec: &[Self]) -> Result<usize, EncodingError>
-    where
-        Self: Sized,
-    {
-        Ok(encoded_size_usize(vec.len()) + (vec.len() * (4 + 2)))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Peer {
     pub public_key: PublicKey,
-    pub relay_addresses: Vec<SocketAddr>,
+    pub relay_addresses: Vec<SocketAddrV4>,
 }
 
 impl CompactEncoding for Peer {
@@ -75,35 +23,22 @@ impl CompactEncoding for Peer {
     }
 
     fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
-        let Some((dest, mut rest)) = buffer.split_first_chunk_mut::<32>() else {
-            todo!()
-        };
-        dest.copy_from_slice(&*self.public_key);
-        rest = self
-            .relay_addresses
-            .iter()
-            .map(|x| SocketAddr2(*x))
-            .collect::<Vec<SocketAddr2>>()
-            .encode(rest)?;
-        Ok(rest)
+        let rest = write_array(&*self.public_key, buffer)?;
+        self.relay_addresses.encode(rest)
     }
 
     fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
     where
         Self: Sized,
     {
-        let Some((public_key, rest)) = buffer.split_first_chunk::<32>() else {
-            todo!()
-        };
-        let res: (Vec<SocketAddr2>, &[u8]) = <Vec<SocketAddr2> as CompactEncoding>::decode(rest)?;
-        //todo!()
-        let relay_addresses = res.0.into_iter().map(SocketAddr::from).collect();
+        let ((public_key, relay_addresses), rest) =
+            map_decode!(buffer, [[u8; 32], Vec<SocketAddrV4>]);
         Ok((
             Peer {
-                public_key: (*public_key).into(),
+                public_key: public_key.into(),
                 relay_addresses,
             },
-            res.1,
+            rest,
         ))
     }
 }
@@ -194,22 +129,22 @@ mod test {
     fn socket_addr_enc_dec() -> Result<(), EncodingError> {
         let sa: SocketAddr = "192.168.1.2:1234".parse().unwrap();
         println!("{sa:?}");
-        let x = SocketAddr2::from(sa);
+        let x = SocketAddrV4::from(sa);
         let mut buf: [u8; 6] = [0; 6];
         x.encode(&mut buf).unwrap();
 
         assert_eq!(buf, [192, 168, 1, 2, 210, 4]);
 
-        let (val, _rest) = SocketAddr2::decode(&buf).unwrap();
+        let (val, _rest) = SocketAddrV4::decode(&buf).unwrap();
         assert_eq!(val.0, x.0);
         Ok(())
     }
 
     #[test]
     fn peer_encoding() -> Result<(), EncodingError> {
-        let one: SocketAddr = "192.168.1.2:1234".parse().unwrap();
-        let two: SocketAddr = "10.11.12.13:6547".parse().unwrap();
-        let three: SocketAddr = "127.0.0.1:80".parse().unwrap();
+        let one: SocketAddrV4 = "192.168.1.2:1234".parse().unwrap();
+        let two: SocketAddrV4 = "10.11.12.13:6547".parse().unwrap();
+        let three: SocketAddrV4 = "127.0.0.1:80".parse().unwrap();
         let pub_key_bytes = [
             114, 200, 78, 248, 86, 217, 108, 95, 186, 140, 62, 30, 146, 198, 167, 188, 187, 151,
             86, 70, 50, 238, 193, 187, 208, 113, 48, 47, 217, 126, 252, 251,

@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, ops::Deref};
+use std::{
+    net::{SocketAddr, SocketAddrV4},
+    ops::Deref,
+};
 
 use blake2::VarBlake2b;
 use compact_encoding::{write_array, CompactEncoding};
@@ -241,6 +244,13 @@ pub fn make_signable_announce_or_unannounce(
     signable
 }
 
+// TODO RMME
+fn sa4_from_sa_todo_remove_use_of_socketaddr(s: SocketAddr) -> SocketAddrV4 {
+    match s {
+        SocketAddr::V4(x) => x,
+        SocketAddr::V6(_) => todo!(),
+    }
+}
 pub fn sign_announce_or_unannounce(
     keypair: &Keypair,
     target: IdBytes,
@@ -252,7 +262,10 @@ pub fn sign_announce_or_unannounce(
     use crate::cenc::Peer;
     let peer = Peer {
         public_key: keypair.public.clone(),
-        relay_addresses: relay_addresses.to_vec(),
+        relay_addresses: relay_addresses
+            .iter()
+            .map(|s| sa4_from_sa_todo_remove_use_of_socketaddr(*s))
+            .collect(),
     };
     let encoded = peer
         .to_encoded_bytes()
