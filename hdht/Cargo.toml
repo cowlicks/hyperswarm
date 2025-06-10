@@ -55,5 +55,9 @@ features = [ "serde" ]
 [dev-dependencies.async-udx]
 path = "../../async-udx/"
 
+# TODO RMME
+[dependencies.hypercore-protocol]
+path = "../../protocol"
+
 [dev-dependencies.hypercore-protocol]
 path = "../../protocol//"
