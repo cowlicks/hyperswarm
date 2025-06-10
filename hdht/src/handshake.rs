@@ -384,9 +384,12 @@ macro_rules! else_zero {
 // NB: in JS version, error & firewall are ncedoded as variable sized uints. But they add a
 // constant "1" byte for each. Which could possibly break if these valuse get too big.
 // Here and elsewhere I choose to copy this behavior.
-#[derive(Debug)]
+#[derive(Debug, derive_builder::Builder)]
+#[builder(pattern = "owned")]
 pub struct NoisePayload {
+    #[builder(default = NOISE_PAYLOAD_VERSION)]
     pub version: usize,
+    #[builder(default = NO_ERROR_NOISE_PAYLOAD_VALUE)]
     pub error: usize,
     pub firewall: usize,
     pub holepunch: Option<HolepunchInfo>,
