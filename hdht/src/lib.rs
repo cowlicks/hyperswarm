@@ -15,6 +15,10 @@ use std::{
     time::Duration,
 };
 
+use cenc::{
+    NoisePayloadBuilderError, PeerHandshakePayload, PeerHandshakePayloadBuilderError,
+    RelayThroughInfoBuilderError, UdxInfoBuilderError,
+};
 use compact_encoding::{CompactEncoding, EncodingError};
 use crypto::PublicKey;
 use dht_rpc::{
@@ -29,7 +33,6 @@ use futures::{
     Stream, StreamExt,
 };
 use futuresmap::FuturesMap;
-use handshake::PeerHandshakePayload;
 use prost::Message as ProstMessage;
 use queries::{
     AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,
@@ -60,7 +63,7 @@ mod dht_proto {
 pub mod cenc;
 mod crypto;
 mod futuresmap;
-mod handshake;
+pub mod handshake;
 pub mod lru;
 mod queries;
 mod router;
@@ -124,6 +127,14 @@ pub enum Error {
     InvalidSignature(i32),
     #[error("Future Request error")]
     FutureRequestFailed(#[from] RequestFutureError),
+    #[error("Error building PeerHandshakePayload: {0}")]
+    PeerHandshakePayloadBuilder(#[from] PeerHandshakePayloadBuilderError),
+    #[error("Error building UdxInfo: {0}")]
+    UdxInfoBuilder(#[from] UdxInfoBuilderError),
+    #[error("Error building NoisePaylod: {0}")]
+    NoisePayloadBuilder(#[from] NoisePayloadBuilderError),
+    #[error("Error building RelayThroughInfo: {0}")]
+    RelayThroughInfoBuilder(#[from] RelayThroughInfoBuilderError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -152,6 +163,7 @@ pub struct HyperDht {
     /// Queued events to return when being polled.
     queued_events: VecDeque<HyperDhtEvent>,
     /// Default keypair
+    #[allow(unused)] // TODO
     default_keypair: Keypair,
     /// Router for peer connections
     #[allow(unused)] // TODO
@@ -400,6 +412,8 @@ impl HyperDht {
         // maybe instead we return something from the block to do the msg that we want?
         // however I want to pass in an id from the request.
         // I really just want a mut ref to the query, but
+        //
+        // Handle responses to queries
         if let Some((query, qid)) = resp
             .query_id
             .and_then(|qid| self.queries.get_mut(&qid).map(|q| (q, qid)))
