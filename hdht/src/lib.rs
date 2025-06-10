@@ -30,6 +30,7 @@ use futures::{
     Stream, StreamExt,
 };
 use futuresmap::FuturesMap;
+use handshake::PeerHandshakePayload;
 use prost::Message as ProstMessage;
 use queries::{
     AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,

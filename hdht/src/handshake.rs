@@ -46,14 +46,14 @@ impl CompactEncoding for HandshakeSteps {
 }
 
 #[derive(Debug)]
-pub struct Handshake {
+pub struct PeerHandshakePayload {
     peer_address: Option<SocketAddrV4>,
     relay_address: Option<SocketAddrV4>,
     mode: HandshakeSteps,
     noise: Vec<u8>,
 }
 
-impl Handshake {
+impl PeerHandshakePayload {
     pub fn new(
         mode: HandshakeSteps,
         noise: Vec<u8>,
@@ -69,7 +69,7 @@ impl Handshake {
     }
 }
 
-impl CompactEncoding for Handshake {
+impl CompactEncoding for PeerHandshakePayload {
     fn encoded_size(&self) -> Result<usize, compact_encoding::EncodingError> {
         Ok(1 /* flags */ + self.mode.encoded_size()?
             + (if self.peer_address.is_some() { SOCKET_ADDR_V4_ENCODED_SIZE } else { 0 })
