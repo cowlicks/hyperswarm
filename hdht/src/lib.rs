@@ -63,7 +63,6 @@ mod dht_proto {
 pub mod cenc;
 mod crypto;
 mod futuresmap;
-pub mod handshake;
 pub mod lru;
 mod queries;
 mod router;
