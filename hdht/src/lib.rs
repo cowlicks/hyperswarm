@@ -35,6 +35,7 @@ use queries::{
     AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,
     LookupInner, LookupResponse, QueryResult, UnannounceInner, UnannounceResult,
 };
+use router::Router;
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{debug, error, instrument, trace, warn};
@@ -62,6 +63,7 @@ mod futuresmap;
 mod handshake;
 pub mod lru;
 mod queries;
+mod router;
 mod store;
 
 pub use crypto::{
@@ -151,6 +153,9 @@ pub struct HyperDht {
     queued_events: VecDeque<HyperDhtEvent>,
     /// Default keypair
     default_keypair: Keypair,
+    /// Router for peer connections
+    #[allow(unused)] // TODO
+    router: Router,
 }
 
 impl HyperDht {
@@ -173,6 +178,7 @@ impl HyperDht {
             store: Store::new(5000),
             queued_events: Default::default(),
             default_keypair: Default::default(),
+            router: Default::default(),
         })
     }
 
