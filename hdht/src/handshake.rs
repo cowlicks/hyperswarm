@@ -6,9 +6,9 @@ use compact_encoding::{
     VecEncodable, SOCKET_ADDR_V4_ENCODED_SIZE,
 };
 
-const RELAY_THROUGH_INFO_VERSION: usize = 1;
-const SECRET_STREAM_INFO_VERSION: usize = 1;
 const UDX_INFO_VERSION: usize = 1;
+const SECRET_STREAM_INFO_VERSION: usize = 1;
+const RELAY_THROUGH_INFO_VERSION: usize = 1;
 const NOISE_PAYLOAD_VERSION: usize = 1;
 const NO_ERROR_NOISE_PAYLOAD_VALUE: usize = 0;
 
@@ -209,8 +209,10 @@ impl CompactEncoding for HolepunchInfo {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, derive_builder::Builder)]
+#[builder(pattern = "owned")]
 pub struct UdxInfo {
+    #[builder(default = UDX_INFO_VERSION)]
     pub version: usize,
     pub reusable_socket: bool,
     pub id: usize,
@@ -251,6 +253,14 @@ pub struct SecretStreamInfo {
     version: usize,
 }
 
+impl Default for SecretStreamInfo {
+    fn default() -> Self {
+        Self {
+            version: SECRET_STREAM_INFO_VERSION,
+        }
+    }
+}
+
 impl CompactEncoding for SecretStreamInfo {
     fn encoded_size(&self) -> Result<usize, EncodingError> {
         Ok(sum_encoded_size!(self.version))
@@ -270,7 +280,55 @@ impl CompactEncoding for SecretStreamInfo {
 }
 
 #[derive(Debug)]
+pub struct RelayInfo {
+    relay_address: SocketAddrV4,
+    peer_address: SocketAddrV4,
+}
+impl RelayInfo {
+    const ENCODED_SIZE: usize = SOCKET_ADDR_V4_ENCODED_SIZE * 2;
+}
+impl CompactEncoding for RelayInfo {
+    fn encoded_size(&self) -> Result<usize, EncodingError> {
+        Ok(SOCKET_ADDR_V4_ENCODED_SIZE * 2)
+    }
+
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
+        let rest = SocketAddrV4::encode(&self.relay_address, buffer)?;
+        SocketAddrV4::encode(&self.peer_address, rest)
+    }
+
+    fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let ((relay_address, peer_address), rest) =
+            map_decode!(buffer, [SocketAddrV4, SocketAddrV4]);
+        Ok((
+            Self {
+                relay_address,
+                peer_address,
+            },
+            rest,
+        ))
+    }
+}
+
+impl VecEncodable for RelayInfo {
+    fn vec_encoded_size(vec: &[Self]) -> Result<usize, EncodingError>
+    where
+        Self: Sized,
+    {
+        Ok(vec_encoded_size_for_fixed_sized_elements(
+            vec,
+            RelayInfo::ENCODED_SIZE,
+        ))
+    }
+}
+
+#[derive(Debug, derive_builder::Builder)]
+#[builder(pattern = "owned")]
 pub struct RelayThroughInfo {
+    #[builder(default = RELAY_THROUGH_INFO_VERSION)]
     version: usize,
     public_key: [u8; 32],
     token: [u8; 32],
@@ -296,7 +354,7 @@ impl CompactEncoding for RelayThroughInfo {
     where
         Self: Sized,
     {
-        let ((version, flags, public_key, token), rest) =
+        let ((version, _flags, public_key, token), rest) =
             map_decode!(buffer, [usize, usize, [u8; 32], [u8; 32]]);
         Ok((
             Self {
@@ -374,7 +432,7 @@ impl CompactEncoding for NoisePayload {
         flags |= else_zero!(self.secret_stream.is_some(), 1 << 4);
         flags |= else_zero!(self.relay_through.is_some(), 1 << 5);
 
-        let mut rest = map_encode!(buffer, 1_usize, flags, self.error, self.firewall);
+        let mut rest = map_encode!(buffer, self.version, flags, self.error, self.firewall);
 
         if let Some(hp) = &self.holepunch {
             rest = hp.encode(rest)?;
@@ -416,7 +474,7 @@ impl CompactEncoding for NoisePayload {
         // NoisePaylod. So... this seems wrong. Currently this panics. I think ti should be an
         // error. But maybe not a kind we currently have in compact_encoding. Maybe a new:
         // IncompatibleVersion error should be added.
-        if version != 1 {
+        if version != NOISE_PAYLOAD_VERSION {
             return Ok((
                 Self {
                     version,
