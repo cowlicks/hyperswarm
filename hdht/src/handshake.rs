@@ -6,6 +6,12 @@ use compact_encoding::{
     VecEncodable, SOCKET_ADDR_V4_ENCODED_SIZE,
 };
 
+const RELAY_THROUGH_INFO_VERSION: usize = 1;
+const SECRET_STREAM_INFO_VERSION: usize = 1;
+const UDX_INFO_VERSION: usize = 1;
+const NOISE_PAYLOAD_VERSION: usize = 1;
+const NO_ERROR_NOISE_PAYLOAD_VALUE: usize = 0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HandshakeSteps {
     FromClient = 0,
@@ -249,7 +255,6 @@ impl CompactEncoding for HolepunchInfo {
     }
 }
 
-const UDX_INFO_VERSION: usize = 1;
 #[derive(Debug)]
 pub struct UdxInfo {
     pub version: usize,
@@ -287,7 +292,6 @@ impl CompactEncoding for UdxInfo {
     }
 }
 
-const SECRET_STREAM_INFO_VERSION: usize = 1;
 #[derive(Debug)]
 pub struct SecretStreamInfo {
     version: usize,
@@ -310,8 +314,6 @@ impl CompactEncoding for SecretStreamInfo {
         Ok((Self { version }, rest))
     }
 }
-
-const RELAY_THROUGH_INFO_VERSION: usize = 1;
 
 #[derive(Debug)]
 pub struct RelayThroughInfo {
