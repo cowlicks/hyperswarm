@@ -33,6 +33,8 @@ features = ["rt", "net", "sync"]
 [dependencies.compact-encoding]
 path = "../../compact-encoding"
 
+[dependencies.async-udx]
+path = "../../async-udx/"
 
 [build-dependencies]
 prost-build = "0.6.1"
@@ -51,9 +53,6 @@ async-compat = "0.2.1"
 path= "../../js-repl-rs"
 features = [ "serde" ]
 #version = "0.2.1"
-
-[dev-dependencies.async-udx]
-path = "../../async-udx/"
 
 # TODO RMME
 [dependencies.hypercore-protocol]
