@@ -9,6 +9,7 @@ use compact_encoding::{
 use std::net::{SocketAddrV4, SocketAddrV6};
 
 const UDX_INFO_VERSION: usize = 1;
+const UDX_INFO_DEFAULT_SEQ: usize = 0;
 const SECRET_STREAM_INFO_VERSION: usize = 1;
 const RELAY_THROUGH_INFO_VERSION: usize = 1;
 const NOISE_PAYLOAD_VERSION: usize = 1;
@@ -169,7 +170,9 @@ impl CompactEncoding for HandshakeSteps {
 #[derive(Debug, derive_builder::Builder)]
 #[builder(pattern = "owned")]
 pub struct PeerHandshakePayload {
+    #[builder(default = None)]
     peer_address: Option<SocketAddrV4>,
+    #[builder(default = None)]
     relay_address: Option<SocketAddrV4>,
     mode: HandshakeSteps,
     noise: Vec<u8>,
@@ -315,7 +318,9 @@ pub struct UdxInfo {
     #[builder(default = UDX_INFO_VERSION)]
     pub version: usize,
     pub reusable_socket: bool,
+    // TODO this comes from udx socket id which is a u32. So shoul it be u32?
     pub id: usize,
+    #[builder(default = UDX_INFO_DEFAULT_SEQ)]
     pub seq: usize,
 }
 
@@ -493,6 +498,13 @@ macro_rules! else_zero {
     };
 }
 
+pub mod firewall {
+    pub const UNKNOWN: usize = 0;
+    pub const OPEN: usize = 1;
+    pub const CONSISTENT: usize = 2;
+    pub const RANDOM: usize = 3;
+}
+
 // NB: in JS version, error & firewall are ncedoded as variable sized uints. But they add a
 // constant "1" byte for each. Which could possibly break if these valuse get too big.
 // Here and elsewhere I choose to copy this behavior.
@@ -504,11 +516,15 @@ pub struct NoisePayload {
     #[builder(default = NO_ERROR_NOISE_PAYLOAD_VALUE)]
     pub error: usize,
     pub firewall: usize,
+    #[builder(default = None)]
     pub holepunch: Option<HolepunchInfo>,
     pub addresses4: Option<Vec<SocketAddrV4>>,
+    #[builder(default = None)]
     pub addresses6: Option<Vec<SocketAddrV6>>,
     pub udx: Option<UdxInfo>,
+    #[builder(default = None)]
     pub secret_stream: Option<SecretStreamInfo>,
+    #[builder(default = None)]
     pub relay_through: Option<RelayThroughInfo>,
 }
 
