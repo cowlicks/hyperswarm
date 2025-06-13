@@ -346,12 +346,7 @@ impl IoHandler {
         query_id: Option<QueryId>,
         token: Option<[u8; 32]>,
     ) -> QueryAndTid {
-        let id = if !self.ephemeral {
-            Some(self.id().0)
-        } else {
-            None
-        };
-
+        let id = (!self.ephemeral).then(|| self.id().0);
         let tid = self.new_tid();
         self.enqueue_request((
             query_id,
@@ -375,12 +370,7 @@ impl IoHandler {
         closer_nodes: Option<Vec<Peer>>,
         peer: &Peer,
     ) -> crate::Result<()> {
-        let id = if !self.ephemeral {
-            Some(self.id().0)
-        } else {
-            None
-        };
-
+        let id = (!self.ephemeral).then(|| self.id().0);
         let token = Some(self.token(peer, 1)?);
 
         self.enqueue_reply(ReplyMsgData {
@@ -409,11 +399,7 @@ impl IoHandler {
         closer_nodes: Option<Vec<Peer>>,
         peer: Peer,
     ) -> crate::Result<()> {
-        let id = if !self.ephemeral {
-            Some(self.id().0)
-        } else {
-            None
-        };
+        let id = (!self.ephemeral).then(|| self.id().0);
         let token = Some(self.token(&peer, 1)?);
         self.enqueue_reply(ReplyMsgData {
             tid: request.tid,
