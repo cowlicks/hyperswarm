@@ -1,9 +1,13 @@
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    net::{SocketAddr, SocketAddrV4},
+    sync::Arc,
+};
 
 use crate::{
     cenc::validate_id,
     futreqs::{new_request_channel, RequestFuture, RequestSender},
-    IdBytes, RequestMsgDataInner, Result,
+    Error, IdBytes, RequestMsgDataInner, Result,
 };
 use fnv::FnvHashMap;
 use futures::{
@@ -118,6 +122,39 @@ impl InResponse {
             query_id,
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub struct OutRequestBuilder {
+    tid: Option<u16>,
+    query_id: Option<QueryId>,
+    peer_id: Option<[u8; 32]>,
+    destination: Option<SocketAddrV4>,
+    referrer: Option<SocketAddr>,
+    command: Option<Command>,
+    token: Option<[u8; 32]>,
+    target: Option<[u8; 32]>,
+    value: Option<Vec<u8>>,
+}
+
+macro_rules! setter {
+    ($name:ident, $type:ty) => {
+        pub fn $name(mut self, $name: $type) -> Self {
+            self.$name = Some($name);
+            self
+        }
+    };
+}
+impl OutRequestBuilder {
+    setter!(tid, u16);
+    setter!(query_id, QueryId);
+    setter!(peer_id, [u8; 32]);
+    setter!(destination, SocketAddrV4);
+    setter!(referrer, SocketAddr);
+    setter!(command, Command);
+    setter!(token, [u8; 32]);
+    setter!(target, [u8; 32]);
+    setter!(value, Vec<u8>);
 }
 
 /// OutMessage contains outgoing messages data, including local metadata for managing messages
@@ -262,6 +299,44 @@ impl IoHandler {
         self.pending_send.push_back(OutMessage::Reply(msg));
     }
 
+    pub fn request_from_builder(
+        &mut self,
+        OutRequestBuilder {
+            tid,
+            query_id,
+            peer_id,
+            destination,
+            referrer,
+            command,
+            token,
+            target,
+            value,
+        }: OutRequestBuilder,
+    ) -> Result<QueryAndTid> {
+        let id = (!self.ephemeral).then(|| self.id().0);
+        let tid = tid.unwrap_or_else(|| self.new_tid());
+        let addr = destination
+            .ok_or(Error::RequestBuilderError("destination".into()))?
+            .into();
+        let command = command.ok_or(Error::RequestBuilderError("command".to_string()))?;
+        self.enqueue_request((
+            query_id,
+            RequestMsgData {
+                tid,
+                to: Peer {
+                    addr,
+                    id: peer_id,
+                    referrer,
+                },
+                id,
+                token,
+                command,
+                target,
+                value,
+            },
+        ));
+        Ok((query_id, tid))
+    }
     pub fn request(
         &mut self,
         command: Command,

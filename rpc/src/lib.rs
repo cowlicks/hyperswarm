@@ -113,6 +113,8 @@ pub enum Error {
     RequestFailed(#[from] RequestFutureError),
     #[error("Error trying to send message to IoHandler")]
     RequestChannelSendError(),
+    #[error("Error building request. Missing field: {0}")]
+    RequestBuilderError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
