@@ -8,11 +8,7 @@ use dht_rpc::{
 use futures::{stream::FuturesUnordered, Stream};
 use tracing::{error, warn};
 
-use crate::{
-    commands::{ANNOUNCE, LOOKUP},
-    crypto::Keypair,
-    request_announce_or_unannounce_value, Result,
-};
+use crate::{commands, crypto::Keypair, request_announce_or_unannounce_value, Result};
 
 use super::UnannounceRequest;
 
@@ -47,7 +43,7 @@ impl AunnounceClearInner {
         resp: Arc<InResponse>,
         query_id: QueryId,
     ) {
-        if let (Some(token), Some(id), Command::External(ExternalCommand(LOOKUP))) =
+        if let (Some(token), Some(id), commands::LOOKUP) =
             (&resp.response.token, &resp.valid_peer_id(), resp.cmd())
         {
             let destination = PeerId {
@@ -121,7 +117,7 @@ impl Future for AunnounceClearInner {
                     to: cr.peer.clone(),
                     // TODO we should have token here. assert?
                     token: cr.response.token,
-                    command: Command::External(ExternalCommand(ANNOUNCE)),
+                    command: commands::ANNOUNCE,
                     target: Some(self.topic.0),
                     value,
                 };

@@ -1,7 +1,7 @@
 use std::{future::Future, mem::take, pin::Pin, sync::Arc, task::Poll};
 
 use crate::{
-    commands::{self, LOOKUP},
+    commands,
     crypto::{namespace, Keypair},
     request_announce_or_unannounce_value, HyperDhtEvent, Result,
 };
@@ -179,7 +179,7 @@ impl UnannounceInner {
         resp: Arc<InResponse>,
         query_id: QueryId,
     ) {
-        if let (Some(token), Some(id), Command::External(ExternalCommand(LOOKUP))) =
+        if let (Some(token), Some(id), commands::LOOKUP) =
             (&resp.response.token, &resp.valid_peer_id(), resp.cmd())
         {
             let destination = PeerId {
@@ -324,7 +324,7 @@ impl From<UnannounceRequest> for RequestMsgDataInner {
         RequestMsgDataInner {
             to: destination,
             token: Some(token),
-            command: Command::External(ExternalCommand(commands::UNANNOUNCE)),
+            command: commands::UNANNOUNCE,
             target: Some(topic.0),
             value: Some(value),
         }

@@ -19,11 +19,12 @@ use cenc::{
     NoisePayloadBuilderError, PeerHandshakePayload, PeerHandshakePayloadBuilderError,
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
+use commands::LOOKUP;
 use compact_encoding::{CompactEncoding, EncodingError};
 use crypto::PublicKey;
 use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
-    io::{InResponse, MessageSender},
+    io::{InResponse, MessageSender, OutRequestBuilder},
     query::{Query, QueryResult as RpcQueryResult},
     RequestFutureError, Tid,
 };
@@ -84,12 +85,22 @@ pub(crate) const ERR_INVALID_SEQ: usize = 11;
 pub(crate) const ERR_SEQ_MUST_EXCEED_CURRENT: usize = 13;
 
 pub mod commands {
-    pub const PEER_HANDSHAKE: usize = 0;
-    pub const PEER_HOLEPUNCH: usize = 1;
-    pub const FIND_PEER: usize = 2;
-    pub const LOOKUP: usize = 3;
-    pub const ANNOUNCE: usize = 4;
-    pub const UNANNOUNCE: usize = 5;
+    use dht_rpc::{Command, ExternalCommand};
+
+    pub const PEER_HANDSHAKE: Command = Command::External(ExternalCommand(values::PEER_HANDSHAKE));
+    pub const PEER_HOLEPUNCH: Command = Command::External(ExternalCommand(values::PEER_HOLEPUNCH));
+    pub const FIND_PEER: Command = Command::External(ExternalCommand(values::FIND_PEER));
+    pub const LOOKUP: Command = Command::External(ExternalCommand(values::LOOKUP));
+    pub const ANNOUNCE: Command = Command::External(ExternalCommand(values::ANNOUNCE));
+    pub const UNANNOUNCE: Command = Command::External(ExternalCommand(values::UNANNOUNCE));
+    pub mod values {
+        pub const PEER_HANDSHAKE: usize = 0;
+        pub const PEER_HOLEPUNCH: usize = 1;
+        pub const FIND_PEER: usize = 2;
+        pub const LOOKUP: usize = 3;
+        pub const ANNOUNCE: usize = 4;
+        pub const UNANNOUNCE: usize = 5;
+    }
 }
 /// The command identifier for `Mutable` storage
 pub const MUTABLE_STORE_CMD: usize = 1;
@@ -307,12 +318,9 @@ impl HyperDht {
     pub fn find_peer(&mut self, pub_key: PublicKey) -> QueryId {
         let target = IdBytes(generic_hash(&*pub_key));
 
-        let query_id = self.rpc.query(
-            Command::External(ExternalCommand(commands::FIND_PEER)),
-            target,
-            None,
-            Commit::No,
-        );
+        let query_id = self
+            .rpc
+            .query(commands::FIND_PEER, target, None, Commit::No);
         self.queries.insert(
             query_id,
             QueryStreamType::FindPeer(FindPeerInner::new(query_id, target)),
@@ -325,12 +333,7 @@ impl HyperDht {
     /// The result of the query is delivered in a
     /// [`HyperDhtEvent::LookupResult`].
     pub fn lookup(&mut self, target: IdBytes, commit: Commit) -> QueryId {
-        let query_id = self.rpc.query(
-            Command::External(ExternalCommand(commands::LOOKUP)),
-            target,
-            None,
-            commit,
-        );
+        let query_id = self.rpc.query(commands::LOOKUP, target, None, commit);
         self.queries.insert(
             query_id,
             QueryStreamType::Lookup(LookupInner::new(query_id, target)),
@@ -348,7 +351,7 @@ impl HyperDht {
         _relay_addresses: &[SocketAddr],
     ) -> QueryId {
         let qid = self.rpc.query(
-            Command::External(ExternalCommand(commands::LOOKUP)),
+            commands::LOOKUP,
             target,
             None,
             Commit::Custom(Progress::default()),
@@ -370,7 +373,7 @@ impl HyperDht {
         _relay_addresses: &[SocketAddr],
     ) -> QueryId {
         let qid = self.rpc.query(
-            Command::External(ExternalCommand(commands::LOOKUP)),
+            commands::LOOKUP,
             target,
             None,
             Commit::Custom(Progress::default()),
@@ -388,12 +391,7 @@ impl HyperDht {
     /// The result of the query is delivered in a
     /// [`HyperDhtEvent::UnAnnounceResult`].
     pub fn unannounce(&mut self, target: IdBytes, key_pair: &Keypair) -> QueryId {
-        let qid = self.rpc.query(
-            Command::External(ExternalCommand(commands::LOOKUP)),
-            target,
-            None,
-            Commit::No,
-        );
+        let qid = self.rpc.query(commands::LOOKUP, target, None, Commit::No);
         self.queries.insert(
             qid,
             QueryStreamType::UnAnnounce(UnannounceInner::new(target, key_pair.clone())),
@@ -513,7 +511,7 @@ impl HyperDht {
             destination,
             relay_addresses,
             &crate::crypto::namespace::ANNOUNCE,
-            ExternalCommand(commands::ANNOUNCE),
+            ExternalCommand(commands::values::ANNOUNCE),
         )
     }
 
@@ -532,7 +530,7 @@ impl HyperDht {
             destination,
             &[],
             &crate::crypto::namespace::UNANNOUNCE,
-            ExternalCommand(commands::UNANNOUNCE),
+            ExternalCommand(commands::values::UNANNOUNCE),
         )
     }
 }
@@ -797,7 +795,7 @@ impl QueryStreamType {
                     );
                     channel
                         .try_send(CommitMessage::Send(CommitRequestParams {
-                            command: Command::External(ExternalCommand(commands::ANNOUNCE)),
+                            command: commands::ANNOUNCE,
                             target: Some(inner.topic),
                             value: Some(request_announce_or_unannounce_value(
                                 &inner.keypair,
