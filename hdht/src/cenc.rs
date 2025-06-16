@@ -134,7 +134,7 @@ pub enum HandshakeSteps {
     FromServer = 1,
     FromRelay = 2,
     FromSecondRelay = 3,
-    Repl = 4,
+    Reply = 4,
 }
 
 impl CompactEncoding for HandshakeSteps {
@@ -156,7 +156,7 @@ impl CompactEncoding for HandshakeSteps {
             1 => HandshakeSteps::FromServer,
             2 => HandshakeSteps::FromRelay,
             3 => HandshakeSteps::FromSecondRelay,
-            4 => HandshakeSteps::Repl,
+            4 => HandshakeSteps::Reply,
             x => {
                 return Err(EncodingError::invalid_data(&format!(
                     "Invalid value [{x}] for decoding HandshakeParts"
