@@ -25,6 +25,7 @@ mod s_test;
 pub mod test;
 use constants::ID_BYTES_LENGTH;
 use futures::{channel::mpsc, Stream};
+use io::OutRequestBuilder;
 use query::{CommandQueryResponse, QueryResult};
 use std::{
     array::TryFromSliceError,
@@ -448,6 +449,9 @@ impl RpcDht {
             .add_stream(cmd, peers, target, value, bootstrap_nodes, commit)
     }
 
+    pub fn request_from_builder(&mut self, req: OutRequestBuilder) -> Result<Tid> {
+        Ok(self.io.request_from_builder(req)?.1)
+    }
     pub fn request(
         &mut self,
         command: Command,
