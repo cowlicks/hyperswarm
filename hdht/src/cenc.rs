@@ -175,7 +175,7 @@ pub struct PeerHandshakePayload {
     #[builder(default = None)]
     relay_address: Option<SocketAddrV4>,
     mode: HandshakeSteps,
-    noise: Vec<u8>,
+    pub noise: Vec<u8>,
 }
 
 impl CompactEncoding for PeerHandshakePayload {

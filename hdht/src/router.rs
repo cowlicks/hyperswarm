@@ -9,7 +9,10 @@ use hypercore_protocol::{handshake_constants::DHT_PATTERN, Handshake, HandshakeC
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use crate::{
-    cenc::{firewall, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder},
+    cenc::{
+        firewall, NoisePayloadBuilder, PeerHandshakePayload, PeerHandshakePayloadBuilder,
+        UdxInfoBuilder,
+    },
     namespace, Error,
 };
 
@@ -52,8 +55,14 @@ fn dht_handshake_config(remote_public_key: [u8; 32]) -> HandshakeConfig {
 }
 
 impl Router {
-    fn inject_response(&mut self, _resp: Arc<InResponse>) {
-        todo!()
+    pub fn inject_response(
+        &mut self,
+        resp: &Arc<InResponse>,
+        ph: PeerHandshakePayload,
+    ) -> Result<(), Error> {
+        let conn = self.connections.get_mut(&resp.request.tid).unwrap();
+        let res = conn.handshake.read_raw(&ph.noise)?;
+        todo!();
     }
     /// Create the first payload for the handshake protocol. Create and store an object for
     /// tracking the handshake state.

@@ -19,7 +19,6 @@ use cenc::{
     NoisePayloadBuilderError, PeerHandshakePayload, PeerHandshakePayloadBuilderError,
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
-use commands::LOOKUP;
 use compact_encoding::{CompactEncoding, EncodingError};
 use crypto::PublicKey;
 use dht_rpc::{
@@ -436,6 +435,26 @@ impl HyperDht {
             if let Some(e) = event {
                 self.queued_events.push_back(e);
             }
+        } else {
+            // handle respones to non-queries
+            match resp.request.command {
+                Command::Internal(_) => {
+                    // TODO
+                }
+                commands::PEER_HANDSHAKE => {
+                    match PeerHandshakePayload::decode(
+                        &resp.response.value.clone().expect("with value"),
+                    ) {
+                        Ok((hs, _rest)) => {
+                            dbg!(self.router.inject_response(&resp, hs)).expect("TODO");
+                        }
+                        Err(e) => todo!("{e:?}"),
+                    }
+                }
+                Command::External(_) => {
+                    // TODO
+                }
+            }
         }
     }
 
@@ -458,6 +477,31 @@ impl HyperDht {
             panic!("Tried to commit with an unknown query id: [{id:?}]");
         };
         qst.commit(query, channel);
+    }
+
+    pub fn request_peer_handshake(
+        &mut self,
+        remote_public_key: PublicKey,
+        destination: SocketAddrV4,
+    ) -> Result<Tid> {
+        let tid = self.rpc.new_tid();
+
+        let SocketAddr::V4(addr) = self.local_addr()? else {
+            todo!()
+        };
+
+        let value = self
+            .router
+            .first_step(tid, *remote_public_key, Some(vec![addr]))
+            .unwrap();
+        let req = OutRequestBuilder::default()
+            .destination(destination)
+            .value(value)
+            .target(generic_hash(&*remote_public_key))
+            .command(commands::PEER_HANDSHAKE)
+            .tid(tid);
+        self.rpc.request_from_builder(req)?;
+        Ok(tid)
     }
 
     fn request_announce_or_unannounce(
