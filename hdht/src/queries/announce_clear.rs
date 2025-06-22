@@ -3,7 +3,7 @@ use std::{future::Future, mem::take, pin::Pin, sync::Arc, task::Poll};
 use dht_rpc::{
     io::{InResponse, IoHandler, MessageSender},
     query::{QueryId, QueryResult},
-    Command, ExternalCommand, IdBytes, PeerId, RequestFuture, RequestMsgDataInner,
+    IdBytes, PeerId, RequestFuture, RequestMsgDataInner,
 };
 use futures::{stream::FuturesUnordered, Stream};
 use tracing::{error, warn};

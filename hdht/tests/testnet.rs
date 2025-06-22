@@ -12,7 +12,7 @@ use hyperdht::{
     namespace::PEER_HANDSHAKE,
     HyperDht, HyperDhtEvent, Keypair,
 };
-use rusty_nodejs_repl::Repl;
+use rusty_nodejs_repl::{integration_utils::log, wait, Repl};
 
 #[allow(unused)]
 fn show_bytes<T: AsRef<[u8]>>(x: T) {
@@ -313,7 +313,7 @@ await server.listen(server_node.defaultKeyPair);
         remote_public_key: Some(pub_key),
     };
 
-    let mut hphs = hypercore_protocol::Handshake::new_with_config(true, &hc)?;
+    let mut hphs = hypercore_protocol::Handshake::new(true, &hc)?;
     hphs.set_payload(np_bytes.to_vec());
     let noise_payload = hphs.start_raw()?.unwrap();
     let js_payload = serde_json::to_string(&noise_payload)?;
@@ -333,12 +333,11 @@ writeJson(res);
     assert!(res.matches("\"relayThrough\":null").next().is_some());
     Ok(())
 }
-/*
 /// In Rust create a "Server" and do a "listen" on `public_key`
 /// Then in JavaScript do a `dht.findPeer(public_key)`.
 /// And verify it finds the rust Server
 #[tokio::test]
-async fn js_server_rs_connects() -> Result<()> {
+async fn js_server_rs_init_peer_handshake() -> Result<()> {
     let (mut tn, mut hdht) = setup_rs_node_and_js_testnet!();
 
     // with js announc on topic with the node's default keypair
@@ -385,8 +384,29 @@ const { host, port } = server_node.address();
         writeJson(`${host}:${port}`);",
         )
         .await?;
-    let server_addr: SocketAddr = addr.parse()?;
+    let SocketAddr::V4(js_server_socket) = addr.parse()? else {
+        panic!()
+    };
+    log();
+    let tid = hdht.request_peer_handshake(pub_key.into(), js_server_socket)?;
 
-    todo!("start connecting to the  peer");
+    //let next = hdht.next();
+
+    tokio::spawn(async move {
+        loop {
+            match dbg!(hdht.next().await) {
+                Some(HyperDhtEvent::Bootstrapped { .. }) => {}
+                Some(HyperDhtEvent::FindPeerResult(_)) => break,
+                Some(HyperDhtEvent::FindPeerResponse(r)) => resps.push(r),
+                Some(_) => todo!(),
+                None => todo!(),
+            }
+        }
+    });
+    loop {
+        println!("stdou: {}", tn.repl.drain_stdout_string().await?);
+        wait!(1000);
+    }
+    todo!("start connecting to the  pee {tid}r");
     Ok(())
 }

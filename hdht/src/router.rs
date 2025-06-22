@@ -62,7 +62,10 @@ impl Router {
     ) -> Result<(), Error> {
         let conn = self.connections.get_mut(&resp.request.tid).unwrap();
         let res = conn.handshake.read_raw(&ph.noise)?;
+        //dbg!(res);
         todo!();
+
+        Ok(())
     }
     /// Create the first payload for the handshake protocol. Create and store an object for
     /// tracking the handshake state.

@@ -74,7 +74,24 @@ impl Stream for MessageDataStream {
                         );
                         Poll::Ready(Some(Ok((msg, addr))))
                     }
-                    Err(e) => Poll::Ready(Some(Err(e.into()))),
+                    Err(e) => {
+                        tracing::error!(
+                            "Faillllllllllllllllll
+
+
+
+                        !!!!!!!!!!!!
+
+buff: {buff:?}
+
+
+as_str: {}
+
+                        ",
+                            String::from_utf8_lossy(&buff)
+                        );
+                        Poll::Ready(Some(Err(e.into())))
+                    }
                 }
             }
             Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e.into()))),

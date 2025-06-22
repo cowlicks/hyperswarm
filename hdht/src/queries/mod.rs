@@ -11,7 +11,7 @@ use compact_encoding::CompactEncoding;
 use dht_rpc::{
     io::{InResponse, IoHandler},
     query::QueryId,
-    Command, ExternalCommand, IdBytes, Peer, PeerId, RequestFuture, RequestMsgDataInner,
+    IdBytes, Peer, PeerId, RequestFuture, RequestMsgDataInner,
 };
 use tracing::{error, instrument, trace, warn};
 
