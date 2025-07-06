@@ -51,12 +51,9 @@ async-compat = "0.2.1"
 
 [dev-dependencies.rusty_nodejs_repl]
 path= "../../js-repl-rs"
-features = [ "serde" ]
+features = [ "serde" , "integration_utils"]
 #version = "0.2.1"
 
 # TODO RMME
 [dependencies.hypercore-protocol]
 path = "../../protocol"
-
-[dev-dependencies.hypercore-protocol]
-path = "../../protocol//"
