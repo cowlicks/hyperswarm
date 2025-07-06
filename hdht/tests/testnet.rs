@@ -313,7 +313,7 @@ await server.listen(server_node.defaultKeyPair);
         remote_public_key: Some(pub_key),
     };
 
-    let mut hphs = hypercore_protocol::Handshake::new_with_config(true, &hc)?;
+    let mut hphs = hypercore_protocol::Handshake::new(true, &hc)?;
     hphs.set_payload(np_bytes.to_vec());
     let noise_payload = hphs.start_raw()?.unwrap();
     let js_payload = serde_json::to_string(&noise_payload)?;
