@@ -35,6 +35,17 @@ pub async fn make_repl() -> Repl {
     let mut conf = Config::build().unwrap();
     conf.before.push(
         "
+deferred = () => {
+  const o = {};
+  const p = new Promise((resolve_og, reject) => {
+      const resolve = (...x) => {
+        p.ready = true;
+        resolve_og(...x);
+      }
+      Object.assign(o, {resolve, reject, ready: false});
+  });
+  return Object.assign(p, o);
+}
 stringify = JSON.stringify;
 write = process.stdout.write.bind(process.stdout);
 writeJson = x => write(stringify(x))
