@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+use async_udx::{UdxSocket, UdxStream};
 use cenc::{
     NoisePayloadBuilderError, PeerHandshakePayload, PeerHandshakePayloadBuilderError,
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
@@ -33,6 +34,7 @@ use futures::{
     Stream, StreamExt,
 };
 use futuresmap::FuturesMap;
+use hypercore_protocol::EncryptCipher;
 use prost::Message as ProstMessage;
 use queries::{
     AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,
@@ -445,8 +447,11 @@ impl HyperDht {
                     match PeerHandshakePayload::decode(
                         &resp.response.value.clone().expect("with value"),
                     ) {
-                        Ok((hs, _rest)) => {
-                            dbg!(self.router.inject_response(&resp, hs)).expect("TODO");
+                        Ok((hs, rest)) => {
+                            let _ = self.router.inject_response(&resp, hs, &mut |e| {
+                                self.queued_events.push_back(e)
+                            });
+                            debug_assert!(rest.is_empty(), "respones completely used")
                         }
                         Err(e) => todo!("{e:?}"),
                     }
@@ -691,6 +696,7 @@ pub enum HyperDhtEvent {
         /// The peer the message originated from.
         peer: Peer,
     },
+    Connected((Tid, UdxStream, UdxSocket, Option<EncryptCipher>)),
 }
 
 impl HyperDhtEvent {
@@ -705,6 +711,7 @@ impl HyperDhtEvent {
             HyperDhtEvent::FindPeerResponse(_) => "FindPeerResponse",
             HyperDhtEvent::FindPeerResult(_) => "FindPeerResult",
             HyperDhtEvent::CustomCommandQuery { .. } => "CustomCommandQuery",
+            HyperDhtEvent::Connected { .. } => "Connected",
         }
     }
 }
