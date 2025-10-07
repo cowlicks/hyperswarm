@@ -56,10 +56,10 @@ async fn check_in_js_known_good_sig_created_in_js() -> Result<()> {
 
     let mut repl = make_repl().await;
     let _res = repl
-        .run(
+        .run_tcp(
             "
 Persistent = require('hyperdht/lib/persistent.js');
-write(Persistent.prototype.verifyAnnounce.toString())
+output(Persistent.prototype.verifyAnnounce.toString())
 ",
         )
         .await?;
@@ -70,10 +70,10 @@ write(Persistent.prototype.verifyAnnounce.toString())
     js_list_from_rs_vec(&mut repl, &ID, "id").await?;
 
     let res = repl
-        .run(
+        .run_tcp(
             "
 res = Persistent.prototype.verifyAnnounce({ value, target, token }, id);
-write(res.toString());
+output(res.toString());
 ",
         )
         .await?;
@@ -91,6 +91,6 @@ async fn js_list_from_rs_vec(repl: &mut Repl, arr: &[u8], name: &str) -> Result<
         .collect::<Vec<String>>()
         .join(",");
     let code = format!("{name} = Buffer.from([{elments_str}]);");
-    repl.run(code).await?;
+    repl.run_tcp(code).await?;
     Ok(())
 }
