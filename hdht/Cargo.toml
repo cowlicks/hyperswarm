@@ -25,6 +25,7 @@ derive_builder = "0.20.2"
 tracing = "0.1.41"
 const-hex = "1.14.0"
 pin-project = "1.1.9"
+async-compat = "0.2.1"
 
 [dependencies.tokio]
 version = "1.41.0"
