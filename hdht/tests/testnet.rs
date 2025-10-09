@@ -8,7 +8,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     time::Instant,
 };
-//use utils::log;
 
 use common::{js::make_repl, Result};
 use dht_rpc::DhtConfig;
@@ -374,43 +373,6 @@ a = u.createSocket()
     Ok(())
 }
 
-#[tokio::test]
-async fn hs() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use snow::{params::NoiseParams, Builder};
-    let params: NoiseParams = "Noise_IK_25519_ChaChaPoly_BLAKE2b".parse()?;
-
-    let initiator_kp = Builder::new(params.clone()).generate_keypair()?;
-    let responder_kp = Builder::new(params.clone()).generate_keypair()?;
-
-    let mut initiator = Builder::new(params.clone())
-        .local_private_key(&initiator_kp.private)?
-        .remote_public_key(&responder_kp.public)?
-        .build_initiator()?;
-
-    let mut responder = Builder::new(params.clone())
-        .local_private_key(&responder_kp.private)?
-        .build_responder()?;
-    let (mut read_buf, mut first_msg, mut second_msg, mut enc_buf) =
-        ([0u8; 1024], [0u8; 1024], [0u8; 1024], [0u8; 1024]);
-
-    // -> e, es, s, ss
-    let first_len = initiator.write_message(&[], &mut first_msg)?;
-    // responder processes the first message...
-    let read_len = responder.read_message(&first_msg[..first_len], &mut read_buf)?;
-
-    // <- e, ee, se
-    let second_len = responder.write_message(&[], &mut second_msg)?;
-    let _read_len = initiator.read_message(&second_msg[..second_len], &mut read_buf)?;
-
-    let mut resp_transport = responder.into_transport_mode()?;
-    let mut init_transport = initiator.into_transport_mode()?;
-
-    let msg = b"my message";
-    let elen = resp_transport.write_message(msg, &mut enc_buf)?;
-    let rlen = init_transport.read_message(&enc_buf[..elen], &mut read_buf)?;
-
-    Ok(())
-}
 /// js talking to js
 #[tokio::test]
 async fn jj_js_server_js_connects() -> Result<()> {
