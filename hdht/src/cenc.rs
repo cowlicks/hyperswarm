@@ -80,7 +80,7 @@ impl CompactEncoding for Announce {
     }
 
     fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
-        let flags: u8 = (1 << 0) | self.refresh.map(|_| (1 << 1)).unwrap_or(0) | (1 << 2);
+        let flags: u8 = (1 << 0) | self.refresh.map(|_| 1 << 1).unwrap_or(0) | (1 << 2);
         let rest = write_array(&[flags], buffer)?;
         let rest = self.peer.encode(rest)?;
         let rest = match self.refresh {

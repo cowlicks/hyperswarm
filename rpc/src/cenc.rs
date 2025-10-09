@@ -225,6 +225,15 @@ impl CompactEncoding for RequestMsgData {
         if let Some(v) = &self.value {
             rest = v.encode(rest)?
         }
+        //println!(
+        //    "
+        //MSGENCODE
+        //etid = {}
+        //einternal = {}
+        //ecommand = {}
+        //",
+        //    self.tid, is_internal, self.command
+        //);
         Ok(rest)
     }
 
