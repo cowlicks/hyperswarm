@@ -40,7 +40,6 @@ use queries::{
     AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,
     LookupInner, LookupResponse, QueryResult, UnannounceInner, UnannounceResult,
 };
-use router::Router;
 use smallvec::alloc::collections::VecDeque;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{debug, error, instrument, trace, warn};
@@ -66,6 +65,7 @@ pub mod cenc;
 mod crypto;
 mod futuresmap;
 pub mod lru;
+mod next_router;
 mod queries;
 mod router;
 mod store;
@@ -146,6 +146,8 @@ pub enum Error {
     NoisePayloadBuilder(#[from] NoisePayloadBuilderError),
     #[error("Error building RelayThroughInfo: {0}")]
     RelayThroughInfoBuilder(#[from] RelayThroughInfoBuilderError),
+    #[error("Hypercore Protocol Error: {0}")]
+    HypercoreProtocolError(#[from] hypercore_protocol::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -178,7 +180,8 @@ pub struct HyperDht {
     default_keypair: Keypair,
     /// Router for peer connections
     #[allow(unused)] // TODO
-    router: Router,
+    router: next_router::Router,
+    //router: router::Router,
 }
 
 impl HyperDht {
@@ -401,7 +404,7 @@ impl HyperDht {
     }
 
     #[instrument(skip_all)]
-    fn inject_response(&mut self, resp: Arc<InResponse>) {
+    fn inject_response(&mut self, resp: Arc<InResponse>, cx: &mut Context<'_>) {
         trace!(
             cmd = display(resp.cmd()),
             "Handle Response for custom command"
@@ -587,6 +590,7 @@ impl HyperDht {
 impl Stream for HyperDht {
     type Item = HyperDhtEvent;
 
+    #[instrument(skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
 
@@ -605,7 +609,7 @@ impl Stream for HyperDht {
                         peer,
                     })) => pin.on_command(query, *request, peer),
                     RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(resp))) => {
-                        pin.inject_response(resp)
+                        pin.inject_response(resp, cx)
                     }
                     RpcDhtEvent::Bootstrapped { stats } => {
                         return Poll::Ready(Some(HyperDhtEvent::Bootstrapped { stats }))

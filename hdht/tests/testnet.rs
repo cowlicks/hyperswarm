@@ -1,7 +1,14 @@
 #![allow(unreachable_code)]
 mod common;
+use async_udx::UdxSocket;
 use compact_encoding::CompactEncoding;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
+
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    time::Instant,
+};
+//use utils::log;
 
 use common::{js::make_repl, Result};
 use dht_rpc::DhtConfig;
@@ -12,7 +19,7 @@ use hyperdht::{
     namespace::PEER_HANDSHAKE,
     HyperDht, HyperDhtEvent, Keypair,
 };
-use rusty_nodejs_repl::Repl;
+use rusty_nodejs_repl::{integration_utils::log, wait, Repl};
 
 #[allow(unused)]
 fn show_bytes<T: AsRef<[u8]>>(x: T) {
@@ -54,6 +61,12 @@ macro_rules! poll_until {
             }
         };
         res
+    }};
+}
+
+macro_rules! tmout {
+    ($thing:expr) => {{
+        tokio::time::timeout(Duration::from_secs(1), $thing).await
     }};
 }
 
@@ -278,9 +291,7 @@ await server.listen(server_node.defaultKeyPair);
 
 #[tokio::test]
 async fn check_noise() -> Result<()> {
-    dbg!();
     let (mut tn, hdht) = setup_rs_node_and_js_testnet!();
-    dbg!();
     let pub_key: [u8; 32] = tn
         .repl
         .json_run_tcp(
@@ -336,8 +347,6 @@ outputJson(res);
         ))
         .await?;
     let res = String::from_utf8(res).unwrap();
-    dbg!(&res);
-    println!("{res}");
     assert!(res.matches("\"version\":1").next().is_some());
     assert!(res.matches("\"relayThrough\":null").next().is_some());
     Ok(())
@@ -388,8 +397,6 @@ async fn hs() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let first_len = initiator.write_message(&[], &mut first_msg)?;
     // responder processes the first message...
     let read_len = responder.read_message(&first_msg[..first_len], &mut read_buf)?;
-    println!("{:?}", &first_len);
-    println!("{:?}", &read_buf[..read_len]);
 
     // <- e, ee, se
     let second_len = responder.write_message(&[], &mut second_msg)?;
@@ -400,30 +407,26 @@ async fn hs() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let msg = b"my message";
     let elen = resp_transport.write_message(msg, &mut enc_buf)?;
-    println!("{:?}", &enc_buf[..elen]);
     let rlen = init_transport.read_message(&enc_buf[..elen], &mut read_buf)?;
-    println!("{}", String::from_utf8_lossy(&read_buf[..rlen]));
 
     Ok(())
 }
-
-/// In JavaScript create a "Server" and do a "listen" on a `public_key`
-/// Then in Rust  do a `dht.find_peer(public_key)` to get the address of the servec.
-/// Then in Rust should initiate a connection to JavaScript, completing the handshake.
-/// Verify data can be sent through the connection
+/// js talking to js
 #[tokio::test]
-async fn js_server_rs_connects() -> Result<()> {
-    let (mut tn, mut hdht) = setup_rs_node_and_js_testnet!();
-
+async fn jj_js_server_js_connects() -> Result<()> {
+    let mut tn = Testnet::new().await?;
     log();
-    // with js announc on topic with the node's default keypair
-    let x = tn
+
+    let _r = tn
         .repl
         .run_tcp(
             "
 server_connected = deferred();
 socket_open = deferred();
 socket_connect = deferred();
+
+client_open = deferred();
+client_rx_msg = deferred();
 server_rx_msg = deferred();
 
 server_node = testnet.nodes[testnet.nodes.length - 1];
@@ -434,21 +437,122 @@ server.on('connection', socket => {
         socket_open.resolve(true);
     });
     socket.on('connect', () => {
-        socket_connect.resolve(true);
-        //socket.send(Buffer.from('from server'))
+        socket_connect.resolve(socket);
     });
-    socket.on('message', (message) => {
-        console.log('GOTMESSAGE');
-        server_rx_msg.resolve(message);
+    socket.on('message', (m) => {
+        server_rx_msg.resolve(m)
     });
 });
-pub_key  = server_node.defaultKeyPair.publicKey;;
+
+pub_key = server_node.defaultKeyPair.publicKey;
 await server.listen(server_node.defaultKeyPair);
     ",
         )
         .await?;
+    tn.repl.print().await?;
+    let _s = tn
+        .repl
+        .run_tcp(
+            "
+node = testnet.nodes[testnet.nodes.length - 2];
 
-    while !tn.repl.drain_stdout().await?.is_empty() {}
+client_socket = node.connect(pub_key);
+client_socket.on('open', () => {
+    client_open.resolve(true);
+});
+await client_open;
+client_socket.on('message', (m) => {
+    client_rx_msg.resolve(m);
+});
+",
+        )
+        .await;
+    tn.repl.print().await?;
+
+    assert!(
+        tn.repl
+            .json_run("writeJson(await server_connected)")
+            .await?
+    );
+    assert!(tn.repl.json_run("writeJson(await socket_open)").await?);
+    tn.repl
+        .run_tcp("server_socket = await socket_connect")
+        .await?;
+    assert!(tn.repl.json_run("writeJson(await client_open)").await?);
+    tn.repl
+        .run_tcp("await server_socket.send(Buffer.from('from server'))")
+        .await?;
+    let s = tn
+        .repl
+        .run_tcp(
+            "
+rx = await client_rx_msg;
+output(rx.toString());
+",
+        )
+        .await?;
+
+    assert_eq!(s, b"from server");
+
+    tn.repl
+        .run_tcp("await client_socket.send(Buffer.from('from client'))")
+        .await?;
+    let s = tn
+        .repl
+        .run_tcp(
+            "
+rx = await server_rx_msg;
+output(rx.toString());
+",
+        )
+        .await?;
+    assert_eq!(s, b"from client");
+    Ok(())
+}
+
+/// We showed that JS NoiseSeceret stream always times out
+#[tokio::test]
+async fn does_rs_stream_write_get_to_js() -> Result<()> {
+    let (mut tn, mut hdht) = setup_rs_node_and_js_testnet!();
+    let x = tn
+        .repl
+        .run_tcp(
+            "
+server_connected = deferred();
+server_rx_msg = deferred();
+server_listening = deferred();
+
+socket_open = deferred();
+socket_connect = deferred();
+
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+server.on('listening', () => {
+    server_listening.resolve(true);
+});
+server.on('connection', socket => {
+    server_connected.resolve(true);
+    socket.on('open', () => {
+        socket_open.resolve(true);
+    });
+    socket.on('connect', () => {
+        socket_connect.resolve(true);
+        socket.send(Buffer.from('from server'))
+    });
+    socket.on('message', (message) => {
+        console.log('GOTMESSAGE');
+        server_rx_msg.resolve(true);
+    });
+});
+pub_key  = server_node.defaultKeyPair.publicKey;;
+await server.listen(server_node.defaultKeyPair);
+",
+        )
+        .await?;
+
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(100);
+    }
     let pub_key: [u8; 32] = tn.repl.json_run_tcp("outputJson([...pub_key]);").await?;
 
     // with RS do a find peer
@@ -495,7 +599,6 @@ outputJson(`${host}:${port}`);",
     log();
     let _tid = hdht.request_peer_handshake(pub_key.into(), server_addr)?;
     let (_tid_2, mut stream, _sock) = loop {
-        print_js(&mut tn).await;
         let mut timeout_count = 0;
         let res = loop {
             let result = tokio::time::timeout(Duration::from_secs(1), hdht.next()).await;
@@ -507,11 +610,9 @@ outputJson(`${host}:${port}`);",
             if timeout_count > 2 {
                 panic!("should've got Connected Event by now");
             }
-            print_js(&mut tn).await;
         };
 
         if let Some(evt) = res? {
-            print_js(&mut tn).await;
             let HyperDhtEvent::Connected((tid, stream, sock, _ec)) = evt else {
                 continue;
             };
@@ -519,172 +620,324 @@ outputJson(`${host}:${port}`);",
         }
     };
     while !tn.repl.drain_stdout().await?.is_empty() {}
-    let server_connected: bool = tn
-        .repl
-        .json_run_tcp("outputJson(await server_connected)")
-        .await?;
-    dbg!(server_connected);
+    let server_connected: bool = tn.repl.get_name("server_connected").await?;
+    let server_listening: bool = tn.repl.get_name("server_listening").await?;
+
+    let socket_connect: bool = tn.repl.get_name("socket_connect").await?;
+    let socket_open: bool = tn.repl.get_name("socket_open").await?;
+
     assert!(server_connected);
 
     tn.repl.print().await?;
-    let mut buf = [0u8; 1];
-    // V-----------------------------------------HERE WERE STUCK
-    // We never read anything
-    // Instead try to send and check if js receives
-    //dbg!(stream.read(&mut buf).await?);
+    let until = Instant::now() + Duration::from_secs(15);
+    let mut j = 0;
     loop {
-        let result = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf)).await;
-        match result {
-            Ok(_) => break,
-            Err(_) => {
-                println!("try send rs to js");
-                stream.write_all(b"from rust").await?;
-                println!("sent");
-                let server_rx_msg = tn.repl.run_tcp("output(server_rx_msg.toString())").await?;
-                println!("the promise {:?}", String::from_utf8_lossy(&server_rx_msg));
-
-                match tn
-                    .repl
-                    .run_tcp("output((await server_rx_msg).toString())")
-                    .await
-                {
-                    Ok(_x) => todo!(),
-                    Err(_e) => {
-                        println!("err getting server_rx_msg, {_e:?}");
-                        tn.repl.print().await?;
-                        panic!();
-                    }
-                }
-            }
+        if Instant::now() > until {
+            break;
         }
+        wait!(1000);
+        if j == 1 {
+            stream.write_all(b"from rust").await?;
+        }
+        let (a, b) = tn.repl.print().await?;
+        j += 1;
     }
-    let data_len: usize = tn
-        .repl
-        .json_run_tcp("outputJson(socket_data.length)")
-        .await?;
-    dbg!(data_len);
-    let socket_connect: bool = tn.repl.json_run_tcp("outputJson(!!socket_connect)").await?;
-    dbg!(socket_connect);
+    stream.write_all(b"from rust").await?;
+    for i in 0..10 {
+        tn.repl.print().await?;
+        wait!(1000);
+    }
+
     Ok(())
 }
-async fn print_js(tn: &mut Testnet) {
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-    let stdout = tn.repl.drain_stdout().await.unwrap();
-    let stderr = tn.repl.drain_stderr().await.unwrap();
-    println!(
-        "stdout:
-    {}
-stderr:
-    {}
-",
-        String::from_utf8_lossy(&stdout),
-        String::from_utf8_lossy(&stderr)
-    );
-}
 
-/// js talking to js
 #[tokio::test]
-async fn js_server_js_connects() -> Result<()> {
-    let mut tn = Testnet::new().await?;
-    log();
-    dbg!();
-
-    let r = tn
+async fn send_socket_message() -> Result<()> {
+    let (mut tn, mut hdht) = setup_rs_node_and_js_testnet!();
+    let x = tn
         .repl
         .run_tcp(
             "
 server_connected = deferred();
+server_rx_msg = deferred();
+server_listening = deferred();
+
 socket_open = deferred();
 socket_connect = deferred();
 
-client_open = deferred();
-client_rx_msg = deferred();
-server_rx_msg = deferred();
-
 server_node = testnet.nodes[testnet.nodes.length - 1];
 server = server_node.createServer();
+server.on('listening', () => {
+    server_listening.resolve(true);
+});
 server.on('connection', socket => {
     server_connected.resolve(true);
     socket.on('open', () => {
         socket_open.resolve(true);
     });
     socket.on('connect', () => {
-        socket_connect.resolve(socket);
+        socket_connect.resolve(true);
+        socket.send(Buffer.from('from server'))
     });
-    socket.on('message', (m) => {
-        server_rx_msg.resolve(m)
+    socket.on('message', (message) => {
+        console.log('GOTMESSAGE');
+        server_rx_msg.resolve(true);
     });
 });
-
-pub_key = server_node.defaultKeyPair.publicKey;
+pub_key  = server_node.defaultKeyPair.publicKey;;
 await server.listen(server_node.defaultKeyPair);
-    ",
+",
         )
-        .await;
-    dbg!();
-    println!("{r:?}");
-    dbg!();
+        .await?;
+
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(100);
+    }
+    let pub_key: [u8; 32] = tn.repl.json_run_tcp("outputJson([...pub_key]);").await?;
+
+    // with RS do a find peer
+    let _query_id = hdht.find_peer(pub_key.into());
+
+    let mut resps = vec![];
+    loop {
+        match hdht.next().await {
+            Some(HyperDhtEvent::Bootstrapped { .. }) => {}
+            Some(HyperDhtEvent::FindPeerResult(_)) => break,
+            Some(HyperDhtEvent::FindPeerResponse(r)) => resps.push(r),
+            Some(_) => todo!(),
+            None => todo!(),
+        }
+    }
+
+    assert!(!resps.is_empty());
+    for r in resps.iter() {
+        assert_eq!(r.peer.public_key.as_slice(), pub_key);
+    }
+
+    // with js announce on topic with the node's default keypair
+    while !tn.repl.drain_stdout().await?.is_empty() {}
+    let addr: String = tn
+        .repl
+        .json_run_tcp(
+            "
+const { host, port } = server_node.address();
+outputJson(`${host}:${port}`);",
+        )
+        .await?;
+    let SocketAddr::V4(server_addr) = addr.parse()? else {
+        todo!()
+    };
+
+    // nothing up my sleave; ensure connect is false
+    while !tn.repl.drain_stdout().await?.is_empty() {}
+    let server_connected: bool = tn
+        .repl
+        .json_run_tcp("outputJson(server_connected.ready)")
+        .await?;
+    assert!(!server_connected);
+    // Use the router to initiate peer handshake and establish UdxStream
+    log();
+    let _tid = hdht.request_peer_handshake(pub_key.into(), server_addr)?;
+    let (_tid_2, stream, sock) = loop {
+        let mut timeout_count = 0;
+        let res = loop {
+            let result = tokio::time::timeout(Duration::from_secs(1), hdht.next()).await;
+            if matches!(result, Ok(Some(_))) {
+                break result;
+            } else {
+                timeout_count += 1;
+            }
+            if timeout_count > 2 {
+                panic!("should've got Connected Event by now");
+            }
+        };
+
+        if let Some(evt) = res? {
+            let HyperDhtEvent::Connected((tid, stream, sock, _ec)) = evt else {
+                continue;
+            };
+            break (tid, stream, sock);
+        }
+    };
+    while !tn.repl.drain_stdout().await?.is_empty() {}
+    let server_connected: bool = tn.repl.get_name("server_connected").await?;
+    let server_listening: bool = tn.repl.get_name("server_listening").await?;
+
+    let socket_connect: bool = tn.repl.get_name("socket_connect").await?;
+    let socket_open: bool = tn.repl.get_name("socket_open").await?;
+
+    assert!(server_connected);
+
     tn.repl.print().await?;
-    r?;
-    dbg!();
-    let _s = tn
+    let until = Instant::now() + Duration::from_secs(15);
+    let mut j = 0;
+    loop {
+        if Instant::now() > until {
+            break;
+        }
+        if j == 3 {
+            sock.recv().await?;
+        } else {
+            wait!(1000);
+        }
+        if j == 1 {
+            sock.send(server_addr.into(), b"from rust");
+        }
+        let (a, b) = tn.repl.print().await?;
+        j += 1;
+    }
+    for i in 0..10 {
+        tn.repl.print().await?;
+        wait!(1000);
+    }
+
+    Ok(())
+}
+
+/// We showed that JS NoiseSeceret stream always times out
+#[tokio::test]
+async fn jr_js_server_rs_connect() -> Result<()> {
+    let (mut tn, mut hdht) = setup_rs_node_and_js_testnet!();
+    let x = tn
         .repl
         .run_tcp(
             "
-node = testnet.nodes[testnet.nodes.length - 2];
+server_connected = deferred();
+server_rx_msg = deferred();
+server_listening = deferred();
 
-client_socket = node.connect(pub_key);
-client_socket.on('open', () => {
-    client_open.resolve(true);
+socket_open = deferred();
+socket_connect = deferred();
+
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+server.on('listening', () => {
+    server_listening.resolve(true);
 });
-await client_open;
-client_socket.on('message', (m) => {
-    client_rx_msg.resolve(m);
+server.on('connection', socket => {
+    server_connected.resolve(true);
+    socket.on('open', () => {
+        socket_open.resolve(true);
+    });
+    socket.on('connect', () => {
+        socket_connect.resolve(true);
+        socket.send(Buffer.from('from server'))
+    });
+    socket.on('message', (message) => {
+        console.log('GOTMESSAGE');
+        server_rx_msg.resolve(true);
+    });
 });
+pub_key  = server_node.defaultKeyPair.publicKey;;
+await server.listen(server_node.defaultKeyPair);
+a = await server.address();
+console.log('SERVERADDR');
+console.log(a);
 ",
         )
-        .await;
+        .await?;
+
     tn.repl.print().await?;
-    dbg!(_s)?;
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(100);
+    }
+    let pub_key: [u8; 32] = tn.repl.json_run_tcp("outputJson([...pub_key]);").await?;
 
-    dbg!();
-    assert!(
-        tn.repl
-            .json_run("writeJson(await server_connected)")
-            .await?
-    );
-    assert!(tn.repl.json_run("writeJson(await socket_open)").await?);
-    tn.repl
-        .run_tcp("server_socket = await socket_connect")
-        .await?;
-    assert!(tn.repl.json_run("writeJson(await client_open)").await?);
-    tn.repl
-        .run_tcp("await server_socket.send(Buffer.from('from server'))")
-        .await?;
-    let s = tn
+    // with RS do a find peer
+    let _query_id = hdht.find_peer(pub_key.into());
+
+    let mut resps = vec![];
+    loop {
+        match hdht.next().await {
+            Some(HyperDhtEvent::Bootstrapped { .. }) => {}
+            Some(HyperDhtEvent::FindPeerResult(_)) => break,
+            Some(HyperDhtEvent::FindPeerResponse(r)) => resps.push(r),
+            Some(_) => todo!(),
+            None => todo!(),
+        }
+    }
+
+    assert!(!resps.is_empty());
+    for r in resps.iter() {
+        assert_eq!(r.peer.public_key.as_slice(), pub_key);
+    }
+
+    // with js announce on topic with the node's default keypair
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(100);
+    }
+    let addr: String = tn
         .repl
-        .run_tcp(
+        .json_run_tcp(
             "
-rx = await client_rx_msg;
-output(rx.toString());
-",
+const { host, port } = server_node.address();
+outputJson(`${host}:${port}`);",
         )
         .await?;
 
-    assert_eq!(s, b"from server");
+    let SocketAddr::V4(server_addr) = addr.parse()? else {
+        todo!()
+    };
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(100);
+    }
 
-    tn.repl
-        .run_tcp("await client_socket.send(Buffer.from('from client'))")
-        .await?;
-    let s = tn
+    // nothing up my sleave; ensure connect is false
+    while !tn.repl.drain_stdout().await?.is_empty() {}
+    let server_connected: bool = tn
         .repl
-        .run_tcp(
-            "
-rx = await server_rx_msg;
-output(rx.toString());
-",
-        )
+        .json_run_tcp("outputJson(server_connected.ready)")
         .await?;
-    assert_eq!(s, b"from client");
+    assert!(!server_connected);
+
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(100);
+    }
+    println!("START PEER_HANDSHAKE to {server_addr:?}");
+    let _tid = hdht.request_peer_handshake(pub_key.into(), server_addr)?;
+    let (_tid_2, mut stream, _sock) = loop {
+        let mut timeout_count = 0;
+        let res = loop {
+            let result = tokio::time::timeout(Duration::from_secs(1), hdht.next()).await;
+            if matches!(result, Ok(Some(_))) {
+                break result;
+            } else {
+                timeout_count += 1;
+            }
+            if timeout_count > 2 {
+                panic!("should've got Connected Event by now");
+            }
+        };
+
+        if let Some(evt) = res? {
+            let HyperDhtEvent::Connected((tid, stream, sock, _ec)) = evt else {
+                continue;
+            };
+            break (tid, stream, sock);
+        }
+    };
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(100);
+    }
+    while !tn.repl.drain_stdout().await?.is_empty() {}
+    let server_connected: bool = tn.repl.get_name("server_connected").await?;
+    let server_listening: bool = tn.repl.get_name("server_listening").await?;
+
+    let socket_connect: bool = tn.repl.get_name("socket_connect").await?;
+    let socket_open: bool = tn.repl.get_name("socket_open").await?;
+
+    assert!(server_connected);
+
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(200);
+    }
+    let until = Instant::now() + Duration::from_secs(15);
+    let mut j = 0;
+    let mut buf = [0u8; 1];
+    stream.write_all(b"from rust").await?;
+    while !tn.repl.drain_stdout().await?.is_empty() {
+        wait!(200);
+    }
+    stream.read(&mut buf).await?;
     Ok(())
 }

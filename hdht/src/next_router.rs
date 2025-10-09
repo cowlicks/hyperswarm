@@ -1,12 +1,4 @@
 #![allow(unused)]
-//test sstream::sm2::tests::test_complete_handshake has been running for over 60 seconds
-//test sstream::sm2::tests::test_machine_io_both_ways has been running for over 60 seconds
-//test sstream::sm2::tests::test_machine_sink_multiple_messages has been running for over 60 seconds
-//test sstream::statemachine::test::test_read1 ... FAILED
-//test sstream::sm2::tests::test_machine_handshake_start ... FAILED
-//test sstream::sm2::tests::sans_io ... FAILED
-//test sstream::sm2::tests::test_machine_io_l_to_r ... FAILED
-
 use std::{
     any::Any,
     collections::BTreeMap,
@@ -121,7 +113,7 @@ impl Router {
 
         next_router inject_response !!!!!
 
-        "
+"
         );
         let conn = self.connections.get_mut(&resp.request.tid).unwrap();
         conn.handshake.receive_next(ph.noise);
@@ -136,6 +128,7 @@ impl Router {
             Event::ErrStuff(error) => todo!(),
         };
         let (np, rest) = NoisePayload::decode(&msg)?;
+        assert!(rest.is_empty());
 
         if !conn.handshake.ready() {
             // We are not "ready" here but we can encrypt stuff.
@@ -164,7 +157,6 @@ impl Router {
             self.udx_socket.clone(),
             None,
         )));
-        //Ok(())
         Ok(())
     }
 
