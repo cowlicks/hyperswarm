@@ -18,3 +18,6 @@
 	path = hdht/tests/common/js/noise-handshake
 	url = git@github.com:holepunchto/noise-handshake.git
 	branch = rust-changes
+[submodule "hdht/tests/common/js/udx-native"]
+	path = hdht/tests/common/js/udx-native
+	url = git@github.com:holepunchto/udx-native.git
