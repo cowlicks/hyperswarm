@@ -404,7 +404,7 @@ impl HyperDht {
     }
 
     #[instrument(skip_all)]
-    fn inject_response(&mut self, resp: Arc<InResponse>, cx: &mut Context<'_>) {
+    fn inject_response(&mut self, resp: Arc<InResponse>, _cx: &mut Context<'_>) {
         trace!(
             cmd = display(resp.cmd()),
             "Handle Response for custom command"

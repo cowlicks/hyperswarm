@@ -283,6 +283,9 @@ impl IoHandler {
     pub fn local_addr(&self) -> crate::Result<SocketAddr> {
         self.message_stream.local_addr()
     }
+    pub fn socket(&self) -> async_udx::UdxSocket {
+        self.message_stream.socket()
+    }
     /// TODO check this is correct.
     pub fn token(&self, peer: &Peer, secret_index: usize) -> crate::Result<[u8; 32]> {
         self.secrets.token(peer, secret_index)

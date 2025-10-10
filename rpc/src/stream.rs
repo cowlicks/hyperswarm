@@ -39,6 +39,10 @@ impl MessageDataStream {
     pub fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.socket.local_addr()?)
     }
+
+    pub fn socket(&self) -> UdxSocket {
+        self.socket.clone()
+    }
 }
 
 impl Stream for MessageDataStream {

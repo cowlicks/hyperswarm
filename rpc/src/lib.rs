@@ -390,6 +390,9 @@ impl RpcDht {
     pub fn local_addr(&self) -> crate::Result<SocketAddr> {
         self.io.local_addr()
     }
+    pub fn socket(&self) -> async_udx::UdxSocket {
+        self.io.socket()
+    }
     /// Returns the id used to identify this node.
     pub fn local_id(&self) -> &IdBytes {
         self.id.get_ref()
