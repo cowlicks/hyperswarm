@@ -67,7 +67,6 @@ mod futuresmap;
 pub mod lru;
 mod next_router;
 mod queries;
-mod router;
 mod store;
 
 pub use crypto::{
