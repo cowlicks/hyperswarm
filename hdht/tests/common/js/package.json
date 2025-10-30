@@ -7,6 +7,7 @@
     "t": "node index.js"
   },
   "dependencies": {
+    "udx-native": "file:./udx-native",
     "noise-curve-ed": "^2.0.0",
     "dht-rpc": "file:./rpc",
     "hyperdht": "file:./hyperdht",
