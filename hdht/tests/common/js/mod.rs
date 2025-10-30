@@ -29,6 +29,42 @@ seed[0] = 1;
 keyPair = createKeyPair(seed)
 ";
 
+// Add to js preamble (with Config.befeore.push(..)
+// to make console log show the line it logs from
+const _CONSOLE_LOCATION: &str = r"
+ogConsoles = {};
+['log', 'warn', 'error'].forEach((methodName) => {
+
+  ogConsoles[methodName] = console[methodName];
+
+  const originalMethod = console[methodName];
+
+  console[methodName] = (...args) => {
+    let initiator = 'unknown place';
+    try {
+      throw new Error();
+    } catch (e) {
+      if (typeof e.stack === 'string') {
+        initiator = e.stack;
+        let isFirst = true;
+        for (const line of e.stack.split('\n')) {
+          const matches = line.match(/^\s+at\s+(.*)/);
+          if (matches) {
+            if (!isFirst) { // first line - current function
+                            // second line - caller (what we are looking for)
+              initiator = matches[1];
+              break;
+            }
+            isFirst = false;
+          }
+        }
+      }
+    }
+    originalMethod.apply(console, [...args, '\n', `  at ${initiator}`]);
+  };
+});
+";
+
 pub async fn make_repl() -> Repl {
     require_js_data().unwrap();
 
