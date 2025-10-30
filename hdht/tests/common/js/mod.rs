@@ -85,6 +85,7 @@ deferred = () => {
 stringify = JSON.stringify;
 write = process.stdout.write.bind(process.stdout);
 writeJson = x => write(stringify(x))
+outputJson = x => output(stringify(x))
 "
         .into(),
     );
