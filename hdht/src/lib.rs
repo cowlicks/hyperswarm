@@ -15,7 +15,6 @@ use std::{
     time::Duration,
 };
 
-use async_udx::{UdxSocket, UdxStream};
 use cenc::{
     NoisePayloadBuilderError, PeerHandshakePayload, PeerHandshakePayloadBuilderError,
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
@@ -34,7 +33,6 @@ use futures::{
     Stream, StreamExt,
 };
 use futuresmap::FuturesMap;
-use hypercore_protocol::EncryptCipher;
 use prost::Message as ProstMessage;
 use queries::{
     AnnounceClearResult, AnnounceInner, AunnounceClearInner, FindPeerInner, FindPeerResponse,
@@ -47,6 +45,7 @@ use tracing::{debug, error, instrument, trace, warn};
 use crate::{
     dht_proto::{PeersInput, PeersOutput},
     lru::{CacheKey, PeerCache},
+    next_router::connection::Connection,
     store::Store,
 };
 pub use ::dht_rpc::{
@@ -450,9 +449,12 @@ impl HyperDht {
                         &resp.response.value.clone().expect("with value"),
                     ) {
                         Ok((hs, rest)) => {
-                            let _ = self.router.inject_response(&resp, hs, &mut |e| {
-                                self.queued_events.push_back(e)
-                            });
+                            let _ = self.router.inject_response(
+                                &resp,
+                                hs,
+                                &mut |e| self.queued_events.push_back(e),
+                                self.rpc.socket(),
+                            );
                             debug_assert!(rest.is_empty(), "respones completely used")
                         }
                         Err(e) => todo!("{e:?}"),
@@ -499,7 +501,7 @@ impl HyperDht {
 
         let value = self
             .router
-            .first_step(tid, *remote_public_key, Some(vec![addr]))
+            .first_step(tid, *remote_public_key, Some(vec![addr]), self.rpc.socket())
             .unwrap();
         let req = OutRequestBuilder::default()
             .destination(destination)
@@ -699,7 +701,7 @@ pub enum HyperDhtEvent {
         /// The peer the message originated from.
         peer: Peer,
     },
-    Connected((Tid, UdxStream, UdxSocket, Option<EncryptCipher>)),
+    Connected((Tid, Connection)),
 }
 
 impl HyperDhtEvent {

@@ -1,4 +1,5 @@
 #![allow(unused)]
+pub mod connection;
 use std::{
     any::Any,
     collections::BTreeMap,
@@ -26,12 +27,31 @@ use crate::{
         firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayload,
         PeerHandshakePayloadBuilder, UdxInfoBuilder,
     },
-    namespace, Error, HyperDhtEvent,
+    namespace,
+    next_router::connection::{ConnStep, Connection, ConnectionInner, ReadyData},
+    Error, HyperDhtEvent,
 };
+
+// swap this with rng thing later. We increment now bc we're debugging stuff.
+#[derive(Debug)]
+struct StreamIdMaker {
+    counter: u32,
+}
+
+impl StreamIdMaker {
+    fn new() -> Self {
+        Self { counter: 1 }
+    }
+    fn new_id(&mut self) -> u32 {
+        self.counter += 1;
+        self.counter
+    }
+}
 
 #[derive(Debug)]
 pub struct Router {
     rng: StdRng,
+    id_maker: StreamIdMaker,
     connections: BTreeMap<Tid, Connection>,
 }
 
@@ -39,107 +59,13 @@ impl Default for Router {
     fn default() -> Self {
         Self {
             rng: StdRng::from_entropy(),
+            id_maker: StreamIdMaker::new(),
             connections: Default::default(),
         }
     }
 }
 
-#[derive(Debug)]
-struct ReadyData {
-    noise_payload: NoisePayload,
-    stream: UdxStream,
-}
-
-impl ReadyData {
-    fn new(noise_payload: NoisePayload, stream: UdxStream) -> Self {
-        Self {
-            noise_payload,
-            stream,
-        }
-    }
-}
-
-#[derive(Debug)]
-enum ConnStep {
-    /// Initial State
-    Start,
-    /// Initial hanshake message sent
-    RequestSent, // is this specific initializerl
-    /// Handshake Ready
-    Ready(ReadyData),
-    // Handshake failed
-    Failed,
-}
-
-#[derive(Debug, Clone)]
-struct Connection {
-    inner: Arc<RwLock<ConnectionInner>>,
-}
-
-macro_rules! w {
-    ($self:expr) => {
-        $self.inner.write().unwrap()
-    };
-}
-macro_rules! r {
-    ($self:expr) => {
-        $self.inner.read().unwrap()
-    };
-}
-
-impl Connection {
-    fn new(handshake: Machine, udx_local_id: u32) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(ConnectionInner {
-                handshake,
-                udx_local_id,
-                step: ConnStep::Start,
-            })),
-        }
-    }
-    fn receive_next(&self, noise: Vec<u8>) -> Result<Event, Error> {
-        w!(self).handshake.receive_next(noise);
-        Ok(w!(self)
-            .handshake
-            .next_decrypted_message()?
-            .expect("recieved msg above"))
-    }
-    fn handshake_ready(&self) -> bool {
-        r!(self).handshake.ready()
-    }
-    fn udx_local_id(&self) -> u32 {
-        r!(self).udx_local_id
-    }
-    fn handshake_set_io(&self, io: Box<dyn MachineIo<Error = std::io::Error>>) {
-        w!(self).handshake.set_io(io)
-    }
-    fn set_step(&self, step: ConnStep) {
-        w!(self).step = step;
-    }
-    fn get_constep(&self) -> &ConnStep {
-        //&r!(self).step
-        todo!()
-    }
-}
-
-#[derive(Debug)]
-struct ConnectionInner {
-    handshake: Machine,
-    udx_local_id: u32,
-    step: ConnStep,
-}
-
 impl Router {
-    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        for (tid, conn) in self.connections.iter_mut() {
-            if matches!(conn.inner.read().unwrap().step, ConnStep::Ready(_)) {
-                let x =
-                    Machine::poll_next(Pin::new(&mut conn.inner.write().unwrap().handshake), cx);
-            }
-        }
-        Poll::Pending
-    }
-
     #[instrument(skip_all, err)]
     pub fn inject_response(
         &mut self,
@@ -148,8 +74,7 @@ impl Router {
         event_queue: &mut dyn FnMut(HyperDhtEvent),
         socket: UdxSocket,
     ) -> Result<(), Error> {
-        println!("FOO RESPONSE");
-        let conn = self.connections.get_mut(&resp.request.tid).unwrap();
+        let mut conn = self.connections.remove(&resp.request.tid).unwrap();
         let res = conn.receive_next(ph.noise)?;
 
         let msg: Vec<u8> = match res {
@@ -165,27 +90,16 @@ impl Router {
             // And the next message we would receive would contain our decryptor.
             // So we can basically be "ready"
             //panic!("curr handshake pattern with this side being initializer should complete with first response")
+            // TODO
         }
-
         let udx_remote_id = np
             .udx
             .as_ref()
             .expect("TODO response SHOULD have udx_info")
             .id as u32;
-        let udx_stream = socket
-            .connect(resp.request.to.addr, conn.udx_local_id(), udx_remote_id)
-            .expect("TODO why would this happen");
 
-        let framed_udx_stream = Uint24LELengthPrefixedFraming::new(Compat::new(udx_stream.clone()));
-        conn.handshake_set_io(Box::new(framed_udx_stream));
-
-        conn.set_step(ConnStep::Ready(ReadyData::new(np, udx_stream.clone())));
-        event_queue(HyperDhtEvent::Connected((
-            resp.request.tid,
-            udx_stream,
-            socket.clone(),
-            None,
-        )));
+        conn.connect(resp.request.to.addr, udx_remote_id, np)?;
+        event_queue(HyperDhtEvent::Connected((resp.request.tid, conn)));
         Ok(())
     }
 
@@ -196,18 +110,17 @@ impl Router {
         tid: Tid,
         remote_public_key: [u8; 32],
         local_addrs4: Option<Vec<SocketAddrV4>>,
+        socket: UdxSocket,
     ) -> Result<Vec<u8>, Error> {
         let mut hs =
             Machine::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
-        // TODO store this
-        //let udx_local_id = self.rng.next_u32();
-        let udx_local_id = 43;
+        let udx_local_id = self.id_maker.new_id();
         let np = NoisePayloadBuilder::default()
-            .firewall(firewall::UNKNOWN)
+            .firewall(firewall::OPEN)
             .addresses4(local_addrs4)
             .udx(Some(
                 UdxInfoBuilder::default()
-                    .reusable_socket(true)
+                    .reusable_socket(false)
                     .id(udx_local_id as usize)
                     .build()?,
             ))
@@ -222,7 +135,8 @@ impl Router {
             .mode(crate::cenc::HandshakeSteps::FromClient)
             .build()?
             .to_encoded_bytes()?;
-        let conn = Connection::new(hs, udx_local_id);
+        let half_stream = socket.create_stream(udx_local_id)?;
+        let conn = Connection::new(hs, udx_local_id, half_stream);
         self.connections.insert(tid, conn);
         Ok(peer_handshake_payload.into())
     }
@@ -239,7 +153,12 @@ mod test {
         let kp = generate_keypair()?;
         let mut router = Router::default();
         let tid = 1u16;
-        router.first_step(tid, kp.public.try_into().unwrap(), None)?;
+        router.first_step(
+            tid,
+            kp.public.try_into().unwrap(),
+            None,
+            UdxSocket::bind("127.0.0.1:0")?,
+        )?;
         //let remote_public_key
         todo!()
     }
