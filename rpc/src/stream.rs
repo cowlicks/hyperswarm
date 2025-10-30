@@ -93,7 +93,7 @@ impl Sink<(MsgData, SocketAddr)> for MessageDataStream {
         let (message, addr) = item;
         trace!(
             msg.tid = message.tid(),
-            from =?addr,
+            to =?addr,
             "TX"
         );
         let buff = message.to_encoded_bytes()?;

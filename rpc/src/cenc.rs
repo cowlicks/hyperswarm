@@ -203,9 +203,10 @@ impl CompactEncoding for RequestMsgData {
 
     fn encode<'a>(&self, buffer: &'a mut [u8]) -> std::result::Result<&'a mut [u8], EncodingError> {
         let mut flags: u8 = 0;
+        let is_internal = matches!(self.command, Command::Internal(_));
         flags |= maybe_add_flag!(self.id.is_some(), 0);
         flags |= maybe_add_flag!(self.token.is_some(), 1);
-        flags |= maybe_add_flag!(matches!(self.command, Command::Internal(_)), 2);
+        flags |= maybe_add_flag!(is_internal, 2);
         flags |= maybe_add_flag!(self.target.is_some(), 3);
         flags |= maybe_add_flag!(self.value.is_some(), 4);
 

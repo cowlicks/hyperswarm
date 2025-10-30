@@ -583,7 +583,7 @@ impl Stream for IoHandler {
             }
             Poll::Ready(Some(Err(err))) => {
                 let out = IoHandlerEvent::InSocketErr { err };
-                trace!("{out:#?}");
+                error!("{out:#?}");
                 return Poll::Ready(Some(out));
             }
             _ => {}
