@@ -184,7 +184,7 @@ struct InflightRequest {
     /// The message send
     message: RequestMsgData,
     /// Timestamp when the request was sent
-    #[allow(unused)] // TODO FIXME not read. Why not?
+    #[expect(unused)] // TODO FIXME not read. Why not?
     timestamp: Instant,
     // Identifier for the query this request is used with
     query_id: Option<QueryId>,
@@ -561,13 +561,13 @@ impl Stream for IoHandler {
                             },
                         );
                         let out = IoHandlerEvent::OutRequest { tid };
-                        return Poll::Ready(Some(out));
+                        Poll::Ready(Some(out))
                     }
                     OutMessage::Reply(message) => {
                         let peer = message.to.clone();
                         let out = IoHandlerEvent::OutResponse { message, peer };
                         trace!("{out:#?}");
-                        return Poll::Ready(Some(out));
+                        Poll::Ready(Some(out))
                     }
                 };
             } else {

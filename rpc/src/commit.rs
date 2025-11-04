@@ -1,13 +1,8 @@
-#![allow(unused)]
 use futures::channel::mpsc::{self, Receiver, Sender};
 /// Commit
 /// * commit request - An outgoing [`ReplyMsgData`] which includes a valid token. When the message
 ///   is recieved and verified, the reciever does some mutation of state
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    iter::FromIterator,
-    net::SocketAddr,
-};
+use std::{collections::BTreeSet, iter::FromIterator, net::SocketAddr};
 
 use crate::{constants::DEFAULT_COMMIT_CHANNEL_SIZE, io::Tid};
 
@@ -108,7 +103,7 @@ impl Progress {
     }
     pub fn sent_tid(&mut self, tid: Tid) -> bool {
         match self {
-            P::Sending((rx, tids)) => tids.insert(tid),
+            P::Sending((_, tids)) => tids.insert(tid),
             _ => panic!("only call while `Sending`"),
         }
         // insert to Sending.tids

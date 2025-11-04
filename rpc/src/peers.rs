@@ -7,7 +7,7 @@ use crate::{kbucket::EntryView, IdBytes, Node, Peer, PeerId};
 
 #[derive(Debug, Clone, Default)]
 pub struct PeersCodec {
-    #[allow(unused)] // FIXME why aint this used
+    #[expect(unused)] // FIXME why aint this used
     id_length: usize,
 }
 

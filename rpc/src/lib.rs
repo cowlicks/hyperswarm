@@ -1,7 +1,6 @@
 //! Rust Implementation of the hyperswarm DHT
 #![deny(clippy::enum_glob_use)]
 #![warn(rust_2018_idioms)]
-#![allow(unreachable_code)]
 
 pub mod cenc;
 pub mod commit;
@@ -250,7 +249,7 @@ pub struct RpcDht {
     queries: QueryPool,
     /// Custom commands
     // TODO remove me
-    #[allow(unused)]
+    #[expect(unused)]
     commands: HashSet<usize>,
     /// Queued events to return when being polled.
     queued_events: VecDeque<RpcDhtEvent>,
@@ -637,7 +636,7 @@ impl RpcDht {
         self.io.reply(resp.msg)
     }
 
-    #[allow(unused)] // TODO FIXME
+    #[expect(unused)] // TODO FIXME
     fn reply(
         &mut self,
         error: usize,

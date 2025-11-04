@@ -1,7 +1,6 @@
-#![allow(
+#![expect(
     clippy::ptr_offset_with_cast,
     clippy::assign_op_pattern,
-    clippy::transmute_ptr_to_ptr,
     clippy::manual_range_contains
 )]
 // Copyright 2018 Parity Technologies (UK) Ltd.

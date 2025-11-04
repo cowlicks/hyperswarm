@@ -104,7 +104,7 @@ impl QueryTable {
 }
 
 /// Representation of a peer in the context of a iterator.
-#[allow(unused)] // FIXME bg: why is this not used?
+#[expect(unused)] // FIXME bg: why is this not used?
 #[derive(Debug, Clone)]
 pub(crate) struct Peer {
     key: PeerId,
