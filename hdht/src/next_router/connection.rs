@@ -32,7 +32,7 @@ pub enum ConnStep {
     /// Initial State
     Start(HalfOpenStreamHandle),
     /// Handshake Ready
-    Ready(ReadyData),
+    Ready(Box<ReadyData>),
     // Handshake failed
     Failed,
 }
@@ -85,7 +85,7 @@ impl ConnectionInner {
 
         let framed_udx_stream = Uint24LELengthPrefixedFraming::new(Compat::new(stream.clone()));
         self.handshake_set_io(Box::new(framed_udx_stream));
-        self.step = ConnStep::Ready(ReadyData { noise_payload });
+        self.step = ConnStep::Ready(Box::new(ReadyData { noise_payload }));
         Ok(())
     }
 }

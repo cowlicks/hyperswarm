@@ -513,6 +513,7 @@ impl HyperDht {
         Ok(tid)
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn request_announce_or_unannounce(
         &mut self,
         keypair: &Keypair,

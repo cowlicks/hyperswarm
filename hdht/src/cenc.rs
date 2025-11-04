@@ -31,7 +31,7 @@ impl CompactEncoding for Peer {
     }
 
     fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
-        let rest = write_array(&*self.public_key, buffer)?;
+        let rest = write_array(&self.public_key, buffer)?;
         self.relay_addresses.encode(rest)
     }
 
