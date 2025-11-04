@@ -159,7 +159,7 @@ impl From<EncodingError> for Error {
 
 /// The implementation of the hyperswarm DHT
 #[derive(Debug)]
-pub struct HyperDht {
+pub struct HyperDhtInner {
     /// The underlying Rpc DHT including IO
     rpc: RpcDht,
     /// Map to track the queries currently in progress
@@ -180,7 +180,7 @@ pub struct HyperDht {
     router: next_router::Router,
 }
 
-impl HyperDht {
+impl HyperDhtInner {
     /// Create a new DHT based on the configuration
     pub async fn with_config(mut config: DhtConfig) -> Result<Self> {
         if config.bootstrap_nodes.is_empty() {
@@ -587,7 +587,7 @@ impl HyperDht {
     }
 }
 
-impl Stream for HyperDht {
+impl Stream for HyperDhtInner {
     type Item = HyperDhtEvent;
 
     #[instrument(skip_all)]

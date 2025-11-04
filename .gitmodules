@@ -21,3 +21,6 @@
 [submodule "hdht/tests/common/js/udx-native"]
 	path = hdht/tests/common/js/udx-native
 	url = git@github.com:holepunchto/udx-native.git
+[submodule "hdht/tests/common/js/hyperswarm"]
+	path = hdht/tests/common/js/hyperswarm
+	url = git@github.com:holepunchto/hyperswarm.git

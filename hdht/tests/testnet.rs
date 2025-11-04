@@ -9,7 +9,7 @@ use hypercore_protocol::{handshake_constants::DHT_PATTERN, sstream::sm2::Event, 
 use hyperdht::{
     cenc::{NoisePayload, UdxInfo},
     namespace::PEER_HANDSHAKE,
-    HyperDht, HyperDhtEvent, Keypair,
+    HyperDhtEvent, HyperDhtInner, Keypair,
 };
 use rusty_nodejs_repl::{wait, Repl};
 
@@ -111,7 +111,8 @@ macro_rules! setup_rs_node_and_js_testnet {
     () => {{
         let mut tn = Testnet::new().await?;
         let bs_addr = tn.get_node_i_address(1).await?;
-        let hdht = HyperDht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+        let hdht =
+            HyperDhtInner::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
         (tn, hdht)
     }};
 }
