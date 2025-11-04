@@ -90,15 +90,15 @@ mod key;
 ///
 ///   1) The (fixed) maximum number of nodes in a bucket.
 ///   2) The (default) replication factor, which in turn determines:
-///       a) The number of closer peers returned in response to a request.
-///       b) The number of closest peers to a key to search for in an iterative query.
+///      a) The number of closer peers returned in response to a request.
+///      b) The number of closest peers to a key to search for in an iterative query.
 ///
 /// The choice of (1) is fixed to this constant. The replication factor is
 /// configurable but should generally be no greater than `K_VALUE`. All nodes in
 /// a Kademlia DHT should agree on the choices made for (1) and (2).
 ///
 /// The current value is `20`.
-pub const K_VALUE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(20) };
+pub const K_VALUE: NonZeroUsize = NonZeroUsize::new(20).unwrap();
 
 /// The `α` parameter of the Kademlia specification.
 ///
@@ -108,7 +108,7 @@ pub const K_VALUE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(20) };
 /// locating the closest peers to a key.
 ///
 /// The current value is `3`.
-pub const ALPHA_VALUE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(3) };
+pub const ALPHA_VALUE: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 
 /// Maximum number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -483,12 +483,12 @@ where
 
     /// Returns true if the bucket has a pending node.
     pub fn has_pending(&self) -> bool {
-        self.bucket.pending().map_or(false, |n| !n.is_ready())
+        self.bucket.pending().is_some_and(|n| !n.is_ready())
     }
 
     /// Tests whether the given distance falls into this bucket.
     pub fn contains(&self, d: &Distance) -> bool {
-        BucketIndex::new(d).map_or(false, |i| i == self.index)
+        BucketIndex::new(d) == Some(self.index)
     }
 
     /// Generates a random distance that falls into this bucket.

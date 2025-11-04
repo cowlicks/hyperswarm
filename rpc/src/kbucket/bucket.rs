@@ -217,7 +217,7 @@ where
                         // The bucket is full with connected nodes. Drop the pending node.
                         return None;
                     }
-                    debug_assert!(self.first_connected_pos.map_or(true, |p| p > 0)); // (*)
+                    debug_assert!(self.first_connected_pos.is_none_or(|p| p > 0)); // (*)
                                                                                      // The pending node will be inserted.
                     let inserted = pending.node.clone();
                     // A connected pending node goes at the end of the list for
@@ -363,7 +363,7 @@ where
             // Adjust `first_connected_pos` accordingly.
             match status {
                 NodeStatus::Connected => {
-                    if self.first_connected_pos.map_or(false, |p| p == pos.0)
+                    if (self.first_connected_pos == Some(pos.0))
                         && pos.0 == self.nodes.len()
                     {
                         // It was the last connected node.
@@ -384,7 +384,7 @@ where
 
     /// Returns the status of the node at the given position.
     pub fn status(&self, pos: Position) -> NodeStatus {
-        if self.first_connected_pos.map_or(false, |i| pos.0 >= i) {
+        if self.first_connected_pos.is_some_and(|i| pos.0 >= i) {
             NodeStatus::Connected
         } else {
             NodeStatus::Disconnected
