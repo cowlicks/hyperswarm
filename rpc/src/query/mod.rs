@@ -232,7 +232,7 @@ pub struct Query {
     /// identifier for this stream
     pub id: QueryId,
     /// The permitted parallelism, i.e. number of pending results.
-    #[allow(unused)] // TODO
+    #[expect(unused)] // TODO
     parallelism: NonZeroUsize,
     /// The peer iterator that drives the query state.
     pub(crate) peer_iter: ClosestPeersIter,
@@ -252,7 +252,7 @@ pub struct Query {
 
 impl Query {
     // TODO use a builder struct instead
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         id: QueryId,
         cmd: Command,

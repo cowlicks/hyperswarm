@@ -189,7 +189,7 @@ where
     }
 
     /// Returns a reference to a node in the bucket.
-    #[allow(unused)] // TODO FIXME
+    #[expect(unused)] // TODO FIXME
     pub fn get(&self, key: &IdBytes) -> Option<&Node<IdBytes, TVal>> {
         self.position(key).map(|p| &self.nodes[p.0])
     }
@@ -218,7 +218,7 @@ where
                         return None;
                     }
                     debug_assert!(self.first_connected_pos.is_none_or(|p| p > 0)); // (*)
-                                                                                     // The pending node will be inserted.
+                                                                                   // The pending node will be inserted.
                     let inserted = pending.node.clone();
                     // A connected pending node goes at the end of the list for
                     // the connected peers, removing the least-recently connected.
@@ -363,9 +363,7 @@ where
             // Adjust `first_connected_pos` accordingly.
             match status {
                 NodeStatus::Connected => {
-                    if (self.first_connected_pos == Some(pos.0))
-                        && pos.0 == self.nodes.len()
-                    {
+                    if (self.first_connected_pos == Some(pos.0)) && pos.0 == self.nodes.len() {
                         // It was the last connected node.
                         self.first_connected_pos = None
                     }
@@ -392,7 +390,7 @@ where
     }
 
     /// Checks whether the given position refers to a connected node.
-    #[allow(unused)] // TODO FIXME
+    #[expect(unused)] // TODO FIXME
     pub fn is_connected(&self, pos: Position) -> bool {
         self.status(pos) == NodeStatus::Connected
     }
@@ -403,14 +401,13 @@ where
     }
 
     /// Gets the number of entries in the bucket that are considered connected.
-    #[allow(unused)] // TODO FIXME
     pub fn num_connected(&self) -> usize {
         self.first_connected_pos.map_or(0, |i| self.nodes.len() - i)
     }
 
     /// Gets the number of entries in the bucket that are considered
     /// disconnected.
-    #[allow(unused)] // TODO FIXME
+    #[expect(unused)] // TODO FIXME
     pub fn num_disconnected(&self) -> usize {
         self.nodes.len() - self.num_connected()
     }
