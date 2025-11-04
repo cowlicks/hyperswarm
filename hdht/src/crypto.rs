@@ -134,7 +134,6 @@ impl Deref for Signature2 {
     }
 }
 
-#[expect(clippy::result_unit_err)]
 pub fn signable(value: &[u8], salt: Option<&Vec<u8>>, seq: u64) -> Result<Vec<u8>, ()> {
     let cap = SEQ_SEG.len() + 3 + V_SEG.len() + 3 + value.len();
 
@@ -160,7 +159,6 @@ pub fn signable(value: &[u8], salt: Option<&Vec<u8>>, seq: u64) -> Result<Vec<u8
     Ok(s)
 }
 
-#[expect(clippy::result_unit_err)]
 pub fn signable_mutable(mutable: &Mutable) -> Result<Vec<u8>, ()> {
     if let Some(ref val) = mutable.value {
         signable(val, mutable.salt.as_ref(), mutable.seq.unwrap_or_default())
