@@ -79,7 +79,6 @@ impl AunnounceClearInner {
 
 #[derive(Debug)]
 pub struct AnnounceClearResult {
-    #[allow(unused)]
     pub responses: Vec<Result<Arc<InResponse>>>,
 }
 

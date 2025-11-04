@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![expect(unused)]
 use std::hash::Hash;
 
 use ::dht_rpc::{

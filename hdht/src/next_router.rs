@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![expect(unused)]
 pub mod connection;
 use std::{
     any::Any,

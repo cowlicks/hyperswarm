@@ -165,7 +165,7 @@ pub struct HyperDht {
     /// Map to track the queries currently in progress
     queries: FuturesMap<QueryId, QueryStreamType>,
     /// If `true`, the node will become non-ephemeral after the node has shown, to be long-lived
-    #[allow(unused)] // FIXME why aint this used
+    #[expect(unused)] // FIXME why aint this used
     adaptive: bool,
     /// Cache for known peers
     peers: PeerCache,
@@ -174,12 +174,10 @@ pub struct HyperDht {
     /// Queued events to return when being polled.
     queued_events: VecDeque<HyperDhtEvent>,
     /// Default keypair
-    #[allow(unused)] // TODO
+    #[expect(unused)] // TODO
     default_keypair: Keypair,
     /// Router for peer connections
-    #[allow(unused)] // TODO
     router: next_router::Router,
-    //router: router::Router,
 }
 
 impl HyperDht {
@@ -548,7 +546,7 @@ impl HyperDht {
         )
     }
 
-    #[allow(unused)] // TODO FIXME
+    #[expect(unused)] // TODO FIXME
     fn request_announce(
         &mut self,
         keypair: &Keypair,
@@ -569,7 +567,7 @@ impl HyperDht {
         )
     }
 
-    #[allow(unused)] // TODO FIXME
+    #[expect(unused)] // TODO FIXME
     fn request_unannounce(
         &mut self,
         keypair: &Keypair,
