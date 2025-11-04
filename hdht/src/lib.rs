@@ -11,7 +11,7 @@ use std::{
     net::{AddrParseError, IpAddr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     ops::DerefMut,
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
@@ -650,6 +650,26 @@ impl Stream for HyperDhtInner {
                 return Poll::Pending;
             }
         }
+    }
+}
+
+pub struct HyperDht {
+    inner: Arc<Mutex<HyperDhtInner>>,
+}
+
+struct FindPeerFuture {}
+
+impl Future for FindPeerFuture {
+    type Output = Result<FindPeerResponse>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        todo!()
+    }
+}
+
+impl HyperDht {
+    pub fn find_peer(&mut self, pub_key: PublicKey) -> FindPeerFuture {
+        todo!()
     }
 }
 
