@@ -352,15 +352,15 @@ impl FindPeerInner {
     }
 
     #[instrument(skip_all)]
-    pub fn inject_response(&mut self, resp: Arc<InResponse>) -> Option<HyperDhtEvent> {
+    pub fn inject_response(&mut self, resp: Arc<InResponse>) -> Option<FindPeerResponse> {
         self.peers.push(resp.clone());
         match FindPeerResponse::from_response(resp) {
             Ok(Some(evt)) => {
                 trace!("Decoded valid lookup response");
-                Some(HyperDhtEvent::FindPeerResponse(evt))
+                Some(evt)
             }
             Ok(None) => {
-                trace!("Lookup respones missing value field");
+                trace!("Lookup response missing value field");
                 None
             }
             Err(e) => {

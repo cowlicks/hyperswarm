@@ -2,8 +2,7 @@ use std::{
     mem::replace,
     net::SocketAddr,
     pin::Pin,
-    rc::Rc,
-    sync::RwLock,
+    sync::{Arc, RwLock},
     task::{Context, Poll},
 };
 
@@ -118,7 +117,7 @@ impl Sink<Vec<u8>> for ConnectionInner {
 }
 #[derive(Debug)]
 pub struct Connection {
-    pub inner: Rc<RwLock<ConnectionInner>>,
+    pub inner: Arc<RwLock<ConnectionInner>>,
 }
 
 macro_rules! w {
@@ -135,7 +134,7 @@ macro_rules! r {
 impl Connection {
     pub fn new(handshake: Machine, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
         Self {
-            inner: Rc::new(RwLock::new(ConnectionInner {
+            inner: Arc::new(RwLock::new(ConnectionInner {
                 handshake,
                 udx_local_id,
                 step: ConnStep::Start(half_stream),

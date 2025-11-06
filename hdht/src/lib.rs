@@ -5,6 +5,7 @@
 use std::{
     array::TryFromSliceError,
     cmp,
+    collections::BTreeMap,
     convert::{TryFrom, TryInto},
     fmt,
     future::Future,
@@ -39,7 +40,7 @@ use queries::{
     LookupInner, LookupResponse, QueryResult, UnannounceInner, UnannounceResult,
 };
 use smallvec::alloc::collections::VecDeque;
-use tokio::sync::oneshot::error::RecvError;
+use tokio::sync::oneshot::{self, error::RecvError};
 use tracing::{debug, error, instrument, trace, warn};
 
 use crate::{
@@ -178,6 +179,8 @@ pub struct HyperDhtInner {
     default_keypair: Keypair,
     /// Router for peer connections
     router: next_router::Router,
+    /// Channels to send FindPeerResponse through for pending find_peer queries
+    pending_find_peers: BTreeMap<QueryId, oneshot::Sender<FindPeerResponse>>,
 }
 
 impl HyperDhtInner {
@@ -201,6 +204,7 @@ impl HyperDhtInner {
             queued_events: Default::default(),
             default_keypair: Default::default(),
             router: Default::default(),
+            pending_find_peers: BTreeMap::new(),
         })
     }
 
@@ -328,6 +332,11 @@ impl HyperDhtInner {
         query_id
     }
 
+    /// Store a channel sender for a find_peer query result
+    fn store_find_peer_sender(&mut self, query_id: QueryId, tx: oneshot::Sender<FindPeerResponse>) {
+        self.pending_find_peers.insert(query_id, tx);
+    }
+
     /// Initiates an iterative query to the closest peers to lookup the topic.
     ///
     /// The result of the query is delivered in a
@@ -430,7 +439,21 @@ impl HyperDhtInner {
                         inner.inject_response(&mut self.rpc.io, resp, qid);
                         None
                     }
-                    QueryStreamType::FindPeer(inner) => inner.inject_response(resp.clone()),
+                    QueryStreamType::FindPeer(inner) => {
+                        if let Some(fp_resp) = inner.inject_response(resp.clone()) {
+                            // Send the response through the channel if one is waiting
+                            if let Some(tx) = self.pending_find_peers.remove(&qid) {
+                                let response_to_send = FindPeerResponse {
+                                    response: fp_resp.response.clone(),
+                                    peer: fp_resp.peer.clone(),
+                                };
+                                let _ = tx.send(response_to_send);
+                            }
+                            Some(HyperDhtEvent::FindPeerResponse(fp_resp))
+                        } else {
+                            None
+                        }
+                    }
                 }
             };
             if let Some(e) = event {
@@ -657,19 +680,51 @@ pub struct HyperDht {
     inner: Arc<Mutex<HyperDhtInner>>,
 }
 
-struct FindPeerFuture {}
+/// Future that resolves when a FindPeerResponse is received for the find_peer query
+pub struct FindPeerFuture {
+    inner: Arc<Mutex<HyperDhtInner>>,
+    rx: oneshot::Receiver<FindPeerResponse>,
+}
 
 impl Future for FindPeerFuture {
     type Output = Result<FindPeerResponse>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Poll the inner to drive the find_peer query forward
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+
+        // Poll the receiver for the response
+        Pin::new(&mut self.rx).poll(cx).map_err(Error::RecvError)
     }
 }
 
 impl HyperDht {
+    pub async fn with_config(config: DhtConfig) -> Result<Self> {
+        let inner = HyperDhtInner::with_config(config).await?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+    /// Initiate a find_peer query for the given public key.
+    ///
+    /// Returns a future that resolves with the first FindPeerResponse received,
+    /// or an error if the query fails.
     pub fn find_peer(&mut self, pub_key: PublicKey) -> FindPeerFuture {
-        todo!()
+        let (tx, rx) = oneshot::channel();
+
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let query_id = inner.find_peer(pub_key);
+            inner.store_find_peer_sender(query_id, tx);
+        }
+
+        FindPeerFuture {
+            inner: self.inner.clone(),
+            rx,
+        }
     }
 }
 
