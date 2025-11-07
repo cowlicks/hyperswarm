@@ -1060,8 +1060,7 @@ pub enum RequestError {
     },
     /// The `target` field of message was required but was empty
     MissingTarget { msg: RequestMsgData, peer: Peer },
-    /// Received a message with a type other than [`Type::Query`],
-    /// [`Type::Response`], [`Type::Update`]
+    /// Received a message with an unknown type
     InvalidType {
         ty: i32,
         msg: RequestMsgData,

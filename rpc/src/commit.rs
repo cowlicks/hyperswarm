@@ -42,7 +42,7 @@ pub struct CommitRequestParams {
     pub token: [u8; 32],
 }
 
-/// The kinds of [`Commit`] a [`Query`] can have.
+/// The kinds of [`Commit`] a [`crate::query::Query`] can have.
 #[derive(Debug)]
 pub enum Commit {
     No,

@@ -8,7 +8,7 @@ pub(crate) const RESPONSE_ID: u8 = (0b0001 << 4) | VERSION;
 pub(crate) const REQUEST_ID: u8 = 0b0000 << 4 | VERSION;
 // From dht-rpc/index.js tick interval for the rpc client
 pub(crate) const TICK_INTERVAL_MS: u64 = 5000;
-/// we normally send [`K_VALUE`] = 20 request message, and ?? book keeping messages. Add a good
+/// we normally send [`crate::kbucket::K_VALUE`] = 20 request message, and ?? book keeping messages. Add a good
 /// fudge factor.
 pub const DEFAULT_COMMIT_CHANNEL_SIZE: usize = 20 * 5;
 /// Size of an ID
