@@ -472,6 +472,7 @@ impl RpcDht {
     fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
         let pin = self.get_mut();
         let now = Instant::now();
+        pin.stream_waker.insert(cx.waker().clone());
 
         if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now) {
             if pin.kbuckets.iter().count() < 20 {
@@ -665,7 +666,7 @@ impl RpcDht {
             let bootstrap_nodes: Vec<Peer> = self.bootstrap_nodes.iter().map(Peer::from).collect();
             self.queries.bootstrap(target, peers, bootstrap_nodes);
         } else if !self.bootstrapped {
-            self.queued_events.push_back(RpcDhtEvent::Bootstrapped {
+            self.enque_stream_event(RpcDhtEvent::Bootstrapped {
                 stats: QueryStats::empty(),
             });
             self.bootstrapped = true;
@@ -807,8 +808,9 @@ impl RpcDht {
             Some(query_id) => {
                 if let Some(query) = self.queries.get(&query_id) {
                     if let Some(resp) = query.write().unwrap().inject_response(resp_data) {
-                        self.queued_events
-                            .push_back(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(resp))))
+                        self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(
+                            ResponseOk::Response(resp),
+                        )))
                     }
                 } else {
                     debug!("Recieved response for missing query with id: {:?}. It could have been removed already", resp_data.query_id);
@@ -819,9 +821,9 @@ impl RpcDht {
                     self.on_pong(&resp_data.response, resp_data.peer.clone());
                 }
                 Command::External(_) => {
-                    self.queued_events.push_back(RpcDhtEvent::ResponseResult(Ok(
-                        ResponseOk::Response(resp_data),
-                    )));
+                    self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(
+                        resp_data,
+                    ))));
                 }
                 Command::Internal(_) => {
                     todo!("I think this happens whene there is request that should be a query")
@@ -879,7 +881,7 @@ impl RpcDht {
                 use InsertResult as Ir;
                 match entry.insert(node, NodeStatus::Connected) {
                     Ir::Inserted => {
-                        self.queued_events.push_back(RpcDhtEvent::RoutingUpdated {
+                        self.enque_stream_event(RpcDhtEvent::RoutingUpdated {
                             peer,
                             old_peer: None,
                         });
@@ -1104,8 +1106,7 @@ impl RpcDht {
             }
         }
 
-        self.queued_events
-            .push_back(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
+        self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
     }
 
     fn default_commit(&mut self, query: Arc<RwLock<Query>>) -> Vec<Tid> {
