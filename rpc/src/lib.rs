@@ -16,7 +16,7 @@ mod stateobserver;
 mod stream;
 mod util;
 
-pub use futreqs::{new_request_channel, Error as RequestFutureError, RequestFuture};
+pub use futreqs::{new_request_channel, Error as RequestFutureError, RequestFuture, RequestSender};
 
 #[cfg(test)]
 mod s_test;
@@ -29,15 +29,15 @@ use query::{CommandQueryResponse, QueryResult};
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
-    collections::{BTreeSet, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
     convert::{TryFrom, TryInto},
     fmt::Display,
     iter::FromIterator,
     net::{AddrParseError, SocketAddr, ToSocketAddrs},
     pin::Pin,
     str::FromStr,
-    sync::{Arc, RwLock},
-    task::{Context, Poll},
+    sync::{Arc, Mutex, RwLock},
+    task::{Context, Poll, Waker},
     time::Duration,
 };
 use tracing::{debug, error, instrument, trace, warn};
@@ -59,7 +59,7 @@ use crate::{
     util::pretty_bytes,
 };
 use compact_encoding::EncodingError;
-use tokio::sync::oneshot::error::RecvError;
+use tokio::sync::oneshot::{self, error::RecvError, Receiver, Sender};
 
 pub use self::message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner};
 use self::{
@@ -257,6 +257,68 @@ pub struct RpcDht {
     bootstrap_nodes: Vec<SocketAddr>,
     bootstrapped: bool,
     down_hints_in_progress: Vec<(u16, IdBytes, Instant)>,
+    pending_requests: BTreeMap<Tid, Sender<Arc<InResponse>>>,
+    stream_waker: Option<Waker>,
+}
+
+pub struct AsyncRpcDht {
+    inner: Arc<Mutex<RpcDht>>,
+}
+
+impl AsyncRpcDht {
+    pub async fn with_config(config: DhtConfig) -> crate::Result<Self> {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(RpcDht::with_config(config).await?)),
+        })
+    }
+
+    pub async fn request(
+        &mut self,
+        command: Command,
+        target: Option<IdBytes>,
+        value: Option<Vec<u8>>,
+        destination: Peer,
+        token: Option<[u8; 32]>,
+    ) -> Result<Arc<InResponse>> {
+        // Create a channel for the response
+        //let (tx, rx) = new_request_channel();
+        let (tx, rx) = oneshot::channel();
+
+        let tid = {
+            let mut inner = self.inner.lock().unwrap();
+            let tid = inner.request(command, target, value, destination, token);
+            inner.store_tid_sender(tid, tx);
+            tid
+        };
+
+        // Create a future that polls RpcDht for events and waits for the response
+        RpcDhtRequestFuture {
+            inner: self.inner.clone(),
+            tid,
+            rx,
+        }
+        .await
+    }
+}
+
+/// A future that polls RpcDht for events while waiting for a specific response.
+struct RpcDhtRequestFuture {
+    inner: Arc<Mutex<RpcDht>>,
+    tid: Tid,
+    rx: Receiver<Arc<InResponse>>,
+}
+
+impl std::future::Future for RpcDhtRequestFuture {
+    type Output = Result<Arc<InResponse>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // First, try to poll the response future
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+        Pin::new(&mut self.rx).poll(cx).map_err(Error::RecvError)
+    }
 }
 
 #[derive(Debug)]
@@ -349,6 +411,10 @@ impl DhtConfig {
 }
 
 impl RpcDht {
+    pub fn store_tid_sender(&mut self, tid: Tid, tx: Sender<Arc<InResponse>>) {
+        self.pending_requests.insert(tid, tx);
+    }
+
     fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
         let pin = self.get_mut();
 
@@ -477,6 +543,12 @@ impl RpcDht {
         }
     }
 
+    fn enque_stream_event(&mut self, event: RpcDhtEvent) {
+        self.queued_events.push_back(event);
+        if let Some(w) = self.stream_waker.take() {
+            w.wake()
+        }
+    }
     pub async fn with_config(config: DhtConfig) -> crate::Result<Self> {
         let bites = config.local_id.unwrap_or_else(thirty_two_random_bytes);
         let id_bytes = IdBytes::from(bites);
@@ -503,6 +575,8 @@ impl RpcDht {
             bootstrap_nodes: config.bootstrap_nodes,
             bootstrapped: false,
             down_hints_in_progress: Vec::new(),
+            pending_requests: Default::default(),
+            stream_waker: Default::default(),
         };
 
         dht.bootstrap();
@@ -660,7 +734,11 @@ impl RpcDht {
     }
 
     /// Process a response.
+    #[instrument(skip_all)]
     fn on_response(&mut self, resp_data: Arc<InResponse>) {
+        if let Some(x) = self.pending_requests.remove(&resp_data.request.tid) {
+            x.send(resp_data.clone());
+        }
         if let Some(id) = validate_id(&resp_data.response.id, &resp_data.peer) {
             self.add_node(
                 id,
