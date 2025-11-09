@@ -349,6 +349,134 @@ impl DhtConfig {
 }
 
 impl RpcDht {
+    fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
+        let pin = self.get_mut();
+
+        let now = Instant::now();
+
+        if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now) {
+            if pin.kbuckets.iter().count() < 20 {
+                debug!("next bootstrap_job running");
+                pin.bootstrap();
+            }
+        }
+
+        if let Poll::Ready(()) = pin.ping_job.poll(cx, now) {
+            pin.ping_some();
+        }
+        loop {
+            // Drain queued events first.
+            if let Some(event) = pin.queued_events.pop_front() {
+                trace!("{event:#?}");
+                return Poll::Ready(Some(event));
+            }
+
+            // Look for a sent/received message
+            loop {
+                if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
+                    debug!("RpcDht got IoHandlerEvent::{event}");
+                    pin.inject_event(event);
+                    if let Some(event) = pin.queued_events.pop_front() {
+                        trace!("emit queue event: {event:?}");
+                        return Poll::Ready(Some(event));
+                    }
+                } else {
+                    match pin.queries.poll(now) {
+                        QueryPoolEvent::Commit((query, cev)) => {
+                            use commit::{Commit as C, CommitEvent as E, Progress as P};
+                            // TODO add all commit handlers
+                            match cev {
+                                E::AutoStart((_, _)) => {
+                                    let tids = pin.default_commit(query.clone());
+                                    query.write().unwrap().commit =
+                                        C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
+                                }
+                                E::CustomStart((tx_commit_messages, _)) => {
+                                    return Poll::Ready(Some(RpcDhtEvent::ReadyToCommit {
+                                        query,
+                                        tx_commit_messages,
+                                    }));
+                                }
+                                E::SendRequests((commits, _)) => {
+                                    for msg in commits {
+                                        match msg {
+                                            CommitMessage::Send(cr) => {
+                                                let (_, tid) = pin.io.request(
+                                                    cr.command,
+                                                    cr.target,
+                                                    cr.value,
+                                                    cr.peer.into(),
+                                                    Some(cr.query_id),
+                                                    Some(cr.token),
+                                                );
+                                                if let C::Custom(prog @ P::Sending(_)) =
+                                                    &mut query.write().unwrap().commit
+                                                {
+                                                    prog.sent_tid(tid);
+                                                }
+                                            }
+                                            CommitMessage::Done => {
+                                                match &mut query.write().unwrap().commit {
+                                                    C::Custom(prog @ P::Sending(_)) => {
+                                                        // Done should only be emitted last. Any
+                                                        // further rquests sent with `Send` are
+                                                        // dropped
+                                                        prog.transition_to_awaiting();
+                                                        if prog.all_replies_recieved() {
+                                                            // if we'd already recieved all replies,
+                                                            // we're done
+                                                            *prog = Progress::Done;
+                                                        }
+                                                    }
+                                                    _ => {
+                                                        // We expect that only `Custom` sends
+                                                        // SendRequests. and only sends Done while
+                                                        // in `Sending`
+                                                        todo!()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                E::Done => {
+                                    todo!("Commit Done!")
+                                }
+                            }
+                        }
+                        QueryPoolEvent::Waiting(Some((query, event))) => {
+                            let id = query.read().unwrap().id();
+                            pin.inject_query_event(id, event);
+                        }
+                        QueryPoolEvent::Finished(q) => {
+                            trace!(
+                                "QueryPoolEvent::Finished. Query::id = {:?}",
+                                q.try_read().map(|x| x.id)
+                            );
+                            let event = pin.query_finished(q);
+                            return Poll::Ready(Some(event));
+                        }
+                        QueryPoolEvent::Timeout(q) => {
+                            let event = pin.query_timeout(q);
+                            trace!("{event:#?}");
+                            return Poll::Ready(Some(event));
+                        }
+                        QueryPoolEvent::Waiting(None) | QueryPoolEvent::Idle => {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // No immediate event was produced as a result of a finished query or socket.
+            // If no new events have been queued either, signal `Pending` to
+            // be polled again later.
+            if pin.queued_events.is_empty() {
+                return Poll::Pending;
+            }
+        }
+    }
+
     pub async fn with_config(config: DhtConfig) -> crate::Result<Self> {
         let bites = config.local_id.unwrap_or_else(thirty_two_random_bytes);
         let id_bytes = IdBytes::from(bites);
@@ -1093,131 +1221,7 @@ impl Stream for RpcDht {
 
     #[instrument(skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let pin = self.get_mut();
-
-        let now = Instant::now();
-
-        if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now) {
-            if pin.kbuckets.iter().count() < 20 {
-                debug!("next bootstrap_job running");
-                pin.bootstrap();
-            }
-        }
-
-        if let Poll::Ready(()) = pin.ping_job.poll(cx, now) {
-            pin.ping_some();
-        }
-        loop {
-            // Drain queued events first.
-            if let Some(event) = pin.queued_events.pop_front() {
-                trace!("{event:#?}");
-                return Poll::Ready(Some(event));
-            }
-
-            // Look for a sent/received message
-            loop {
-                if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
-                    debug!("RpcDht got IoHandlerEvent::{event}");
-                    pin.inject_event(event);
-                    if let Some(event) = pin.queued_events.pop_front() {
-                        trace!("emit queue event: {event:?}");
-                        return Poll::Ready(Some(event));
-                    }
-                } else {
-                    match pin.queries.poll(now) {
-                        QueryPoolEvent::Commit((query, cev)) => {
-                            use commit::{Commit as C, CommitEvent as E, Progress as P};
-                            // TODO add all commit handlers
-                            match cev {
-                                E::AutoStart((_, _)) => {
-                                    let tids = pin.default_commit(query.clone());
-                                    query.write().unwrap().commit =
-                                        C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
-                                }
-                                E::CustomStart((tx_commit_messages, _)) => {
-                                    return Poll::Ready(Some(RpcDhtEvent::ReadyToCommit {
-                                        query,
-                                        tx_commit_messages,
-                                    }));
-                                }
-                                E::SendRequests((commits, _)) => {
-                                    for msg in commits {
-                                        match msg {
-                                            CommitMessage::Send(cr) => {
-                                                let (_, tid) = pin.io.request(
-                                                    cr.command,
-                                                    cr.target,
-                                                    cr.value,
-                                                    cr.peer.into(),
-                                                    Some(cr.query_id),
-                                                    Some(cr.token),
-                                                );
-                                                if let C::Custom(prog @ P::Sending(_)) =
-                                                    &mut query.write().unwrap().commit
-                                                {
-                                                    prog.sent_tid(tid);
-                                                }
-                                            }
-                                            CommitMessage::Done => {
-                                                match &mut query.write().unwrap().commit {
-                                                    C::Custom(prog @ P::Sending(_)) => {
-                                                        // Done should only be emitted last. Any
-                                                        // further rquests sent with `Send` are
-                                                        // dropped
-                                                        prog.transition_to_awaiting();
-                                                        if prog.all_replies_recieved() {
-                                                            // if we'd already recieved all replies,
-                                                            // we're done
-                                                            *prog = Progress::Done;
-                                                        }
-                                                    }
-                                                    _ => {
-                                                        // We expect that only `Custom` sends
-                                                        // SendRequests. and only sends Done while
-                                                        // in `Sending`
-                                                        todo!()
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                E::Done => {
-                                    todo!("Commit Done!")
-                                }
-                            }
-                        }
-                        QueryPoolEvent::Waiting(Some((query, event))) => {
-                            let id = query.read().unwrap().id();
-                            pin.inject_query_event(id, event);
-                        }
-                        QueryPoolEvent::Finished(q) => {
-                            trace!(
-                                "QueryPoolEvent::Finished. Query::id = {:?}",
-                                q.try_read().map(|x| x.id)
-                            );
-                            let event = pin.query_finished(q);
-                            return Poll::Ready(Some(event));
-                        }
-                        QueryPoolEvent::Timeout(q) => {
-                            let event = pin.query_timeout(q);
-                            trace!("{event:#?}");
-                            return Poll::Ready(Some(event));
-                        }
-                        QueryPoolEvent::Waiting(None) | QueryPoolEvent::Idle => {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // No immediate event was produced as a result of a finished query or socket.
-            // If no new events have been queued either, signal `Pending` to
-            // be polled again later.
-            if pin.queued_events.is_empty() {
-                return Poll::Pending;
-            }
-        }
+        self.poll_next_inner(cx)
     }
 }
 
