@@ -32,6 +32,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
     convert::{TryFrom, TryInto},
     fmt::Display,
+    future::Future,
     iter::FromIterator,
     net::{AddrParseError, SocketAddr, ToSocketAddrs},
     pin::Pin,
@@ -136,6 +137,15 @@ pub enum InternalCommand {
     PingNat,
     FindNode,
     DownHint,
+}
+
+pub mod commands {
+    use crate::Command;
+    pub const PING: Command = Command::Internal(crate::InternalCommand::Ping);
+    pub const PING_NAT: Command = Command::Internal(crate::InternalCommand::PingNat);
+    // needs target
+    pub const FIND_NODE: Command = Command::Internal(crate::InternalCommand::FindNode);
+    pub const DOWN_HINT: Command = Command::Internal(crate::InternalCommand::DownHint);
 }
 
 impl Display for InternalCommand {
@@ -259,6 +269,7 @@ pub struct RpcDht {
     down_hints_in_progress: Vec<(u16, IdBytes, Instant)>,
     pending_requests: BTreeMap<Tid, Sender<Arc<InResponse>>>,
     stream_waker: Option<Waker>,
+    pending_queries: BTreeMap<QueryId, Sender<Arc<QueryResult>>>,
 }
 
 pub struct AsyncRpcDht {
@@ -273,7 +284,7 @@ impl AsyncRpcDht {
     }
 
     pub async fn request(
-        &mut self,
+        &self,
         command: Command,
         target: Option<IdBytes>,
         value: Option<Vec<u8>>,
@@ -297,6 +308,53 @@ impl AsyncRpcDht {
         }
         .await
     }
+    pub async fn query(
+        &self,
+        command: Command,
+        target: IdBytes,
+        value: Option<Vec<u8>>,
+        commit: Commit,
+    ) -> Result<Arc<QueryResult>> {
+        let (tx, rx) = oneshot::channel();
+
+        let qid = {
+            let mut inner = self.inner.lock().unwrap();
+            let qid = inner.query(command, target, value, commit);
+            inner.store_qid_sender(qid, tx);
+            qid
+        };
+
+        RpcDhtQueryFuture {
+            inner: self.inner.clone(),
+            qid,
+            rx,
+        }
+        .await
+    }
+}
+
+macro_rules! future_poller {
+    ($self:expr, $cx:expr) => {{
+        // First, try to poll the response future
+        {
+            let mut inner = $self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), $cx);
+        }
+        Pin::new(&mut $self.rx).poll($cx).map_err(Error::RecvError)
+    }};
+}
+
+pub struct RpcDhtQueryFuture {
+    inner: Arc<Mutex<RpcDht>>,
+    qid: QueryId,
+    rx: Receiver<Arc<QueryResult>>,
+}
+impl Future for RpcDhtQueryFuture {
+    type Output = Result<Arc<QueryResult>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        future_poller!(self, cx)
+    }
 }
 
 /// A future that polls RpcDht for events while waiting for a specific response.
@@ -306,16 +364,11 @@ struct RpcDhtRequestFuture {
     rx: Receiver<Arc<InResponse>>,
 }
 
-impl std::future::Future for RpcDhtRequestFuture {
+impl Future for RpcDhtRequestFuture {
     type Output = Result<Arc<InResponse>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // First, try to poll the response future
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
-        }
-        Pin::new(&mut self.rx).poll(cx).map_err(Error::RecvError)
+        future_poller!(self, cx)
     }
 }
 
@@ -412,10 +465,12 @@ impl RpcDht {
     pub fn store_tid_sender(&mut self, tid: Tid, tx: Sender<Arc<InResponse>>) {
         self.pending_requests.insert(tid, tx);
     }
+    pub fn store_qid_sender(&mut self, qid: QueryId, tx: Sender<Arc<QueryResult>>) {
+        self.pending_queries.insert(qid, tx);
+    }
 
     fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
         let pin = self.get_mut();
-
         let now = Instant::now();
 
         if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now) {
@@ -575,6 +630,7 @@ impl RpcDht {
             down_hints_in_progress: Vec::new(),
             pending_requests: Default::default(),
             stream_waker: Default::default(),
+            pending_queries: Default::default(),
         };
 
         dht.bootstrap();
@@ -734,8 +790,10 @@ impl RpcDht {
     /// Process a response.
     #[instrument(skip_all)]
     fn on_response(&mut self, resp_data: Arc<InResponse>) {
-        if let Some(x) = self.pending_requests.remove(&resp_data.request.tid) {
-            x.send(resp_data.clone());
+        if let Some(tx) = self.pending_requests.remove(&resp_data.request.tid) {
+            let _ = tx
+                .send(resp_data.clone())
+                .inspect_err(|e| error!("Failed to send result to pending request: {e:?}"));
         }
         if let Some(id) = validate_id(&resp_data.response.id, &resp_data.peer) {
             self.add_node(
@@ -765,7 +823,9 @@ impl RpcDht {
                         ResponseOk::Response(resp_data),
                     )));
                 }
-                Command::Internal(_) => panic!(),
+                Command::Internal(_) => {
+                    todo!("I think this happens whene there is request that should be a query")
+                }
             },
         }
     }
@@ -1179,6 +1239,12 @@ impl RpcDht {
             }
         } else {
             let result = Arc::new(result);
+            if let Some(tx) = self.pending_queries.remove(&result.query_id) {
+                let _ = tx
+                    .send(result.clone())
+                    .inspect_err(|e| error!("Failed to send result of pending query: {e:?}"));
+            }
+
             debug!(
                 cmd = tracing::field::display(result.cmd),
                 "Query result ready"
@@ -1201,6 +1267,7 @@ impl RpcDht {
         self.io.enqueue_request(msg)
     }
 }
+
 #[derive(Debug)]
 pub enum RpcDhtEvent {
     /// Result wrapping an incomming Request

@@ -528,7 +528,7 @@ pub struct IoConfig {
 impl Stream for IoHandler {
     type Item = IoHandlerEvent;
 
-    #[instrument(skip_all, ret)]
+    #[instrument(skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
 

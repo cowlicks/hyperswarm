@@ -423,7 +423,7 @@ impl Query {
         out
     }
 
-    /// Consumes the query, producing the final `QueryResult`.
+    /// Create the final result from the query
     pub fn into_result(&self) -> QueryResult {
         QueryResult {
             peers: self.inner.peers_iter(),
