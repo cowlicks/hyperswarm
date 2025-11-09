@@ -280,8 +280,6 @@ impl AsyncRpcDht {
         destination: Peer,
         token: Option<[u8; 32]>,
     ) -> Result<Arc<InResponse>> {
-        // Create a channel for the response
-        //let (tx, rx) = new_request_channel();
         let (tx, rx) = oneshot::channel();
 
         let tid = {
@@ -1180,6 +1178,7 @@ impl RpcDht {
                 stats: result.stats,
             }
         } else {
+            let result = Arc::new(result);
             debug!(
                 cmd = tracing::field::display(result.cmd),
                 "Query result ready"
@@ -1232,7 +1231,7 @@ pub enum RpcDhtEvent {
     /// A completed query.
     ///
     /// No more responses are expected for this query
-    QueryResult(QueryResult),
+    QueryResult(Arc<QueryResult>),
 }
 
 pub type RequestResult = std::result::Result<RequestOk, RequestError>;

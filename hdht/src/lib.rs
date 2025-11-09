@@ -489,7 +489,7 @@ impl HyperDhtInner {
     }
 
     // A query was completed
-    fn query_target_search_done(&mut self, query_result: RpcQueryResult) {
+    fn query_target_search_done(&mut self, query_result: Arc<RpcQueryResult>) {
         if let Some(query) = self.queries.get_mut(&query_result.query_id) {
             query.target_search_done(self.rpc.io.create_sender(), query_result);
         } else {
@@ -950,7 +950,7 @@ impl QueryStreamType {
         }
     }
 
-    fn target_search_done(&mut self, msg_tx: MessageSender, query_result: RpcQueryResult) {
+    fn target_search_done(&mut self, msg_tx: MessageSender, query_result: Arc<RpcQueryResult>) {
         match self {
             QueryStreamType::Lookup(ref mut inner) => inner.finalize(),
             QueryStreamType::Announce(ref mut inner) => inner.finalize(),

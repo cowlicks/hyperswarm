@@ -21,7 +21,7 @@ pub struct AunnounceClearInner {
     pub responses: Vec<Result<Arc<InResponse>>>,
     pub inflight_unannounces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
     pub inflight_announces: FuturesUnordered<RequestFuture<Arc<InResponse>>>,
-    pub search_complete: Option<(MessageSender, QueryResult)>,
+    pub search_complete: Option<(MessageSender, Arc<QueryResult>)>,
 }
 
 impl AunnounceClearInner {
@@ -72,7 +72,7 @@ impl AunnounceClearInner {
             );
         };
     }
-    pub fn finalize(&mut self, sender: MessageSender, query_result: QueryResult) {
+    pub fn finalize(&mut self, sender: MessageSender, query_result: Arc<QueryResult>) {
         self.search_complete = Some((sender, query_result));
     }
 }
