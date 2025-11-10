@@ -472,7 +472,7 @@ impl RpcDht {
     fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
         let pin = self.get_mut();
         let now = Instant::now();
-        pin.stream_waker.insert(cx.waker().clone());
+        _ = pin.stream_waker.insert(cx.waker().clone());
 
         if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now) {
             if pin.kbuckets.iter().count() < 20 {
@@ -488,6 +488,7 @@ impl RpcDht {
             // Drain queued events first.
             if let Some(event) = pin.queued_events.pop_front() {
                 trace!("{event:#?}");
+                cx.waker().wake_by_ref();
                 return Poll::Ready(Some(event));
             }
 

@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     net::{SocketAddr, SocketAddrV4},
     sync::Arc,
+    task::Waker,
 };
 
 use crate::{
@@ -250,6 +251,7 @@ pub struct IoHandler {
         mpsc::Sender<MessageChannelItem>,
         mpsc::Receiver<MessageChannelItem>,
     ),
+    stream_waker: Option<Waker>,
 }
 
 impl IoHandler {
@@ -269,6 +271,7 @@ impl IoHandler {
             secrets: Default::default(),
             tid: AtomicU16::new(rand::thread_rng().gen()),
             txrx: mpsc::channel(IO_TX_RX_CHANNEL_DEFAULT_SIZE),
+            stream_waker: Default::default(),
         }
     }
 
@@ -297,9 +300,11 @@ impl IoHandler {
 
     pub fn enqueue_request(&mut self, msg: (Option<QueryId>, RequestMsgData)) {
         self.pending_send.push_back(OutMessage::Request(msg));
+        self.maybe_wake();
     }
     pub fn enqueue_reply(&mut self, msg: ReplyMsgData) {
         self.pending_send.push_back(OutMessage::Reply(msg));
+        self.maybe_wake();
     }
 
     pub fn request_from_builder(
@@ -509,6 +514,7 @@ impl IoHandler {
             if let Some(msg) = self.pending_send.pop_front() {
                 self.inner_send(msg.clone())?;
                 self.pending_flush = Some(msg);
+                self.maybe_wake();
             }
         }
         Ok(())
@@ -517,6 +523,11 @@ impl IoHandler {
     fn inner_send(&mut self, msg: OutMessage) -> crate::Result<()> {
         let addr = SocketAddr::from(&msg.to());
         Sink::start_send(Pin::new(&mut self.message_stream), (msg.inner(), addr))
+    }
+    fn maybe_wake(&mut self) {
+        if let Some(w) = self.stream_waker.take() {
+            w.wake()
+        }
     }
 }
 #[derive(Debug, Clone, Default)]
@@ -531,6 +542,7 @@ impl Stream for IoHandler {
     #[instrument(skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
+        _ = pin.stream_waker.insert(cx.waker().clone());
 
         while let Poll::Ready(Some((tx, msg))) = Stream::poll_next(Pin::new(&mut pin.txrx.1), cx) {
             if let Err(e) = pin.start_send_next_fut_no_id_with_tx((tx, msg)) {
@@ -579,6 +591,7 @@ impl Stream for IoHandler {
         match Stream::poll_next(Pin::new(&mut pin.message_stream), cx) {
             Poll::Ready(Some(Ok((msg, rinfo)))) => {
                 let out = pin.on_message(msg, rinfo);
+                cx.waker().wake_by_ref();
                 return Poll::Ready(Some(out));
             }
             Poll::Ready(Some(Err(err))) => {
