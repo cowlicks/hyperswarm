@@ -71,9 +71,8 @@ impl Router {
         &mut self,
         resp: &Arc<InResponse>,
         ph: PeerHandshakePayload,
-        event_queue: &mut dyn FnMut(HyperDhtEvent),
         socket: UdxSocket,
-    ) -> Result<(), Error> {
+    ) -> Result<HyperDhtEvent, Error> {
         let mut conn = self.connections.remove(&resp.request.tid).unwrap();
         let res = conn.receive_next(ph.noise)?;
 
@@ -99,8 +98,7 @@ impl Router {
             .id as u32;
 
         conn.connect(resp.request.to.addr, udx_remote_id, np)?;
-        event_queue(HyperDhtEvent::Connected((resp.request.tid, conn)));
-        Ok(())
+        Ok(HyperDhtEvent::Connected((resp.request.tid, conn)))
     }
 
     /// Create the first payload for the handshake protocol. Create and store an object for

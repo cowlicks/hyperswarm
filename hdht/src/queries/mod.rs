@@ -339,6 +339,7 @@ pub struct FindPeerInner {
     pub topic: IdBytes,
     pub peers: Vec<Arc<InResponse>>,
 }
+
 impl FindPeerInner {
     pub fn new(query_id: QueryId, topic: IdBytes) -> Self {
         Self {

@@ -115,7 +115,7 @@ impl Sink<Vec<u8>> for ConnectionInner {
         Pin::new(&mut self.handshake).poll_close(cx)
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Connection {
     pub inner: Arc<RwLock<ConnectionInner>>,
 }

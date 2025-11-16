@@ -3,6 +3,7 @@
 #![deny(clippy::enum_glob_use)]
 
 use std::{
+    any::Any,
     array::TryFromSliceError,
     cmp,
     collections::BTreeMap,
@@ -147,6 +148,9 @@ pub enum Error {
     RelayThroughInfoBuilder(#[from] RelayThroughInfoBuilderError),
     #[error("Hypercore Protocol Error: {0}")]
     HypercoreProtocolError(#[from] hypercore_protocol::Error),
+    // TODO add some useful data here
+    #[error("Peer handshake failed")]
+    PeerHandshakeFailed,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -180,7 +184,9 @@ pub struct HyperDhtInner {
     /// Router for peer connections
     router: next_router::Router,
     /// Channels to send FindPeerResponse through for pending find_peer queries
-    pending_find_peers: BTreeMap<QueryId, oneshot::Sender<FindPeerResponse>>,
+    pending_find_peers: BTreeMap<QueryId, oneshot::Sender<Arc<QueryResult>>>,
+    /// inflight
+    pending_msg: BTreeMap<Tid, Box<dyn Any + Send>>,
 }
 
 impl HyperDhtInner {
@@ -204,7 +210,8 @@ impl HyperDhtInner {
             queued_events: Default::default(),
             default_keypair: Default::default(),
             router: Default::default(),
-            pending_find_peers: BTreeMap::new(),
+            pending_find_peers: Default::default(),
+            pending_msg: Default::default(),
         })
     }
 
@@ -333,7 +340,7 @@ impl HyperDhtInner {
     }
 
     /// Store a channel sender for a find_peer query result
-    fn store_find_peer_sender(&mut self, query_id: QueryId, tx: oneshot::Sender<FindPeerResponse>) {
+    fn store_find_peer_sender(&mut self, query_id: QueryId, tx: oneshot::Sender<Arc<QueryResult>>) {
         self.pending_find_peers.insert(query_id, tx);
     }
 
@@ -439,21 +446,9 @@ impl HyperDhtInner {
                         inner.inject_response(&mut self.rpc.io, resp, qid);
                         None
                     }
-                    QueryStreamType::FindPeer(inner) => {
-                        if let Some(fp_resp) = inner.inject_response(resp.clone()) {
-                            // Send the response through the channel if one is waiting
-                            if let Some(tx) = self.pending_find_peers.remove(&qid) {
-                                let response_to_send = FindPeerResponse {
-                                    response: fp_resp.response.clone(),
-                                    peer: fp_resp.peer.clone(),
-                                };
-                                let _ = tx.send(response_to_send);
-                            }
-                            Some(HyperDhtEvent::FindPeerResponse(fp_resp))
-                        } else {
-                            None
-                        }
-                    }
+                    QueryStreamType::FindPeer(inner) => inner
+                        .inject_response(resp.clone())
+                        .map(HyperDhtEvent::FindPeerResponse),
                 }
             };
             if let Some(e) = event {
@@ -466,20 +461,34 @@ impl HyperDhtInner {
                     // TODO
                 }
                 commands::PEER_HANDSHAKE => {
-                    match PeerHandshakePayload::decode(
-                        &resp.response.value.clone().expect("with value"),
-                    ) {
-                        Ok((hs, rest)) => {
-                            let _ = self.router.inject_response(
-                                &resp,
-                                hs,
-                                &mut |e| self.queued_events.push_back(e),
-                                self.rpc.socket(),
-                            );
-                            debug_assert!(rest.is_empty(), "respones completely used")
+                    let tx_opt = self
+                        .pending_msg
+                        .remove(&resp.request.tid)
+                        .and_then(|boxed| {
+                            boxed.downcast::<oneshot::Sender<Result<Connection>>>().ok()
+                        });
+                    trace!("hdt.pending_msg.remove(tid={})", resp.request.tid);
+                    let Some(value) = &resp.response.value else {
+                        warn!("peer handshake response with no value");
+                        tx_opt.map(|tx| tx.send(Err(Error::PeerHandshakeFailed)));
+                        return;
+                    };
+                    let Ok((hs, _rest)) = PeerHandshakePayload::decode(value) else {
+                        error!("failed to decode PeerHandshakePayload");
+                        tx_opt.map(|tx| tx.send(Err(Error::PeerHandshakeFailed)));
+                        return;
+                    };
+                    debug_assert!(_rest.is_empty());
+                    if let Ok(e) = self
+                        .router
+                        .inject_response(&resp, hs, self.rpc.socket())
+                        .inspect_err(|e| error!("Error handling peer handshake response: [{e}]"))
+                    {
+                        if let HyperDhtEvent::Connected((_tid, con)) = &e {
+                            tx_opt.map(|tx| tx.send(Ok(con.clone())));
                         }
-                        Err(e) => todo!("{e:?}"),
-                    }
+                        self.queued_events.push_back(e);
+                    };
                 }
                 Command::External(_) => {
                     // TODO
@@ -620,6 +629,7 @@ impl Stream for HyperDhtInner {
         loop {
             // Drain queued events first.
             if let Some(event) = pin.queued_events.pop_front() {
+                cx.waker().wake_by_ref();
                 return Poll::Ready(Some(event));
             }
 
@@ -635,7 +645,7 @@ impl Stream for HyperDhtInner {
                         pin.inject_response(resp, cx)
                     }
                     RpcDhtEvent::Bootstrapped { stats } => {
-                        return Poll::Ready(Some(HyperDhtEvent::Bootstrapped { stats }))
+                        return Poll::Ready(Some(HyperDhtEvent::Bootstrapped { stats }));
                     }
                     RpcDhtEvent::ReadyToCommit {
                         query,
@@ -646,7 +656,7 @@ impl Stream for HyperDhtInner {
                     RpcDhtEvent::QueryResult(qr) => {
                         pin.query_target_search_done(qr);
                     }
-                    _other => warn!("unhandled rpc event"),
+                    _other => warn!("unhandled rpc event: [{_other:?}]"),
                 }
             }
 
@@ -661,7 +671,13 @@ impl Stream for HyperDhtInner {
                         qsr::Announce(r) => hde::AnnounceResult(r),
                         qsr::UnAnnounce(r) => hde::UnAnnounceResult(Ok(r)),
                         qsr::AnnounceClear(r) => hde::AnnouncClearResult(Ok(r)),
-                        qsr::FindPeer(r) => hde::FindPeerResult(Ok(r)),
+                        qsr::FindPeer(r) => {
+                            let r = Arc::new(r);
+                            if let Some(tx) = pin.pending_find_peers.remove(&r.query_id) {
+                                _ = tx.send(r.clone());
+                            }
+                            hde::FindPeerResult(Ok(r))
+                        }
                     },
                 })
             }
@@ -677,26 +693,23 @@ impl Stream for HyperDhtInner {
 }
 
 pub struct HyperDht {
-    inner: Arc<Mutex<HyperDhtInner>>,
+    pub inner: Arc<Mutex<HyperDhtInner>>,
 }
 
-/// Future that resolves when a FindPeerResponse is received for the find_peer query
+/// Future that resolves when a QueryResult is received for the find_peer query
 pub struct FindPeerFuture {
     inner: Arc<Mutex<HyperDhtInner>>,
-    rx: oneshot::Receiver<FindPeerResponse>,
+    rx: oneshot::Receiver<Arc<QueryResult>>,
 }
 
 impl Future for FindPeerFuture {
-    type Output = Result<FindPeerResponse>;
+    type Output = Result<Arc<QueryResult>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Poll the inner to drive the find_peer query forward
         {
             let mut inner = self.inner.lock().unwrap();
             let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
         }
-
-        // Poll the receiver for the response
         Pin::new(&mut self.rx).poll(cx).map_err(Error::RecvError)
     }
 }
@@ -712,7 +725,7 @@ impl HyperDht {
     ///
     /// Returns a future that resolves with the first FindPeerResponse received,
     /// or an error if the query fails.
-    pub fn find_peer(&mut self, pub_key: PublicKey) -> FindPeerFuture {
+    pub fn find_peer(&self, pub_key: PublicKey) -> FindPeerFuture {
         let (tx, rx) = oneshot::channel();
 
         {
@@ -725,6 +738,48 @@ impl HyperDht {
             inner: self.inner.clone(),
             rx,
         }
+    }
+    pub async fn peer_handshake(
+        &self,
+        remote_public_key: PublicKey,
+        remote_addr: SocketAddrV4,
+    ) -> Result<Connection> {
+        let (tx, rx) = oneshot::channel::<Result<Connection>>();
+
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let tid = inner.request_peer_handshake(remote_public_key, remote_addr)?;
+            trace!("hdht.pending_msg.insert(tid={tid}");
+            inner
+                .pending_msg
+                .insert(tid, Box::new(tx) as Box<dyn Any + Send>);
+        }
+
+        PeerHandshakeFut {
+            inner: self.inner.clone(),
+            rx,
+        }
+        .await
+    }
+}
+
+struct PeerHandshakeFut {
+    inner: Arc<Mutex<HyperDhtInner>>,
+    rx: oneshot::Receiver<Result<Connection>>,
+}
+
+impl Future for PeerHandshakeFut {
+    type Output = Result<Connection>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+        Pin::new(&mut self.rx)
+            .poll(cx)
+            .map_err(Error::RecvError)
+            .map(|x| x.flatten())
     }
 }
 
@@ -764,7 +819,7 @@ pub enum HyperDhtEvent {
     /// A response to part of a find_peer query
     FindPeerResponse(FindPeerResponse),
     /// The result of [`HyperDht::find_peer`].
-    FindPeerResult(Result<QueryResult>),
+    FindPeerResult(Result<Arc<QueryResult>>),
     /// Received a query with a custom command that is not automatically handled
     /// by the DHT
     CustomCommandQuery {
