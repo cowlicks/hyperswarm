@@ -8,7 +8,7 @@ use std::{
 use async_udx::{RecvFuture, UdxSocket};
 use compact_encoding::CompactEncoding;
 use futures::{Future, Sink, Stream};
-use tracing::{field::debug, trace};
+use tracing::trace;
 
 use crate::Result;
 
@@ -53,7 +53,6 @@ impl Stream for MessageDataStream {
         // First check if we have any buffered messages
         if let Some(out) = self.recv_queue.pop_front() {
             // always wake. We want to always be holding a future in self.next_message
-            println!("MessageDataStream wake_by_ref");
             cx.waker().wake_by_ref();
             return Poll::Ready(Some(Ok(out)));
         }

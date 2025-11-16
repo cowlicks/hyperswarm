@@ -2,6 +2,7 @@ use std::{
     fmt::Display,
     num::NonZeroUsize,
     sync::{Arc, RwLock},
+    task::Waker,
     time::Duration,
 };
 
@@ -40,6 +41,7 @@ pub struct QueryPool {
     queries: FnvHashMap<QueryId, Arc<RwLock<Query>>>,
     config: QueryConfig,
     next_id: usize,
+    waker: Option<Waker>,
 }
 
 /// The configuration for queries in a `QueryPool`.
@@ -73,6 +75,7 @@ impl QueryPool {
             next_id: 0,
             config,
             queries: Default::default(),
+            waker: Default::default(),
         }
     }
 
@@ -137,6 +140,9 @@ impl QueryPool {
             commit,
         );
         self.queries.insert(id, Arc::new(RwLock::new(query)));
+        if let Some(waker) = &self.waker {
+            waker.wake_by_ref();
+        }
         id
     }
 
@@ -153,11 +159,13 @@ impl QueryPool {
 
     /// Polls the pool to advance the queries.
     #[instrument(skip_all)]
-    pub fn poll(&mut self, now: Instant) -> QueryPoolEvent {
+    pub fn poll(&mut self, now: Instant, waker: Waker) -> QueryPoolEvent {
         trace!("poll for QueryPoolEvent");
         let mut finished = None;
         let mut timeout = None;
         let mut waiting = None;
+
+        _ = self.waker.insert(waker);
 
         for (&query_id, query) in self.queries.iter() {
             let mut w_query = query.write().unwrap();

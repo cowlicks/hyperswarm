@@ -502,7 +502,7 @@ impl RpcDht {
                         return Poll::Ready(Some(event));
                     }
                 } else {
-                    match pin.queries.poll(now) {
+                    match pin.queries.poll(now, cx.waker().clone()) {
                         QueryPoolEvent::Commit((query, cev)) => {
                             use commit::{Commit as C, CommitEvent as E, Progress as P};
                             // TODO add all commit handlers
