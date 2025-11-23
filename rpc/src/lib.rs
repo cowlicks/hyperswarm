@@ -295,7 +295,18 @@ impl AsyncRpcDht {
 
         let tid = {
             let mut inner = self.inner.lock().unwrap();
-            let tid = inner.request(command, target, value, destination, token);
+            let mut o = OutRequestBuilder::new(destination, command);
+            if let Some(target) = target {
+                o = o.target(target);
+            }
+            if let Some(value) = value {
+                o = o.value(value);
+            }
+            if let Some(token) = token {
+                o = o.token(token);
+            }
+
+            let tid = inner.request(o);
             inner.store_tid_sender(tid, tx);
             tid
         };
@@ -464,10 +475,10 @@ impl DhtConfig {
 }
 
 impl RpcDht {
-    pub fn store_tid_sender(&mut self, tid: Tid, tx: Sender<Arc<InResponse>>) {
+    fn store_tid_sender(&mut self, tid: Tid, tx: Sender<Arc<InResponse>>) {
         self.pending_requests.insert(tid, tx);
     }
-    pub fn store_qid_sender(&mut self, qid: QueryId, tx: Sender<Arc<QueryResult>>) {
+    fn store_qid_sender(&mut self, qid: QueryId, tx: Sender<Arc<QueryResult>>) {
         self.pending_queries.insert(qid, tx);
     }
 
@@ -652,11 +663,6 @@ impl RpcDht {
     pub fn socket(&self) -> async_udx::UdxSocket {
         self.io.socket()
     }
-    /// Returns the id used to identify this node.
-    pub fn local_id(&self) -> &IdBytes {
-        self.id.get_ref()
-    }
-
     pub fn bootstrap(&mut self) {
         if !self.bootstrap_nodes.is_empty() {
             let target = self.id.get();
@@ -711,20 +717,8 @@ impl RpcDht {
             .add_stream(cmd, peers, target, value, bootstrap_nodes, commit)
     }
 
-    pub fn request_from_builder(&mut self, req: OutRequestBuilder) -> Result<Tid> {
-        Ok(self.io.request_from_builder(req)?.1)
-    }
-    pub fn request(
-        &mut self,
-        command: Command,
-        target: Option<IdBytes>,
-        value: Option<Vec<u8>>,
-        destination: Peer,
-        token: Option<[u8; 32]>,
-    ) -> Tid {
-        self.io
-            .request(command, target, value, destination, None, token)
-            .1
+    pub fn request(&mut self, req: OutRequestBuilder) -> Tid {
+        self.io.request_from_builder(req).1
     }
 
     pub fn ping(&mut self, peer: &Peer) -> QueryAndTid {
@@ -1170,18 +1164,14 @@ impl RpcDht {
     ///
     /// Returns `None` if the peer was not in the routing table,
     /// not even pending insertion.
-    pub fn remove_peer(&mut self, key: &IdBytes) -> Option<EntryView<Node>> {
+    fn remove_peer(&mut self, key: &IdBytes) -> Option<EntryView<Node>> {
         match self.kbuckets.entry(key) {
             Entry::Present(entry, _) => Some(entry.remove()),
             Entry::Pending(entry, _) => Some(entry.remove()),
             Entry::Absent(..) | Entry::SelfEntry => None,
         }
     }
-    pub fn remove_stale_peer(
-        &mut self,
-        key: &IdBytes,
-        last_seen: Instant,
-    ) -> Option<EntryView<Node>> {
+    fn remove_stale_peer(&mut self, key: &IdBytes, last_seen: Instant) -> Option<EntryView<Node>> {
         match self.kbuckets.entry(key) {
             Entry::Present(mut entry, _) => {
                 if entry.value().last_seen <= last_seen {
@@ -1264,11 +1254,9 @@ impl RpcDht {
     pub fn new_tid(&self) -> Tid {
         self.io.new_tid()
     }
+    /// Returns the id used to identify this node.
     pub fn id(&self) -> IdBytes {
         self.io.id()
-    }
-    pub fn send_request(&mut self, msg: (Option<QueryId>, RequestMsgData)) {
-        self.io.enqueue_request(msg)
     }
 }
 
@@ -1391,6 +1379,21 @@ impl Peer {
             SocketAddr::V6(_socket_addr_v6) => Err(Error::Ipv6NotSupported),
         }
     }
+    pub fn new(addr: SocketAddr) -> Self {
+        Self {
+            id: None,
+            addr,
+            referrer: None,
+        }
+    }
+    pub fn with_id(mut self, id: Option<[u8; 32]>) -> Self {
+        self.id = id;
+        self
+    }
+    pub fn with_referrer(mut self, referrer: Option<SocketAddr>) -> Self {
+        self.referrer = referrer;
+        self
+    }
 }
 
 impl std::fmt::Debug for Peer {
@@ -1508,8 +1511,13 @@ impl Borrow<[u8]> for IdBytes {
     }
 }
 
-impl From<[u8; 32]> for IdBytes {
-    fn from(value: [u8; 32]) -> Self {
+impl From<IdBytes> for [u8; ID_BYTES_LENGTH] {
+    fn from(value: IdBytes) -> Self {
+        value.0
+    }
+}
+impl From<[u8; ID_BYTES_LENGTH]> for IdBytes {
+    fn from(value: [u8; ID_BYTES_LENGTH]) -> Self {
         Self(value)
     }
 }

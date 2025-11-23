@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    net::{SocketAddr, SocketAddrV4},
-    sync::Arc,
-    task::Waker,
-};
+use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, task::Waker};
 
 use crate::{
     cenc::validate_id,
@@ -126,16 +121,14 @@ impl InResponse {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OutRequestBuilder {
+    peer: Peer,
+    command: Command,
     tid: Option<u16>,
     query_id: Option<QueryId>,
-    peer_id: Option<[u8; 32]>,
-    destination: Option<SocketAddrV4>,
-    referrer: Option<SocketAddr>,
-    command: Option<Command>,
     token: Option<[u8; 32]>,
-    target: Option<[u8; 32]>,
+    target: Option<IdBytes>,
     value: Option<Vec<u8>>,
 }
 
@@ -148,14 +141,21 @@ macro_rules! setter {
     };
 }
 impl OutRequestBuilder {
+    pub fn new(peer: Peer, command: Command) -> Self {
+        Self {
+            peer,
+            command,
+            tid: None,
+            query_id: None,
+            token: None,
+            target: None,
+            value: None,
+        }
+    }
     setter!(tid, u16);
     setter!(query_id, QueryId);
-    setter!(peer_id, [u8; 32]);
-    setter!(destination, SocketAddrV4);
-    setter!(referrer, SocketAddr);
-    setter!(command, Command);
     setter!(token, [u8; 32]);
-    setter!(target, [u8; 32]);
+    setter!(target, IdBytes);
     setter!(value, Vec<u8>);
 }
 
@@ -299,10 +299,6 @@ impl IoHandler {
         self.tid.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn enqueue_request(&mut self, msg: (Option<QueryId>, RequestMsgData)) {
-        self.pending_send.push_back(OutMessage::Request(msg));
-        self.maybe_wake();
-    }
     pub fn enqueue_reply(&mut self, msg: ReplyMsgData) {
         self.pending_send.push_back(OutMessage::Reply(msg));
         self.maybe_wake();
@@ -313,39 +309,30 @@ impl IoHandler {
         OutRequestBuilder {
             tid,
             query_id,
-            peer_id,
-            destination,
-            referrer,
+            peer,
             command,
             token,
             target,
             value,
         }: OutRequestBuilder,
-    ) -> Result<QueryAndTid> {
+    ) -> QueryAndTid {
         let id = (!self.ephemeral).then(|| self.id().0);
         let tid = tid.unwrap_or_else(|| self.new_tid());
-        let addr = destination
-            .ok_or(Error::RequestBuilderError("destination".into()))?
-            .into();
-        let command = command.ok_or(Error::RequestBuilderError("command".to_string()))?;
         self.enqueue_request((
             query_id,
             RequestMsgData {
                 tid,
-                to: Peer {
-                    addr,
-                    id: peer_id,
-                    referrer,
-                },
+                to: peer,
                 id,
                 token,
                 command,
-                target,
+                target: target.map(|x| x.into()),
                 value,
             },
         ));
-        Ok((query_id, tid))
+        (query_id, tid)
     }
+
     pub fn request(
         &mut self,
         command: Command,
@@ -370,6 +357,11 @@ impl IoHandler {
             },
         ));
         (query_id, tid)
+    }
+
+    pub fn enqueue_request(&mut self, msg: (Option<QueryId>, RequestMsgData)) {
+        self.pending_send.push_back(OutMessage::Request(msg));
+        self.maybe_wake();
     }
     pub fn error(
         &mut self,

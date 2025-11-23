@@ -533,13 +533,11 @@ impl HyperDhtInner {
             .router
             .first_step(tid, *remote_public_key, Some(vec![addr]), self.rpc.socket())
             .unwrap();
-        let req = OutRequestBuilder::default()
-            .destination(destination)
+        let req = OutRequestBuilder::new(Peer::new(destination.into()), commands::PEER_HANDSHAKE)
             .value(value)
-            .target(generic_hash(&*remote_public_key))
-            .command(commands::PEER_HANDSHAKE)
+            .target(generic_hash(&*remote_public_key).into())
             .tid(tid);
-        self.rpc.request_from_builder(req)?;
+        self.rpc.request(req);
         Ok(tid)
     }
 
@@ -570,11 +568,10 @@ impl HyperDhtInner {
         };
 
         self.rpc.request(
-            Command::External(cmd),
-            Some(target),
-            Some(value),
-            from_peer,
-            Some(*token),
+            OutRequestBuilder::new(from_peer, Command::External(cmd))
+                .target(target)
+                .value(value)
+                .token(*token),
         )
     }
 
