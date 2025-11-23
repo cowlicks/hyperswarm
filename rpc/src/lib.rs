@@ -334,6 +334,18 @@ impl AsyncRpcDht {
         }
         .await
     }
+
+    pub async fn ping(&self, peer: Peer) -> Result<Arc<InResponse>> {
+        self.request(
+            Command::Internal(InternalCommand::Ping),
+            None,
+            None,
+            peer,
+            None,
+        )
+        .await
+    }
+
     pub async fn query(
         &self,
         command: Command,
@@ -722,17 +734,6 @@ impl RpcDht {
 
     #[instrument(skip(self, value))]
     pub fn query(
-        &mut self,
-        cmd: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> QueryId {
-        self.run_command(cmd, target, value, commit)
-    }
-
-    #[instrument(skip(self))]
-    fn run_command(
         &mut self,
         cmd: Command,
         target: IdBytes,
