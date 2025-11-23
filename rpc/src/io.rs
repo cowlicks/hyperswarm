@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, task::Waker};
 use crate::{
     cenc::validate_id,
     futreqs::{new_request_channel, RequestFuture, RequestSender},
-    Error, IdBytes, RequestMsgDataInner, Result,
+    IdBytes, RequestMsgDataInner, Result,
 };
 use fnv::FnvHashMap;
 use futures::{

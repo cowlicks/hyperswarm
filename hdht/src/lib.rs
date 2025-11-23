@@ -27,7 +27,7 @@ use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
     io::{InResponse, MessageSender, OutRequestBuilder},
     query::{Query, QueryResult as RpcQueryResult},
-    RequestFutureError, Tid,
+    Bootstrapped, RequestFutureError, Tid,
 };
 use futures::{
     channel::mpsc::{self},
@@ -641,8 +641,8 @@ impl Stream for HyperDhtInner {
                     RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(resp))) => {
                         pin.inject_response(resp, cx)
                     }
-                    RpcDhtEvent::Bootstrapped { stats } => {
-                        return Poll::Ready(Some(HyperDhtEvent::Bootstrapped { stats }));
+                    RpcDhtEvent::Bootstrapped(bs) => {
+                        return Poll::Ready(Some(HyperDhtEvent::Bootstrapped(bs)));
                     }
                     RpcDhtEvent::ReadyToCommit {
                         query,
@@ -799,10 +799,7 @@ impl Future for PeerHandshakeFut {
 #[derive(Debug)]
 pub enum HyperDhtEvent {
     /// The dht is now bootstrapped
-    Bootstrapped {
-        /// Execution statistics from the bootstrap query.
-        stats: QueryStats,
-    },
+    Bootstrapped(Arc<Bootstrapped>),
     /// The result of [`HyperDht::announce`].
     AnnounceResult(QueryResult),
     /// A response to part of a lookup query

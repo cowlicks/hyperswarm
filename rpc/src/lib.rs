@@ -270,6 +270,7 @@ pub struct RpcDht {
     pending_requests: BTreeMap<Tid, Sender<Arc<InResponse>>>,
     stream_waker: Option<Waker>,
     pending_queries: BTreeMap<QueryId, Sender<Arc<QueryResult>>>,
+    pending_bootstrap: Option<Sender<Arc<Bootstrapped>>>,
 }
 
 pub struct AsyncRpcDht {
@@ -281,6 +282,20 @@ impl AsyncRpcDht {
         Ok(Self {
             inner: Arc::new(Mutex::new(RpcDht::with_config(config).await?)),
         })
+    }
+    /// TODO Error on timeout
+    pub async fn bootstrap(&self) -> Result<Arc<Bootstrapped>> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.bootstrap();
+            _ = inner.pending_bootstrap.insert(tx);
+        }
+        BootstrapFuture {
+            inner: self.inner.clone(),
+            rx,
+        }
+        .await
     }
 
     pub async fn request(
@@ -363,6 +378,19 @@ pub struct RpcDhtQueryFuture {
 }
 impl Future for RpcDhtQueryFuture {
     type Output = Result<Arc<QueryResult>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        future_poller!(self, cx)
+    }
+}
+
+struct BootstrapFuture {
+    inner: Arc<Mutex<RpcDht>>,
+    rx: Receiver<Arc<Bootstrapped>>,
+}
+
+impl Future for BootstrapFuture {
+    type Output = Result<Arc<Bootstrapped>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         future_poller!(self, cx)
@@ -646,6 +674,7 @@ impl RpcDht {
             pending_requests: Default::default(),
             stream_waker: Default::default(),
             pending_queries: Default::default(),
+            pending_bootstrap: Default::default(),
         };
 
         dht.bootstrap();
@@ -675,9 +704,14 @@ impl RpcDht {
             let bootstrap_nodes: Vec<Peer> = self.bootstrap_nodes.iter().map(Peer::from).collect();
             self.queries.bootstrap(target, peers, bootstrap_nodes);
         } else if !self.bootstrapped {
-            self.enque_stream_event(RpcDhtEvent::Bootstrapped {
+            let e = Arc::new(Bootstrapped {
                 stats: QueryStats::empty(),
             });
+            if let Some(tx) = self.pending_bootstrap.take() {
+                _ = tx.send(e.clone());
+            }
+
+            self.enque_stream_event(RpcDhtEvent::Bootstrapped(e));
             self.bootstrapped = true;
         }
     }
@@ -1228,9 +1262,14 @@ impl RpcDht {
         if is_find_node && !self.bootstrapped {
             debug!("Bootstrap process's FindNode query finished");
             self.bootstrapped = true;
-            RpcDhtEvent::Bootstrapped {
+            let e = Arc::new(Bootstrapped {
                 stats: result.stats,
+            });
+            if let Some(tx) = self.pending_bootstrap.take() {
+                _ = tx.send(e.clone());
             }
+
+            RpcDhtEvent::Bootstrapped(e)
         } else {
             let result = Arc::new(result);
             if let Some(tx) = self.pending_queries.remove(&result.query_id) {
@@ -1276,10 +1315,8 @@ pub enum RpcDhtEvent {
         /// room for the new peer, if any.
         old_peer: Option<Peer>,
     },
-    Bootstrapped {
-        /// Execution statistics from the bootstrap query.
-        stats: QueryStats,
-    },
+    /// Emitted when bootstrapping is complete
+    Bootstrapped(Arc<Bootstrapped>),
 
     /// Only emitted when Query is made with Commit::Custom
     ReadyToCommit {
@@ -1294,6 +1331,12 @@ pub enum RpcDhtEvent {
 }
 
 pub type RequestResult = std::result::Result<RequestOk, RequestError>;
+
+#[derive(Debug)]
+pub struct Bootstrapped {
+    /// Execution statistics from the bootstrap query.
+    pub stats: QueryStats,
+}
 
 #[derive(Debug)]
 pub enum RequestOk {
