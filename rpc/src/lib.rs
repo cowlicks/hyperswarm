@@ -34,7 +34,7 @@ use std::{
     fmt::Display,
     future::Future,
     iter::FromIterator,
-    net::{AddrParseError, SocketAddr, ToSocketAddrs},
+    net::{AddrParseError, SocketAddr, SocketAddrV4, ToSocketAddrs},
     pin::Pin,
     str::FromStr,
     sync::{Arc, Mutex, RwLock},
@@ -346,6 +346,7 @@ macro_rules! future_poller {
 
 pub struct RpcDhtQueryFuture {
     inner: Arc<Mutex<RpcDht>>,
+    #[expect(unused, reason = "may need in future")]
     qid: QueryId,
     rx: Receiver<Arc<QueryResult>>,
 }
@@ -360,6 +361,7 @@ impl Future for RpcDhtQueryFuture {
 /// A future that polls RpcDht for events while waiting for a specific response.
 struct RpcDhtRequestFuture {
     inner: Arc<Mutex<RpcDht>>,
+    #[expect(unused, reason = "may need in future")]
     tid: Tid,
     rx: Receiver<Arc<InResponse>>,
 }
@@ -1382,6 +1384,13 @@ pub struct Peer {
 impl Peer {
     /// Encoded size of a peer: 4 bytes for a Ipv4Addr and 2 bytes for a u16.
     const ENCODED_SIZE: usize = 6;
+
+    pub fn ipv4_addr(&self) -> Result<SocketAddrV4> {
+        match self.addr {
+            SocketAddr::V4(socket_addr_v4) => Ok(socket_addr_v4),
+            SocketAddr::V6(_socket_addr_v6) => Err(Error::Ipv6NotSupported),
+        }
+    }
 }
 
 impl std::fmt::Debug for Peer {

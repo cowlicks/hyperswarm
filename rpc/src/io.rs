@@ -94,6 +94,7 @@ impl Secrets {
 pub struct InResponse {
     pub request: Box<RequestMsgData>,
     pub response: ReplyMsgData,
+    /// [`Peer`] who sent the response
     pub peer: Peer,
     pub query_id: Option<QueryId>,
 }
