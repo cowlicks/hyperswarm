@@ -271,6 +271,7 @@ pub struct RpcDht {
     stream_waker: Option<Waker>,
     pending_queries: BTreeMap<QueryId, Sender<Arc<QueryResult>>>,
     pending_bootstrap: Option<Sender<Arc<Bootstrapped>>>,
+    pending_query_streams: BTreeMap<QueryId, mpsc::Sender<Arc<InResponse>>>,
 }
 
 pub struct AsyncRpcDht {
@@ -283,7 +284,8 @@ impl AsyncRpcDht {
             inner: Arc::new(Mutex::new(RpcDht::with_config(config).await?)),
         })
     }
-    /// TODO Error on timeout
+
+    // TODO Error on timeout
     pub async fn bootstrap(&self) -> Result<Arc<Bootstrapped>> {
         let (tx, rx) = oneshot::channel();
         {
@@ -368,6 +370,44 @@ impl AsyncRpcDht {
             rx,
         }
         .await
+    }
+
+    pub fn query_stream(
+        &self,
+        command: Command,
+        target: IdBytes,
+        value: Option<Vec<u8>>,
+        commit: Commit,
+    ) -> Result<QueryResponseStream> {
+        let (tx, rx) = mpsc::channel(1024);
+
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let qid = inner.query(command, target, value, commit);
+            inner.store_qid_stream_sender(qid, tx);
+        };
+
+        Ok(QueryResponseStream {
+            inner: self.inner.clone(),
+            rx,
+        })
+    }
+}
+
+pub struct QueryResponseStream {
+    inner: Arc<Mutex<RpcDht>>,
+    rx: mpsc::Receiver<Arc<InResponse>>,
+}
+
+impl Stream for QueryResponseStream {
+    type Item = Arc<InResponse>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+        Pin::new(&mut self.rx).poll_next(cx)
     }
 }
 
@@ -520,6 +560,9 @@ impl RpcDht {
     }
     fn store_qid_sender(&mut self, qid: QueryId, tx: Sender<Arc<QueryResult>>) {
         self.pending_queries.insert(qid, tx);
+    }
+    fn store_qid_stream_sender(&mut self, qid: QueryId, tx: mpsc::Sender<Arc<InResponse>>) {
+        self.pending_query_streams.insert(qid, tx);
     }
 
     fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
@@ -687,6 +730,7 @@ impl RpcDht {
             stream_waker: Default::default(),
             pending_queries: Default::default(),
             pending_bootstrap: Default::default(),
+            pending_query_streams: Default::default(),
         };
 
         dht.bootstrap();
@@ -840,9 +884,17 @@ impl RpcDht {
             Some(query_id) => {
                 if let Some(query) = self.queries.get(&query_id) {
                     if let Some(resp) = query.write().unwrap().inject_response(resp_data) {
+                        // TODO remove ResponoseResult here and relpace downstream with
+                        // QueryResponse
                         self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(
-                            ResponseOk::Response(resp),
-                        )))
+                            ResponseOk::Response(resp.clone()),
+                        )));
+                        self.enque_stream_event(RpcDhtEvent::QueryResponse(resp.clone()));
+                        if let Some(tx) = self.pending_query_streams.get(&query_id) {
+                            let _ = tx.clone().try_send(resp.clone()).inspect_err(|e| {
+                                error!("Failed to send response to query stream: {e:?}")
+                            });
+                        }
                     }
                 } else {
                     debug!("Recieved response for missing query with id: {:?}. It could have been removed already", resp_data.query_id);
@@ -1329,6 +1381,8 @@ pub enum RpcDhtEvent {
     ///
     /// No more responses are expected for this query
     QueryResult(Arc<QueryResult>),
+    /// A single response for a request made for a query
+    QueryResponse(Arc<InResponse>),
 }
 
 pub type RequestResult = std::result::Result<RequestOk, RequestError>;
