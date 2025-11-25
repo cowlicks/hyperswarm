@@ -279,10 +279,32 @@ pub struct AsyncRpcDht {
 }
 
 impl AsyncRpcDht {
-    pub async fn with_config(config: DhtConfig) -> crate::Result<Self> {
+    pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
             inner: Arc::new(Mutex::new(RpcDht::with_config(config).await?)),
         })
+    }
+
+    pub fn is_ephemeral(&self) -> bool {
+        self.inner.lock().unwrap().is_ephemeral()
+    }
+    /// Returns the local address that this listener is bound to.
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        self.inner.lock().unwrap().local_addr()
+    }
+    pub fn socket(&self) -> async_udx::UdxSocket {
+        self.inner.lock().unwrap().socket()
+    }
+    pub fn is_bootstrapped(&self) -> bool {
+        self.inner.lock().unwrap().is_bootstrapped()
+    }
+
+    pub fn new_tid(&self) -> Tid {
+        self.inner.lock().unwrap().new_tid()
+    }
+    /// Returns the id used to identify this node.
+    pub fn id(&self) -> IdBytes {
+        self.inner.lock().unwrap().id()
     }
 
     // TODO Error on timeout
