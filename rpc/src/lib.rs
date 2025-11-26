@@ -306,6 +306,9 @@ impl AsyncRpcDht {
     pub fn id(&self) -> IdBytes {
         self.inner.lock().unwrap().id()
     }
+    pub fn reply_command(&self, resp: CommandQueryResponse) {
+        self.inner.lock().unwrap().reply_command(resp)
+    }
 
     // TODO Error on timeout
     pub async fn bootstrap(&self) -> Result<Arc<Bootstrapped>> {
@@ -496,7 +499,6 @@ pub struct DhtConfig {
     pub io_config: IoConfig,
     pub bootstrap_interval: Duration,
     pub ping_interval: Duration,
-    #[allow(unused)] // FIXME bg: why never read?
     pub connection_idle_timeout: Duration,
     pub ephemeral: bool,
     pub adaptive: bool,

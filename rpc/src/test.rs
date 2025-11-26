@@ -37,6 +37,7 @@ async fn wip_bootstrap() -> Result<()> {
                     RpcDhtEvent::RoutingUpdated { .. } => println!("routing updated"),
                     RpcDhtEvent::QueryResult { .. } => println!("query result"),
                     RpcDhtEvent::Bootstrapped { .. } => {}
+                    RpcDhtEvent::QueryResponse(_res) => println!("query response"),
                 }
             }
         }
@@ -67,6 +68,7 @@ async fn wip_bootstrap() -> Result<()> {
                     break;
                 }
                 RpcDhtEvent::Bootstrapped { .. } => {}
+                RpcDhtEvent::QueryResponse(_res) => println!("query response"),
             }
         }
     }
