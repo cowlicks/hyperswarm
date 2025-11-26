@@ -29,7 +29,7 @@ use crate::{
     },
     namespace,
     next_router::connection::{ConnStep, Connection, ConnectionInner, ReadyData},
-    Error, HyperDhtEvent,
+    Error, HyperDhtEvent, PeerHandshakeResponse,
 };
 
 // swap this with rng thing later. We increment now bc we're debugging stuff.
@@ -70,35 +70,39 @@ impl Router {
     pub fn inject_response(
         &mut self,
         resp: &Arc<InResponse>,
-        ph: PeerHandshakePayload,
+        ph: Arc<PeerHandshakeResponse>,
         socket: UdxSocket,
-    ) -> Result<HyperDhtEvent, Error> {
+    ) -> crate::Result<Connection> {
         let mut conn = self.connections.remove(&resp.request.tid).unwrap();
-        let res = conn.receive_next(ph.noise)?;
-
+        let res = conn.receive_next(ph.noise.clone())?;
         let msg: Vec<u8> = match res {
             Event::HandshakePayload(payload) => payload,
             Event::Message(items) => todo!(),
             Event::ErrStuff(error) => todo!(),
         };
         let (np, rest) = NoisePayload::decode(&msg)?;
-        assert!(rest.is_empty());
+        debug_assert!(rest.is_empty());
+        if !ph.relayed {
+            if !conn.handshake_ready() {
+                // We are not "ready" here but we can encrypt stuff.
+                // And the next message we would receive would contain our decryptor.
+                // So we can basically be "ready"
+                //panic!("curr handshake pattern with this side being initializer should complete with first response")
+                // TODO
+            }
+            let udx_remote_id = np
+                .udx
+                .as_ref()
+                .expect("TODO response SHOULD have udx_info")
+                .id as u32;
 
-        if !conn.handshake_ready() {
-            // We are not "ready" here but we can encrypt stuff.
-            // And the next message we would receive would contain our decryptor.
-            // So we can basically be "ready"
-            //panic!("curr handshake pattern with this side being initializer should complete with first response")
-            // TODO
+            conn.connect(resp.request.to.addr, udx_remote_id, np)?;
+            Ok(conn)
+        } else {
+            Err(Error::PeerHandshakeFailed(
+                "relay not implemented yet".into(),
+            ))
         }
-        let udx_remote_id = np
-            .udx
-            .as_ref()
-            .expect("TODO response SHOULD have udx_info")
-            .id as u32;
-
-        conn.connect(resp.request.to.addr, udx_remote_id, np)?;
-        Ok(HyperDhtEvent::Connected((resp.request.tid, conn)))
     }
 
     /// Create the first payload for the handshake protocol. Create and store an object for

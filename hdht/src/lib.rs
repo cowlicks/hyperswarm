@@ -27,7 +27,7 @@ use dht_rpc::{
     commit::{CommitMessage, CommitRequestParams, Progress},
     io::{InResponse, MessageSender, OutRequestBuilder},
     query::{Query, QueryResult as RpcQueryResult},
-    Bootstrapped, RequestFutureError, Tid,
+    Bootstrapped, QueryResponseStream, RequestFutureError, Tid,
 };
 use futures::{
     channel::mpsc::{self},
@@ -45,6 +45,7 @@ use tokio::sync::oneshot::{self, error::RecvError};
 use tracing::{debug, error, instrument, trace, warn};
 
 use crate::{
+    cenc::HandshakeSteps,
     dht_proto::{PeersInput, PeersOutput},
     lru::{CacheKey, PeerCache},
     next_router::connection::Connection,
@@ -148,9 +149,9 @@ pub enum Error {
     RelayThroughInfoBuilder(#[from] RelayThroughInfoBuilderError),
     #[error("Hypercore Protocol Error: {0}")]
     HypercoreProtocolError(#[from] hypercore_protocol::Error),
-    // TODO add some useful data here
-    #[error("Peer handshake failed")]
-    PeerHandshakeFailed,
+    // TODO make err  more useful here
+    #[error("Peer handshake failed: {0}")]
+    PeerHandshakeFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -339,6 +340,14 @@ impl HyperDhtInner {
         query_id
     }
 
+    pub fn find_peer_stream(&mut self, pub_key: PublicKey) -> QueryResponseStream {
+        let target = IdBytes(generic_hash(&*pub_key));
+
+        //self.rpc
+        //.query_stream(commands::FIND_PEER, target, None, Commit::No)
+        todo!()
+    }
+
     /// Store a channel sender for a find_peer query result
     fn store_find_peer_sender(&mut self, query_id: QueryId, tx: oneshot::Sender<Arc<QueryResult>>) {
         self.pending_find_peers.insert(query_id, tx);
@@ -416,7 +425,7 @@ impl HyperDhtInner {
     }
 
     #[instrument(skip_all)]
-    fn inject_response(&mut self, resp: Arc<InResponse>, _cx: &mut Context<'_>) {
+    fn inject_response(&mut self, resp: Arc<InResponse>, _cx: &mut Context<'_>) -> Result<()> {
         trace!(
             cmd = display(resp.cmd()),
             "Handle Response for custom command"
@@ -454,6 +463,7 @@ impl HyperDhtInner {
             if let Some(e) = event {
                 self.queued_events.push_back(e);
             }
+            Ok(())
         } else {
             // handle respones to non-queries
             match resp.request.command {
@@ -461,40 +471,65 @@ impl HyperDhtInner {
                     // TODO
                 }
                 commands::PEER_HANDSHAKE => {
+                    let phs_resp = self.peer_handshake_response_handler(&resp)?;
+                    // self.queued_events
+                    //     .push_back(HyperDhtEvent::PeerHandshakeResponse(phs_resp.clone()));
+
                     let tx_opt = self
                         .pending_msg
                         .remove(&resp.request.tid)
                         .and_then(|boxed| {
                             boxed.downcast::<oneshot::Sender<Result<Connection>>>().ok()
                         });
-                    trace!("hdt.pending_msg.remove(tid={})", resp.request.tid);
-                    let Some(value) = &resp.response.value else {
-                        warn!("peer handshake response with no value");
-                        tx_opt.map(|tx| tx.send(Err(Error::PeerHandshakeFailed)));
-                        return;
-                    };
-                    let Ok((hs, _rest)) = PeerHandshakePayload::decode(value) else {
-                        error!("failed to decode PeerHandshakePayload");
-                        tx_opt.map(|tx| tx.send(Err(Error::PeerHandshakeFailed)));
-                        return;
-                    };
-                    debug_assert!(_rest.is_empty());
-                    if let Ok(e) = self
+                    let conn = self
                         .router
-                        .inject_response(&resp, hs, self.rpc.socket())
-                        .inspect_err(|e| error!("Error handling peer handshake response: [{e}]"))
-                    {
-                        if let HyperDhtEvent::Connected((_tid, con)) = &e {
-                            tx_opt.map(|tx| tx.send(Ok(con.clone())));
-                        }
-                        self.queued_events.push_back(e);
-                    };
+                        .inject_response(&resp, phs_resp, self.rpc.socket())
+                        .inspect_err(|e| error!("Error handling peer handshake response: [{e}]"))?;
+                    tx_opt.map(|tx| tx.send(Ok(conn.clone())));
+
+                    self.queued_events
+                        .push_back(HyperDhtEvent::Connected((resp.request.tid.clone(), conn)));
                 }
                 Command::External(_) => {
                     // TODO
                 }
             }
+            Ok(())
         }
+    }
+
+    fn peer_handshake_response_handler(
+        &mut self,
+        resp: &Arc<InResponse>,
+    ) -> Result<Arc<PeerHandshakeResponse>> {
+        let hs: PeerHandshakePayload = resp
+            .response
+            .value
+            .as_ref()
+            .ok_or_else(|| Error::PeerHandshakeFailed("missing value".into()))
+            .and_then(|value| {
+                let (hs, _rest) = PeerHandshakePayload::decode(value)?;
+                debug_assert!(_rest.is_empty());
+                Ok(hs)
+            })?;
+
+        if !matches!(hs.mode, HandshakeSteps::Reply) || resp.request.to != resp.peer {
+            // "BAD_HANDSHAKE_REPLY()" is the name of the js error
+            return Err(Error::PeerHandshakeFailed("BAD_HANDSHAKE_REPLY".into()));
+        }
+
+        let server_address = if let Some(x) = hs.peer_address {
+            x
+        } else {
+            resp.request.to.ipv4_addr()?
+        };
+
+        Ok(Arc::new(PeerHandshakeResponse::new(
+            hs.noise,
+            hs.peer_address.is_some(),
+            server_address,
+            resp.response.to.ipv4_addr()?,
+        )))
     }
 
     // A query was completed
@@ -639,7 +674,9 @@ impl Stream for HyperDhtInner {
                         peer,
                     })) => pin.on_command(query, *request, peer),
                     RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(resp))) => {
-                        pin.inject_response(resp, cx)
+                        _ = pin
+                            .inject_response(resp, cx)
+                            .inspect_err(|e| error!(error =? e, "failed to handle response"));
                     }
                     RpcDhtEvent::Bootstrapped(bs) => {
                         return Poll::Ready(Some(HyperDhtEvent::Bootstrapped(bs)));
@@ -825,6 +862,30 @@ pub enum HyperDhtEvent {
         peer: Peer,
     },
     Connected((Tid, Connection)),
+    PeerHandshakeResponse(Result<Arc<PeerHandshakeResponse>>),
+}
+
+#[derive(Debug)]
+struct PeerHandshakeResponse {
+    noise: Vec<u8>,
+    relayed: bool,
+    server_address: SocketAddrV4,
+    client_address: SocketAddrV4,
+}
+impl PeerHandshakeResponse {
+    fn new(
+        noise: Vec<u8>,
+        relayed: bool,
+        server_address: SocketAddrV4,
+        client_address: SocketAddrV4,
+    ) -> Self {
+        Self {
+            noise,
+            relayed,
+            server_address,
+            client_address,
+        }
+    }
 }
 
 impl HyperDhtEvent {
@@ -840,6 +901,7 @@ impl HyperDhtEvent {
             HyperDhtEvent::FindPeerResult(_) => "FindPeerResult",
             HyperDhtEvent::CustomCommandQuery { .. } => "CustomCommandQuery",
             HyperDhtEvent::Connected { .. } => "Connected",
+            HyperDhtEvent::PeerHandshakeResponse(_) => "PeerHandshakeResponse",
         }
     }
 }
