@@ -24,10 +24,13 @@ use cenc::{
 use compact_encoding::{CompactEncoding, EncodingError};
 use crypto::PublicKey;
 use dht_rpc::{
-    commit::{CommitMessage, CommitRequestParams, Progress},
+    cenc::generic_hash,
+    commit::{Commit, CommitMessage, CommitRequestParams, Progress},
     io::{InResponse, MessageSender, OutRequestBuilder},
-    query::{Query, QueryResult as RpcQueryResult},
-    Bootstrapped, QueryResponseStream, RequestFutureError, Tid,
+    query::{CommandQuery, Query, QueryId, QueryResult as RpcQueryResult},
+    Bootstrapped, Command, DhtConfig, IdBytes, Peer, PeerId, QueryResponseStream,
+    RequestFutureError, RequestMsgData, RequestOk, ResponseOk, RpcDht, RpcDhtBuilderError,
+    RpcDhtEvent, Tid,
 };
 use futures::{
     channel::mpsc::{self},
@@ -50,14 +53,6 @@ use crate::{
     lru::{CacheKey, PeerCache},
     next_router::connection::Connection,
     store::Store,
-};
-pub use ::dht_rpc::{
-    cenc::generic_hash,
-    commit::Commit,
-    peers::{decode_local_peers, decode_peers, PeersEncoding},
-    query::{CommandQuery, QueryId, QueryStats},
-    Command, DhtConfig, ExternalCommand, IdBytes, Peer, PeerId, RequestMsgData, RequestOk,
-    ResponseOk, RpcDht, RpcDhtBuilderError, RpcDhtEvent,
 };
 
 mod dht_proto {
@@ -95,6 +90,7 @@ pub mod commands {
     pub const LOOKUP: Command = Command::External(ExternalCommand(values::LOOKUP));
     pub const ANNOUNCE: Command = Command::External(ExternalCommand(values::ANNOUNCE));
     pub const UNANNOUNCE: Command = Command::External(ExternalCommand(values::UNANNOUNCE));
+
     pub mod values {
         pub const PEER_HANDSHAKE: usize = 0;
         pub const PEER_HOLEPUNCH: usize = 1;
@@ -341,7 +337,7 @@ impl HyperDhtInner {
     }
 
     pub fn find_peer_stream(&mut self, pub_key: PublicKey) -> QueryResponseStream {
-        let target = IdBytes(generic_hash(&*pub_key));
+        let _target = IdBytes(generic_hash(&*pub_key));
 
         //self.rpc
         //.query_stream(commands::FIND_PEER, target, None, Commit::No)
@@ -488,7 +484,7 @@ impl HyperDhtInner {
                     tx_opt.map(|tx| tx.send(Ok(conn.clone())));
 
                     self.queued_events
-                        .push_back(HyperDhtEvent::Connected((resp.request.tid.clone(), conn)));
+                        .push_back(HyperDhtEvent::Connected((resp.request.tid, conn)));
                 }
                 Command::External(_) => {
                     // TODO
@@ -585,7 +581,8 @@ impl HyperDhtInner {
         destination: PeerId,
         relay_addresses: &[SocketAddr],
         namespace: &[u8; 32],
-        cmd: ExternalCommand,
+        // should be announce or unannounce
+        cmd: Command,
     ) -> Tid {
         let value = request_announce_or_unannounce_value(
             keypair,
@@ -603,7 +600,7 @@ impl HyperDhtInner {
         };
 
         self.rpc.request(
-            OutRequestBuilder::new(from_peer, Command::External(cmd))
+            OutRequestBuilder::new(from_peer, cmd)
                 .target(target)
                 .value(value)
                 .token(*token),
@@ -627,7 +624,7 @@ impl HyperDhtInner {
             destination,
             relay_addresses,
             &crate::crypto::namespace::ANNOUNCE,
-            ExternalCommand(commands::values::ANNOUNCE),
+            commands::ANNOUNCE,
         )
     }
 
@@ -646,7 +643,7 @@ impl HyperDhtInner {
             destination,
             &[],
             &crate::crypto::namespace::UNANNOUNCE,
-            ExternalCommand(commands::values::UNANNOUNCE),
+            commands::UNANNOUNCE,
         )
     }
 }
@@ -866,10 +863,12 @@ pub enum HyperDhtEvent {
 }
 
 #[derive(Debug)]
-struct PeerHandshakeResponse {
+pub struct PeerHandshakeResponse {
     noise: Vec<u8>,
     relayed: bool,
+    #[expect(unused)]
     server_address: SocketAddrV4,
+    #[expect(unused)]
     client_address: SocketAddrV4,
 }
 impl PeerHandshakeResponse {
