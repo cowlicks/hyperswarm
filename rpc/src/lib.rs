@@ -404,7 +404,8 @@ impl AsyncRpcDht {
         value: Option<Vec<u8>>,
         commit: Commit,
     ) -> Result<QueryResponseStream> {
-        let (tx, rx) = mpsc::channel(1024);
+        const QUERY_STREAM_CHANNEL_SIZE: usize = 1024;
+        let (tx, rx) = mpsc::channel(QUERY_STREAM_CHANNEL_SIZE);
 
         {
             let mut inner = self.inner.lock().unwrap();
@@ -416,6 +417,62 @@ impl AsyncRpcDht {
             inner: self.inner.clone(),
             rx,
         })
+    }
+
+    pub fn query_next(
+        &self,
+        command: Command,
+        target: IdBytes,
+        value: Option<Vec<u8>>,
+        commit: Commit,
+    ) -> Result<QueryNext> {
+        const QUERY_STREAM_CHANNEL_SIZE: usize = 1024;
+        let (parts_tx, parts_rx) = mpsc::channel(QUERY_STREAM_CHANNEL_SIZE);
+        let (result_tx, result_rx) = oneshot::channel();
+
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let qid = inner.query(command, target, value, commit);
+            inner.store_qid_stream_sender(qid, parts_tx);
+            inner.store_qid_sender(qid, result_tx);
+        };
+
+        Ok(QueryNext {
+            inner: self.inner.clone(),
+            parts_rx,
+            result_rx,
+        })
+    }
+}
+
+struct QueryNext {
+    inner: Arc<Mutex<RpcDht>>,
+    parts_rx: mpsc::Receiver<Arc<InResponse>>,
+    result_rx: Receiver<Arc<QueryResult>>,
+}
+
+impl Stream for QueryNext {
+    type Item = Arc<InResponse>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+        Pin::new(&mut self.parts_rx).poll_next(cx)
+    }
+}
+impl Future for QueryNext {
+    type Output = Result<Arc<QueryResult>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+        Pin::new(&mut self.result_rx)
+            .poll(cx)
+            .map_err(Error::RecvError)
     }
 }
 
@@ -1350,6 +1407,9 @@ impl RpcDht {
         } else {
             let result = Arc::new(result);
             if let Some(tx) = self.pending_queries.remove(&result.query_id) {
+                if let Some(mut stream_tx) = self.pending_query_streams.remove(&result.query_id) {
+                    stream_tx.close_channel();
+                }
                 let _ = tx
                     .send(result.clone())
                     .inspect_err(|e| error!("Failed to send result of pending query: {e:?}"));
