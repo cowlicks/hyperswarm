@@ -66,6 +66,8 @@ mod next_router;
 mod queries;
 mod store;
 
+mod adht;
+
 pub use crypto::{
     make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair,
 };
@@ -671,11 +673,6 @@ impl Stream for HyperDhtInner {
             // Drain rpc events
             while let Poll::Ready(Some(ev)) = Stream::poll_next(Pin::new(&mut pin.rpc), cx) {
                 match ev {
-                    RpcDhtEvent::RequestResult(Ok(RequestOk::CustomCommandRequest {
-                        query,
-                        request,
-                        peer,
-                    })) => pin.on_command(query, *request, peer),
                     RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(resp))) => {
                         _ = pin
                             .inject_response(resp, cx)
@@ -689,6 +686,11 @@ impl Stream for HyperDhtInner {
                     RpcDhtEvent::Bootstrapped(bs) => {
                         return Poll::Ready(Some(HyperDhtEvent::Bootstrapped(bs)));
                     }
+                    RpcDhtEvent::RequestResult(Ok(RequestOk::CustomCommandRequest {
+                        query,
+                        request,
+                        peer,
+                    })) => pin.on_command(query, *request, peer),
                     RpcDhtEvent::ReadyToCommit {
                         query,
                         tx_commit_messages,
