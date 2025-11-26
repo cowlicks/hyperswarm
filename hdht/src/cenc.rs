@@ -171,10 +171,10 @@ impl CompactEncoding for HandshakeSteps {
 #[builder(pattern = "owned")]
 pub struct PeerHandshakePayload {
     #[builder(default = None)]
-    peer_address: Option<SocketAddrV4>,
+    pub peer_address: Option<SocketAddrV4>,
     #[builder(default = None)]
-    relay_address: Option<SocketAddrV4>,
-    mode: HandshakeSteps,
+    pub relay_address: Option<SocketAddrV4>,
+    pub mode: HandshakeSteps,
     pub noise: Vec<u8>,
 }
 
