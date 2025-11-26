@@ -421,77 +421,83 @@ impl HyperDhtInner {
     }
 
     #[instrument(skip_all)]
-    fn inject_response(&mut self, resp: Arc<InResponse>, _cx: &mut Context<'_>) -> Result<()> {
-        trace!(
-            cmd = display(resp.cmd()),
-            "Handle Response for custom command"
-        );
+    fn inject_query_response(
+        &mut self,
+        resp: Arc<InResponse>,
+        _cx: &mut Context<'_>,
+    ) -> Result<()> {
         // Holding `&mut query` here prevents us from calling self.request_unannounce
         // maybe instead we return something from the block to do the msg that we want?
         // however I want to pass in an id from the request.
         // I really just want a mut ref to the query, but
         //
-        // Handle responses to queries
-        if let Some((query, qid)) = resp
+        let Some((query, qid)) = resp
             .query_id
             .and_then(|qid| self.queries.get_mut(&qid).map(|q| (q, qid)))
-        {
-            let event = {
-                match query.deref_mut() {
-                    QueryStreamType::Announce(inner) => {
-                        inner.inject_response(resp);
-                        None
-                    }
-                    QueryStreamType::UnAnnounce(inner) => {
-                        inner.inject_response(&mut self.rpc.io, resp, qid);
-                        None
-                    }
-                    QueryStreamType::Lookup(inner) => inner.inject_response(resp.clone()),
-                    QueryStreamType::AnnounceClear(inner) => {
-                        inner.inject_response(&mut self.rpc.io, resp, qid);
-                        None
-                    }
-                    QueryStreamType::FindPeer(inner) => inner
-                        .inject_response(resp.clone())
-                        .map(HyperDhtEvent::FindPeerResponse),
+        else {
+            error!("query response without matching query!");
+            return Ok(());
+        };
+        let event = {
+            match query.deref_mut() {
+                QueryStreamType::Announce(inner) => {
+                    inner.inject_response(resp);
+                    None
                 }
-            };
-            if let Some(e) = event {
-                self.queued_events.push_back(e);
+                QueryStreamType::UnAnnounce(inner) => {
+                    inner.inject_response(&mut self.rpc.io, resp, qid);
+                    None
+                }
+                QueryStreamType::Lookup(inner) => inner.inject_response(resp.clone()),
+                QueryStreamType::AnnounceClear(inner) => {
+                    inner.inject_response(&mut self.rpc.io, resp, qid);
+                    None
+                }
+                QueryStreamType::FindPeer(inner) => inner
+                    .inject_response(resp.clone())
+                    .map(HyperDhtEvent::FindPeerResponse),
             }
-            Ok(())
-        } else {
-            // handle respones to non-queries
-            match resp.request.command {
-                Command::Internal(_) => {
-                    // TODO
-                }
-                commands::PEER_HANDSHAKE => {
-                    let phs_resp = self.peer_handshake_response_handler(&resp)?;
-                    // self.queued_events
-                    //     .push_back(HyperDhtEvent::PeerHandshakeResponse(phs_resp.clone()));
-
-                    let tx_opt = self
-                        .pending_msg
-                        .remove(&resp.request.tid)
-                        .and_then(|boxed| {
-                            boxed.downcast::<oneshot::Sender<Result<Connection>>>().ok()
-                        });
-                    let conn = self
-                        .router
-                        .inject_response(&resp, phs_resp, self.rpc.socket())
-                        .inspect_err(|e| error!("Error handling peer handshake response: [{e}]"))?;
-                    tx_opt.map(|tx| tx.send(Ok(conn.clone())));
-
-                    self.queued_events
-                        .push_back(HyperDhtEvent::Connected((resp.request.tid, conn)));
-                }
-                Command::External(_) => {
-                    // TODO
-                }
-            }
-            Ok(())
+        };
+        if let Some(e) = event {
+            self.queued_events.push_back(e);
         }
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    fn inject_response(&mut self, resp: Arc<InResponse>, _cx: &mut Context<'_>) -> Result<()> {
+        trace!(
+            cmd = display(resp.cmd()),
+            "Handle Response for custom command"
+        );
+        // handle respones to non-queries
+        match resp.request.command {
+            Command::Internal(_) => {
+                // TODO
+            }
+            commands::PEER_HANDSHAKE => {
+                let phs_resp = self.peer_handshake_response_handler(&resp)?;
+                // self.queued_events
+                //     .push_back(HyperDhtEvent::PeerHandshakeResponse(phs_resp.clone()));
+
+                let tx_opt = self
+                    .pending_msg
+                    .remove(&resp.request.tid)
+                    .and_then(|boxed| boxed.downcast::<oneshot::Sender<Result<Connection>>>().ok());
+                let conn = self
+                    .router
+                    .inject_response(&resp, phs_resp, self.rpc.socket())
+                    .inspect_err(|e| error!("Error handling peer handshake response: [{e}]"))?;
+                tx_opt.map(|tx| tx.send(Ok(conn.clone())));
+
+                self.queued_events
+                    .push_back(HyperDhtEvent::Connected((resp.request.tid, conn)));
+            }
+            Command::External(_) => {
+                // TODO
+            }
+        }
+        Ok(())
     }
 
     fn peer_handshake_response_handler(
@@ -673,7 +679,12 @@ impl Stream for HyperDhtInner {
                     RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(resp))) => {
                         _ = pin
                             .inject_response(resp, cx)
-                            .inspect_err(|e| error!(error =? e, "failed to handle response"));
+                            .inspect_err(|e| error!(error=?e,"failed to handle response"));
+                    }
+                    RpcDhtEvent::QueryResponse(resp) => {
+                        _ = pin
+                            .inject_query_response(resp, cx)
+                            .inspect_err(|e| error!(error=?e,"failed to handle response"));
                     }
                     RpcDhtEvent::Bootstrapped(bs) => {
                         return Poll::Ready(Some(HyperDhtEvent::Bootstrapped(bs)));
@@ -687,7 +698,16 @@ impl Stream for HyperDhtInner {
                     RpcDhtEvent::QueryResult(qr) => {
                         pin.query_target_search_done(qr);
                     }
-                    _other => warn!("unhandled rpc event: [{_other:?}]"),
+                    RpcDhtEvent::RoutingUpdated { .. } => {
+                        // TODO
+                    }
+                    RpcDhtEvent::ResponseResult(Err(e)) => {
+                        error!(error=?e, "Got error response");
+                    }
+                    RpcDhtEvent::ResponseResult(Ok(ResponseOk::Pong(__))) => {}
+                    RpcDhtEvent::RequestResult(Err(e)) => {
+                        error!(error=?e, "Got error request");
+                    }
                 }
             }
 
