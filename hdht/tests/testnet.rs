@@ -123,6 +123,14 @@ macro_rules! setup_rs_node_and_js_testnet {
         (tn, hdht)
     }};
 }
+macro_rules! new_setup_rs_node_and_js_testnet {
+    () => {{
+        let mut tn = Testnet::new().await?;
+        let bs_addr = tn.get_node_i_address(1).await?;
+        let hdht = HyperDht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+        (tn, hdht)
+    }};
+}
 
 macro_rules! rpc_setup {
     () => {{
@@ -145,7 +153,7 @@ macro_rules! adht_setup {
 }
 
 #[tokio::test]
-async fn ahdht() -> Result<()> {
+async fn adht_lookup() -> Result<()> {
     let (mut tn, mut dht) = adht_setup!();
     let pub_key: Vec<u8> = tn
         .repl
@@ -161,6 +169,7 @@ server.on('listening', () => {
 });
 
 pub_key  = server_node.defaultKeyPair.publicKey;;
+await server.listen(server_node.defaultKeyPair);
 outputJson([...pub_key]);
 ",
         )
@@ -173,6 +182,39 @@ outputJson([...pub_key]);
     }
     let res = lery.await?;
     dbg!(&res);
+    Ok(())
+}
+
+#[tokio::test]
+async fn adht_find_peer() -> Result<()> {
+    let (mut tn, mut dht) = adht_setup!();
+    let pub_key: [u8; 32] = tn
+        .repl
+        .json_run_tcp(
+            "
+server_addr = deferred();
+
+
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+server.on('listening', () => {
+    server_addr.resolve(server.address().port)
+});
+
+pub_key  = server_node.defaultKeyPair.publicKey;;
+await server.listen(server_node.defaultKeyPair);
+outputJson([...pub_key]);
+",
+        )
+        .await?;
+
+    dht.boostrap().await?;
+    let mut lery = dht.find_peer(pub_key.into())?;
+    while let Some(x) = lery.next().await {
+        println!("{x:?}");
+    }
+    let res = lery.await?;
+    //dbg!(&res);
     Ok(())
 }
 /// Check that Rust's lookup works. The steps:
