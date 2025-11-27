@@ -66,7 +66,7 @@ mod next_router;
 mod queries;
 mod store;
 
-mod adht;
+pub mod adht;
 
 pub use crypto::{
     make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair,

@@ -1,17 +1,24 @@
 mod common;
 use compact_encoding::CompactEncoding;
-use std::net::SocketAddr;
+use std::{
+    net::{SocketAddr, SocketAddrV4},
+    time::Duration,
+};
 
 use common::{js::make_repl, Result};
-use dht_rpc::DhtConfig;
+use dht_rpc::{cenc::generic_hash, commands, commit::Commit, DhtConfig, IdBytes, Peer};
 use futures::{SinkExt, StreamExt};
 use hypercore_protocol::{handshake_constants::DHT_PATTERN, sstream::sm2::Event, HandshakeConfig};
 use hyperdht::{
+    adht::Dht,
     cenc::{NoisePayload, UdxInfo},
+    commands::FIND_PEER,
     namespace::PEER_HANDSHAKE,
-    HyperDhtEvent, HyperDhtInner, Keypair,
+    HyperDht, HyperDhtEvent, HyperDhtInner, Keypair,
 };
 use rusty_nodejs_repl::{wait, Repl};
+
+use crate::common::log;
 
 #[allow(unused)]
 fn show_bytes<T: AsRef<[u8]>>(x: T) {
@@ -117,6 +124,57 @@ macro_rules! setup_rs_node_and_js_testnet {
     }};
 }
 
+macro_rules! rpc_setup {
+    () => {{
+        let mut tn = Testnet::new().await?;
+        let bs_addr = tn.get_node_i_address(1).await?;
+        let rpc =
+            dht_rpc::AsyncRpcDht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr))
+                .await?;
+        (tn, rpc)
+    }};
+}
+
+macro_rules! adht_setup {
+    () => {{
+        let mut tn = Testnet::new().await?;
+        let bs_addr = tn.get_node_i_address(1).await?;
+        let rpc = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+        (tn, rpc)
+    }};
+}
+
+#[tokio::test]
+async fn ahdht() -> Result<()> {
+    let (mut tn, mut dht) = adht_setup!();
+    let pub_key: Vec<u8> = tn
+        .repl
+        .run_tcp(
+            "
+server_addr = deferred();
+
+
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+server.on('listening', () => {
+    server_addr.resolve(server.address().port)
+});
+
+pub_key  = server_node.defaultKeyPair.publicKey;;
+outputJson([...pub_key]);
+",
+        )
+        .await?;
+    let target = IdBytes(generic_hash(&*pub_key));
+
+    let mut lery = dht.lookup(target, Commit::No)?;
+    while let Some(x) = lery.next().await {
+        println!("{x:?}");
+    }
+    let res = lery.await?;
+    dbg!(&res);
+    Ok(())
+}
 /// Check that Rust's lookup works. The steps:
 /// js does an announce with a `topic` and `keypair`
 /// rs does a lookup for `topic`. Then checks the resulting keys found match `keypair`

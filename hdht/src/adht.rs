@@ -32,7 +32,7 @@ impl Dht {
         })
     }
 
-    pub async fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
+    pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
         let query = self.rpc.query_next(commands::LOOKUP, target, None, commit);
         Ok(Lookup {
             query,
@@ -42,12 +42,14 @@ impl Dht {
     }
 }
 
+#[derive(Debug)]
 pub struct Lookup {
     query: QueryNext,
     topic: IdBytes,
     collected_responses: Vec<Arc<InResponse>>,
 }
 
+#[derive(Debug)]
 pub struct PeersResponse {
     pub response: Arc<InResponse>,
     pub peers: Vec<crate::cenc::Peer>,
