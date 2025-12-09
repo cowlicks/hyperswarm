@@ -361,6 +361,22 @@ impl AsyncRpcDht {
         }
         .await
     }
+    pub fn request_from_builder(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
+        let (tx, rx) = oneshot::channel();
+
+        let tid = {
+            let mut inner = self.inner.lock().unwrap();
+            let tid = inner.request(o);
+            inner.store_tid_sender(tid, tx);
+            tid
+        };
+        // Create a future that polls RpcDht for events and waits for the response
+        RpcDhtRequestFuture {
+            inner: self.inner.clone(),
+            tid,
+            rx,
+        }
+    }
 
     pub async fn ping(&self, peer: Peer) -> Result<Arc<InResponse>> {
         self.request(
@@ -425,7 +441,7 @@ impl AsyncRpcDht {
         target: IdBytes,
         value: Option<Vec<u8>>,
         commit: Commit,
-    ) -> Result<QueryNext> {
+    ) -> QueryNext {
         const QUERY_STREAM_CHANNEL_SIZE: usize = 1024;
         let (parts_tx, parts_rx) = mpsc::channel(QUERY_STREAM_CHANNEL_SIZE);
         let (result_tx, result_rx) = oneshot::channel();
@@ -437,15 +453,16 @@ impl AsyncRpcDht {
             inner.store_qid_sender(qid, result_tx);
         };
 
-        Ok(QueryNext {
+        QueryNext {
             inner: self.inner.clone(),
             parts_rx,
             result_rx,
-        })
+        }
     }
 }
 
-struct QueryNext {
+#[derive(Debug)]
+pub struct QueryNext {
     inner: Arc<Mutex<RpcDht>>,
     parts_rx: mpsc::Receiver<Arc<InResponse>>,
     result_rx: Receiver<Arc<QueryResult>>,
@@ -532,7 +549,8 @@ impl Future for BootstrapFuture {
 }
 
 /// A future that polls RpcDht for events while waiting for a specific response.
-struct RpcDhtRequestFuture {
+#[derive(Debug)]
+pub struct RpcDhtRequestFuture {
     inner: Arc<Mutex<RpcDht>>,
     #[expect(unused, reason = "may need in future")]
     tid: Tid,
