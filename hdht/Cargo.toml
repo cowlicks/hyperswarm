@@ -32,7 +32,8 @@ version = "1.41.0"
 features = ["rt", "net", "sync"]
 
 [dependencies.compact-encoding]
-path = "../../compact-encoding"
+version = "2.1.0"
+#path = "../../compact-encoding"
 
 [dependencies.async-udx]
 path = "../../async-udx/"
@@ -50,9 +51,9 @@ utils = { path  = "../../replicator/utils" }
 
 
 [dev-dependencies.rusty_nodejs_repl]
-path= "../../js-repl-rs"
+#path= "../../js-repl-rs"
 features = [ "serde" , "integration_utils"]
-#version = "0.2.1"
+version = "0.2.2"
 
 # TODO RMME
 [dependencies.hypercore-protocol]
