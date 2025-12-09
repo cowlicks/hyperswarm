@@ -5,7 +5,10 @@ use std::{
     collections::BTreeMap,
     net::SocketAddrV4,
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, RwLock,
+    },
     task::{Context, Poll},
 };
 
@@ -32,19 +35,21 @@ use crate::{
     Error, HyperDhtEvent, PeerHandshakeResponse,
 };
 
-// swap this with rng thing later. We increment now bc we're debugging stuff.
+// TODO: swap this with rng thing later. We increment now bc we're debugging stuff.
+// TODO: even better make udx stream api like (half_stream, local_id) = socket.new_stream()
 #[derive(Debug)]
-struct StreamIdMaker {
-    counter: u32,
+pub struct StreamIdMaker {
+    counter: AtomicU32,
 }
 
 impl StreamIdMaker {
-    fn new() -> Self {
-        Self { counter: 1 }
+    pub fn new() -> Self {
+        Self {
+            counter: AtomicU32::new(1u32),
+        }
     }
-    fn new_id(&mut self) -> u32 {
-        self.counter += 1;
-        self.counter
+    pub fn new_id(&self) -> u32 {
+        self.counter.fetch_add(1u32, Ordering::Relaxed)
     }
 }
 
