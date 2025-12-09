@@ -478,7 +478,7 @@ impl HyperDhtInner {
                 // TODO
             }
             commands::PEER_HANDSHAKE => {
-                let phs_resp = self.peer_handshake_response_handler(&resp)?;
+                let phs_resp = decode_peer_handshake_response(&resp)?;
                 // self.queued_events
                 //     .push_back(HyperDhtEvent::PeerHandshakeResponse(phs_resp.clone()));
 
@@ -503,7 +503,7 @@ impl HyperDhtInner {
     }
 
     fn peer_handshake_response_handler(
-        &mut self,
+        &self,
         resp: &Arc<InResponse>,
     ) -> Result<Arc<PeerHandshakeResponse>> {
         let hs: PeerHandshakePayload = resp
@@ -1107,4 +1107,35 @@ pub fn request_announce_or_unannounce_value(
         .to_encoded_bytes()
         .expect("known to succeed for all `Announce` values")
         .to_vec()
+}
+
+fn decode_peer_handshake_response(resp: &Arc<InResponse>) -> Result<Arc<PeerHandshakeResponse>> {
+    let hs: PeerHandshakePayload = resp
+        .response
+        .value
+        .as_ref()
+        .ok_or_else(|| Error::PeerHandshakeFailed("missing value".into()))
+        .and_then(|value| {
+            let (hs, _rest) = PeerHandshakePayload::decode(value)?;
+            debug_assert!(_rest.is_empty());
+            Ok(hs)
+        })?;
+
+    if !matches!(hs.mode, HandshakeSteps::Reply) || resp.request.to != resp.peer {
+        // "BAD_HANDSHAKE_REPLY()" is the name of the js error
+        return Err(Error::PeerHandshakeFailed("BAD_HANDSHAKE_REPLY".into()));
+    }
+
+    let server_address = if let Some(x) = hs.peer_address {
+        x
+    } else {
+        resp.request.to.ipv4_addr()?
+    };
+
+    Ok(Arc::new(PeerHandshakeResponse::new(
+        hs.noise,
+        hs.peer_address.is_some(),
+        server_address,
+        resp.response.to.ipv4_addr()?,
+    )))
 }

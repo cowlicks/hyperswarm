@@ -1,6 +1,6 @@
 use std::{
     future::Future,
-    net::ToSocketAddrs,
+    net::{SocketAddr, SocketAddrV4, ToSocketAddrs},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -8,15 +8,30 @@ use std::{
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    cenc::generic_hash, commit::Commit, io::InResponse, AsyncRpcDht, DhtConfig, IdBytes, QueryNext,
+    cenc::generic_hash,
+    commit::Commit,
+    io::{InResponse, OutRequestBuilder},
+    AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
 };
-use futures::Stream;
+use futures::{Stream, StreamExt};
+use hypercore_protocol::sstream::sm2::Machine;
 use tracing::instrument;
 
-use crate::{commands, crypto::PublicKey, queries::QueryResult, Result, DEFAULT_BOOTSTRAP};
+use crate::{
+    cenc::{
+        firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder,
+    },
+    commands,
+    crypto::PublicKey,
+    decode_peer_handshake_response,
+    next_router::{connection::Connection, StreamIdMaker},
+    queries::QueryResult,
+    Error, Result, DEFAULT_BOOTSTRAP,
+};
 
 pub struct Dht {
     rpc: AsyncRpcDht,
+    id_maker: StreamIdMaker,
 }
 
 impl Dht {
@@ -31,6 +46,7 @@ impl Dht {
 
         Ok(Self {
             rpc: AsyncRpcDht::with_config(config).await?,
+            id_maker: StreamIdMaker::new(),
         })
     }
 
@@ -59,6 +75,112 @@ impl Dht {
             collected_responses: Vec::new(),
         })
     }
+
+    pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
+        let mut query = self.find_peer(pub_key.clone())?;
+        while let Some(resp) = query.next().await {
+            let Ok(Some(FindPeerResponse { response, .. })) = resp else {
+                continue;
+            };
+            if let Ok(conn) = self
+                .peer_handshake(pub_key.clone(), response.request.to.addr)?
+                .await
+            {
+                return Ok(conn);
+            }
+        }
+        todo!()
+    }
+
+    pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
+        self.rpc.request_from_builder(o)
+    }
+
+    pub fn peer_handshake(
+        &self,
+        remote_public_key: PublicKey,
+        destination: SocketAddr,
+    ) -> Result<PeerHandshake> {
+        let SocketAddr::V4(addr) = self.rpc.local_addr()? else {
+            todo!()
+        };
+        let mut hs =
+            Machine::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
+        let udx_local_id = self.id_maker.new_id();
+        let np = NoisePayloadBuilder::default()
+            .firewall(firewall::OPEN)
+            .addresses4(Some(vec![addr]))
+            .udx(Some(
+                UdxInfoBuilder::default()
+                    .reusable_socket(false)
+                    .id(udx_local_id as usize)
+                    .build()?,
+            ))
+            .build()?
+            .to_encoded_bytes()?;
+        hs.handshake_start(&np)?;
+        let noise = hs
+            .get_next_sendable_message()?
+            .expect("we just set payload above. See `.handshake_start(np)`");
+        let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
+            .noise(noise)
+            .mode(crate::cenc::HandshakeSteps::FromClient)
+            .build()?
+            .to_encoded_bytes()?;
+        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
+        let connection = Connection::new(hs, udx_local_id, half_stream);
+
+        let o = OutRequestBuilder::new(Peer::new(destination.into()), commands::PEER_HANDSHAKE)
+            .value(peer_handshake_payload.into())
+            .target(generic_hash(&*remote_public_key).into());
+
+        Ok(PeerHandshake {
+            request: self.request(o),
+            connection,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct PeerHandshake {
+    request: RpcDhtRequestFuture,
+    connection: Connection,
+}
+
+impl Future for PeerHandshake {
+    type Output = Result<Connection>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let resp = match Pin::new(&mut self.request).poll(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+            Poll::Ready(Ok(resp)) => resp,
+        };
+
+        let phs = decode_peer_handshake_response(&resp)?;
+        let hypercore_protocol::sstream::sm2::Event::HandshakePayload(payload) =
+            self.connection.receive_next(phs.noise.clone())?
+        else {
+            return todo!();
+        };
+        let (np, rest) = NoisePayload::decode(&payload)?;
+        debug_assert!(rest.is_empty());
+        if phs.relayed {
+            return Poll::Ready(Err(Error::PeerHandshakeFailed(
+                "relay not implemented yet".into(),
+            )));
+        }
+
+        self.connection.connect(
+            resp.request.to.addr,
+            np.udx
+                .as_ref()
+                .expect("TODO response SHOULD have udx_info")
+                .id as u32,
+            np,
+        )?;
+        Poll::Ready(Ok(self.connection.clone()))
+    }
 }
 
 #[derive(Debug)]
@@ -73,7 +195,6 @@ impl LookupResponse {
         let Some(value) = &response.response.value else {
             return Ok(None);
         };
-        println!("decode_response_value {value:?}");
         let (peers, _rest): (Vec<crate::cenc::Peer>, &[u8]) =
             <Vec<crate::cenc::Peer> as CompactEncoding>::decode(value)?;
         debug_assert!(_rest.is_empty());
@@ -138,7 +259,6 @@ impl FindPeerResponse {
         let Some(value) = &response.response.value else {
             return Ok(None);
         };
-        println!("decode_response_value {value:?}");
         let (peer, _rest): (crate::cenc::Peer, &[u8]) =
             <crate::cenc::Peer as CompactEncoding>::decode(value)?;
         debug_assert!(_rest.is_empty());
