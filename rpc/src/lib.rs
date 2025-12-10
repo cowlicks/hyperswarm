@@ -292,7 +292,7 @@ impl AsyncRpcDht {
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.inner.lock().unwrap().local_addr()
     }
-    pub fn socket(&self) -> async_udx::UdxSocket {
+    pub fn socket(&self) -> udx::UdxSocket {
         self.inner.lock().unwrap().socket()
     }
     pub fn is_bootstrapped(&self) -> bool {
@@ -844,7 +844,7 @@ impl RpcDht {
     pub fn local_addr(&self) -> crate::Result<SocketAddr> {
         self.io.local_addr()
     }
-    pub fn socket(&self) -> async_udx::UdxSocket {
+    pub fn socket(&self) -> udx::UdxSocket {
         self.io.socket()
     }
     pub fn bootstrap(&mut self) {

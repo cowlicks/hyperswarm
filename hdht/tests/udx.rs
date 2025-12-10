@@ -1,10 +1,10 @@
-//! these really belong in async_udx's integration tests
+//! these really belong in udx's integration tests
 mod common;
 
-use async_udx::{UdxSocket, UdxStream};
 use common::Result;
 use rusty_nodejs_repl::Repl;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use udx::{UdxSocket, UdxStream};
 
 use crate::common::js::make_repl;
 

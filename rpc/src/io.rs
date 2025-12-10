@@ -287,7 +287,7 @@ impl IoHandler {
     pub fn local_addr(&self) -> crate::Result<SocketAddr> {
         self.message_stream.local_addr()
     }
-    pub fn socket(&self) -> async_udx::UdxSocket {
+    pub fn socket(&self) -> udx::UdxSocket {
         self.message_stream.socket()
     }
     /// TODO check this is correct.

@@ -7,12 +7,12 @@ use std::{
 };
 
 use async_compat::Compat;
-use async_udx::{HalfOpenStreamHandle, UdxStream};
 use futures::{Sink, Stream};
 use hypercore_protocol::{
     sstream::sm2::{Event, Machine, MachineIo},
     Uint24LELengthPrefixedFraming,
 };
+use udx::{HalfOpenStreamHandle, UdxStream};
 
 use crate::{cenc::NoisePayload, Error};
 

@@ -13,10 +13,10 @@ use std::{
 };
 
 use async_compat::Compat;
-use async_udx::{UdxSocket, UdxStream};
 use compact_encoding::CompactEncoding;
 use dht_rpc::{io::InResponse, Tid};
 use futures::{Sink, Stream, StreamExt};
+use udx::{UdxSocket, UdxStream};
 
 use hypercore_protocol::{
     sstream::sm2::{Event, Machine, MachineIo},

@@ -5,10 +5,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_udx::{RecvFuture, UdxSocket};
 use compact_encoding::CompactEncoding;
 use futures::{Future, Sink, Stream};
 use tracing::trace;
+use udx::{RecvFuture, UdxSocket};
 
 use crate::Result;
 
