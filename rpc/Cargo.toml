@@ -33,7 +33,7 @@ tracing = "0.1.41"
 [dependencies.compact-encoding]
 path = "../../compact-encoding"
 
-[dependencies.async-udx]
+[dependencies.udx]
 path = "../../async-udx"
 
 [dependencies.tokio]
