@@ -36,7 +36,8 @@ version = "2.1.0"
 #path = "../../compact-encoding"
 
 [dependencies.udx]
-path = "../../async-udx/"
+version = "0.1.0"
+#path = "../../async-udx/"
 
 [build-dependencies]
 prost-build = "0.6.1"

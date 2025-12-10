@@ -34,7 +34,8 @@ tracing = "0.1.41"
 path = "../../compact-encoding"
 
 [dependencies.udx]
-path = "../../async-udx"
+version = "0.1.0"
+#path = "../../async-udx"
 
 [dependencies.tokio]
 version = "1.41.0"
