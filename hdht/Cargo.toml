@@ -35,7 +35,7 @@ features = ["rt", "net", "sync"]
 version = "2.1.0"
 #path = "../../compact-encoding"
 
-[dependencies.async-udx]
+[dependencies.udx]
 path = "../../async-udx/"
 
 [build-dependencies]
