@@ -16,10 +16,7 @@ prost-build = "0.6.1"
 
 [dependencies]
 rand = "0.7.3"
-bytes = "0.5.5"
-prost = "0.6.1"
 arrayvec = "0.5.1"
-sha2 = "0.9.1"
 uint = "0.8.3"
 futures = "0.3.5"
 wasm-timer = "0.2.4"
