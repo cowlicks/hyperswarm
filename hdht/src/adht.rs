@@ -1,6 +1,6 @@
 use std::{
     future::Future,
-    net::{SocketAddr, SocketAddrV4, ToSocketAddrs},
+    net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -161,7 +161,7 @@ impl Future for PeerHandshake {
         let hypercore_protocol::sstream::sm2::Event::HandshakePayload(payload) =
             self.connection.receive_next(phs.noise.clone())?
         else {
-            return todo!();
+            todo!()
         };
         let (np, rest) = NoisePayload::decode(&payload)?;
         debug_assert!(rest.is_empty());

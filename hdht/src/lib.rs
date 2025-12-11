@@ -502,40 +502,6 @@ impl HyperDhtInner {
         Ok(())
     }
 
-    fn peer_handshake_response_handler(
-        &self,
-        resp: &Arc<InResponse>,
-    ) -> Result<Arc<PeerHandshakeResponse>> {
-        let hs: PeerHandshakePayload = resp
-            .response
-            .value
-            .as_ref()
-            .ok_or_else(|| Error::PeerHandshakeFailed("missing value".into()))
-            .and_then(|value| {
-                let (hs, _rest) = PeerHandshakePayload::decode(value)?;
-                debug_assert!(_rest.is_empty());
-                Ok(hs)
-            })?;
-
-        if !matches!(hs.mode, HandshakeSteps::Reply) || resp.request.to != resp.peer {
-            // "BAD_HANDSHAKE_REPLY()" is the name of the js error
-            return Err(Error::PeerHandshakeFailed("BAD_HANDSHAKE_REPLY".into()));
-        }
-
-        let server_address = if let Some(x) = hs.peer_address {
-            x
-        } else {
-            resp.request.to.ipv4_addr()?
-        };
-
-        Ok(Arc::new(PeerHandshakeResponse::new(
-            hs.noise,
-            hs.peer_address.is_some(),
-            server_address,
-            resp.response.to.ipv4_addr()?,
-        )))
-    }
-
     // A query was completed
     fn query_target_search_done(&mut self, query_result: Arc<RpcQueryResult>) {
         if let Some(query) = self.queries.get_mut(&query_result.query_id) {
