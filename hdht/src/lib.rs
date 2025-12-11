@@ -672,7 +672,7 @@ impl Stream for HyperDhtInner {
                     RpcDhtEvent::ResponseResult(Err(e)) => {
                         error!(error=?e, "Got error response");
                     }
-                    RpcDhtEvent::ResponseResult(Ok(ResponseOk::Pong(__))) => {}
+                    RpcDhtEvent::ResponseResult(Ok(ResponseOk::Pong(_))) => {}
                     RpcDhtEvent::RequestResult(Err(e)) => {
                         error!(error=?e, "Got error request");
                     }

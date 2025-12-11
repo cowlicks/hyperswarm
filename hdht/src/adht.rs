@@ -130,7 +130,7 @@ impl Dht {
         let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
         let connection = Connection::new(hs, udx_local_id, half_stream);
 
-        let o = OutRequestBuilder::new(Peer::new(destination.into()), commands::PEER_HANDSHAKE)
+        let o = OutRequestBuilder::new(Peer::new(destination), commands::PEER_HANDSHAKE)
             .value(peer_handshake_payload.into())
             .target(generic_hash(&*remote_public_key).into());
 
