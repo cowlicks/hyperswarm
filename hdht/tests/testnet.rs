@@ -1,9 +1,6 @@
 mod common;
 use compact_encoding::CompactEncoding;
-use std::{
-    net::SocketAddr,
-    time::Duration,
-};
+use std::{net::SocketAddr, time::Duration};
 
 use common::Result;
 use dht_rpc::{commit::Commit, DhtConfig};
@@ -11,7 +8,8 @@ use futures::{SinkExt, StreamExt};
 use hypercore_protocol::{handshake_constants::DHT_PATTERN, sstream::sm2::Event, HandshakeConfig};
 use hyperdht::{
     cenc::{NoisePayload, UdxInfo},
-    namespace::PEER_HANDSHAKE, HyperDhtEvent, HyperDhtInner, Keypair,
+    namespace::PEER_HANDSHAKE,
+    HyperDhtEvent, HyperDhtInner, Keypair,
 };
 use rusty_nodejs_repl::wait;
 
@@ -350,7 +348,7 @@ a = await server.address();
 
     let mut resps = vec![];
     // wait for find_peer to complete
-    let qr = loop {
+    let _qr = loop {
         match hdht.next().await {
             Some(HyperDhtEvent::Bootstrapped { .. }) => {}
             Some(HyperDhtEvent::FindPeerResult(qr)) => break qr,
@@ -461,7 +459,7 @@ outputJson(`${host}:${port}`);",
 
 #[tokio::test]
 async fn js_js() -> Result<()> {
-    let (mut tn, hdht) = setup_rs_node_and_js_testnet!();
+    let (mut tn, _hdht) = setup_rs_node_and_js_testnet!();
     tn.repl
         .run_tcp(
             "

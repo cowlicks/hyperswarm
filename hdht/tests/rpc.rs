@@ -91,10 +91,7 @@ outputJson([...pub_key]);
         .json_run_tcp("outputJson([...server.dht.id])")
         .await?;
     let idbytes: [u8; 32] = idbytes.try_into().unwrap();
-    //let command = commands::PING_NAT;
-    let command = commands::FIND_NODE;
     let command = hyperdht::commands::FIND_PEER;
-    //let x = rpc.request(command, Some(idbytes), None, destination, None).await?;
     log();
     let x = rpc.query(command, idbytes.into(), None, Commit::No).await?;
     dbg!(&x);

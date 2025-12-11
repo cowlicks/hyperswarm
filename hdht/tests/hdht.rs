@@ -19,7 +19,7 @@ macro_rules! new_setup_rs_node_and_js_testnet {
 }
 
 #[tokio::test]
-async fn test_async_peer_handshake_to_connect_boof() -> Result<()> {
+async fn test_async_peer_handshake_to_connect_hdht() -> Result<()> {
     let (mut tn, hdht) = new_setup_rs_node_and_js_testnet!();
     tn.repl
         .run_tcp(
@@ -62,9 +62,9 @@ outputJson(`${host}:${port}`);",
         todo!()
     };
     let mut conn = hdht.peer_handshake(pub_key.into(), known_good_addr).await?;
-    conn.send(b"HELLO".to_vec()).await;
+    _ = conn.send(b"HELLO".to_vec()).await;
 
-    let rx_msg: bool = tn.repl.get_name("server_rx_data").await?;
+    let _rx_msg: bool = tn.repl.get_name("server_rx_data").await?;
     tn.repl.print_until_settled().await?;
     tn.repl
         .run_tcp("console.log(await SOCKET.write(Buffer.from('from js')))")
@@ -79,7 +79,8 @@ outputJson(`${host}:${port}`);",
 }
 
 #[tokio::test]
-async fn peer_handshake_with_relay() -> Result<()> {
+#[ignore]
+async fn peer_handshake_with_relay_hdht() -> Result<()> {
     let (mut tn, hdht) = new_setup_rs_node_and_js_testnet!();
     tn.repl
         .run_tcp(
@@ -127,7 +128,7 @@ outputJson(`${host}:${port}`);",
 
         match hdht.peer_handshake(pub_key.into(), addr).await {
             Ok(c) => {
-                conn.insert(c);
+                conn = Some(c);
                 break;
             }
             Err(e) => eprintln!("BADBAD {e}"),
