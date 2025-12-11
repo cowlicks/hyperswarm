@@ -71,6 +71,9 @@ pub async fn make_repl() -> Repl {
     let mut conf = Config::build().unwrap();
     conf.before.push(
         "
+
+sleep = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
+
 deferred = () => {
   const o = {};
   const p = new Promise((resolve_og, reject) => {
