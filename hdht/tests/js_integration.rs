@@ -107,7 +107,7 @@ writeJson([...{name}])"
     let vec: Vec<u8> = repl.json_run(js_str).await?;
     Ok(vec
         .try_into()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?)
+        .map_err(|e| std::io::Error::other(format!("{e:?}")))?)
 }
 /// Test creating a signature for an Announce is correct.
 /// JS code taken from:

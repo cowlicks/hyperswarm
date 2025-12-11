@@ -13,6 +13,7 @@ use async_process::Stdio;
 use tempfile::TempDir;
 
 pub mod js;
+pub mod setup;
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

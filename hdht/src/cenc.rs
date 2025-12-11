@@ -663,7 +663,7 @@ mod test {
     #[test]
     fn socket_addr_enc_dec() -> Result<(), EncodingError> {
         let sa: SocketAddrV4 = "192.168.1.2:1234".parse().unwrap();
-        let x = SocketAddrV4::from(sa);
+        let x = sa;
         let mut buf: [u8; 6] = [0; 6];
         x.encode(&mut buf).unwrap();
 
