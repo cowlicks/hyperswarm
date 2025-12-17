@@ -274,6 +274,7 @@ pub struct RpcDht {
     pending_query_streams: BTreeMap<QueryId, mpsc::Sender<Arc<InResponse>>>,
 }
 
+#[derive(Clone)]
 pub struct AsyncRpcDht {
     inner: Arc<Mutex<RpcDht>>,
 }
@@ -325,14 +326,14 @@ impl AsyncRpcDht {
         .await
     }
 
-    pub async fn request(
+    pub fn request(
         &self,
         command: Command,
         target: Option<IdBytes>,
         value: Option<Vec<u8>>,
         destination: Peer,
         token: Option<[u8; 32]>,
-    ) -> Result<Arc<InResponse>> {
+    ) -> RpcDhtRequestFuture {
         let (tx, rx) = oneshot::channel();
 
         let tid = {
@@ -359,7 +360,6 @@ impl AsyncRpcDht {
             tid,
             rx,
         }
-        .await
     }
     pub fn request_from_builder(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         let (tx, rx) = oneshot::channel();
