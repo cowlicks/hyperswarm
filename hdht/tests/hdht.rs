@@ -135,14 +135,14 @@ outputJson(`${host}:${port}`);",
         }
     }
 
-    let Some(conn) = conn else {
+    let Some(_) = conn else {
         return Ok(());
     };
 
     let mut conn = hdht.peer_handshake(pub_key.into(), known_good_addr).await?;
-    conn.send(b"HELLO".to_vec()).await;
+    conn.send(b"HELLO".to_vec()).await?;
 
-    let rx_msg: bool = tn.repl.get_name("server_rx_data").await?;
+    let _rx_msg: bool = tn.repl.get_name("server_rx_data").await?;
     tn.repl.print_until_settled().await?;
     tn.repl
         .run_tcp("console.log(await SOCKET.write(Buffer.from('from js')))")

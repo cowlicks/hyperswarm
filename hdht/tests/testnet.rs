@@ -139,7 +139,7 @@ async fn rs_announces_js_looksup() -> Result<()> {
     // Run announce to completion
     let _res = poll_until!(hdht, HyperDhtEvent::AnnounceResult);
     // do lookup in js.
-    let found_pk_js = get_pub_keys_for_lookup!(testnet);
+    let found_pk_js = testnet.get_pub_keys_for_lookup().await?;
 
     assert!(!found_pk_js.is_empty());
     for pk in found_pk_js {

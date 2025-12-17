@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::net::SocketAddr;
 
 use crate::common::js::make_repl;
@@ -54,5 +55,24 @@ outputJson(`${{bs_node.host}}:${{bs_node.port}}`)
     "
             ))
             .await?)
+    }
+
+    pub async fn get_pub_keys_for_lookup(&mut self) -> Result<Vec<Vec<u8>>> {
+        let node_index = "testnet.nodes.length - 1";
+        let found_pk_js: Vec<Vec<u8>> = self
+            .repl
+            .json_run_tcp(format!(
+                "
+lookup_node = testnet.nodes[{node_index}];
+query = await lookup_node.lookup(topic);
+let out = [];
+for await (const x of query) {{
+    out.push([...x.peers[0].publicKey])
+}}
+outputJson(out)
+",
+            ))
+            .await?;
+        Ok(found_pk_js)
     }
 }

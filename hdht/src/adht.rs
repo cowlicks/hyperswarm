@@ -13,7 +13,7 @@ use dht_rpc::{
     io::{InResponse, OutRequestBuilder},
     AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
 };
-use futures::{Stream, StreamExt};
+use futures::{future::join_all, Stream, StreamExt};
 use hypercore_protocol::sstream::sm2::Machine;
 use tracing::instrument;
 
@@ -26,7 +26,7 @@ use crate::{
     decode_peer_handshake_response,
     next_router::{connection::Connection, StreamIdMaker},
     queries::QueryResult,
-    Error, Result, DEFAULT_BOOTSTRAP,
+    request_announce_or_unannounce_value, Error, Keypair, Result, DEFAULT_BOOTSTRAP,
 };
 
 pub struct Dht {
@@ -74,6 +74,28 @@ impl Dht {
             topic: target,
             collected_responses: Vec::new(),
         })
+    }
+
+    // TODO  return something more useful, maybe indicate if commits failed
+    pub async fn announce(
+        &mut self,
+        target: IdBytes,
+        key_pair: Keypair,
+        relay_addresses: Vec<SocketAddr>,
+    ) -> Result<()> {
+        let query = self
+            .rpc
+            .query_next(commands::LOOKUP, target, None, Commit::No);
+        let ann = Announce {
+            rpc: self.rpc.clone(),
+            query,
+            target,
+            key_pair: key_pair.clone(),
+            relay_addresses,
+        };
+        let pending_commits = ann.await?;
+        join_all(pending_commits).await;
+        Ok(())
     }
 
     pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
@@ -304,6 +326,52 @@ impl Future for FindPeer {
                 responses: std::mem::take(&mut self.collected_responses),
                 query_id: query_result.query_id,
             })),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub struct Announce {
+    rpc: AsyncRpcDht,
+    query: QueryNext,
+    target: IdBytes,
+    key_pair: Keypair,
+    relay_addresses: Vec<SocketAddr>,
+}
+
+impl Future for Announce {
+    type Output = Result<Vec<RpcDhtRequestFuture>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Pin::new(&mut self.query).poll(cx) {
+            Poll::Ready(Ok(query_result)) => {
+                let mut requests: Vec<RpcDhtRequestFuture> = vec![];
+                for reply in query_result.closest_replies.iter() {
+                    let Some(token) = reply.response.token else {
+                        todo!("could not get token");
+                    };
+                    let value = request_announce_or_unannounce_value(
+                        &self.key_pair,
+                        self.target,
+                        &token,
+                        reply.request.to.id.expect("request.to.id TODO").into(),
+                        &self.relay_addresses,
+                        &crate::crypto::namespace::ANNOUNCE,
+                    );
+                    let from_peer = Peer {
+                        id: reply.request.to.id,
+                        addr: reply.request.to.addr,
+                        referrer: None,
+                    };
+                    let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
+                        .target(self.target)
+                        .value(value)
+                        .token(token);
+                    requests.push(self.rpc.request_from_builder(o));
+                }
+                Poll::Ready(Ok(requests))
+            }
             Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }

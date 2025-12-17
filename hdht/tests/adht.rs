@@ -3,7 +3,7 @@ mod common;
 use dht_rpc::{cenc::generic_hash, commit::Commit, DhtConfig, IdBytes};
 use futures::{SinkExt, StreamExt};
 use hypercore_protocol::sstream::sm2::Event;
-use hyperdht::adht::Dht;
+use hyperdht::{adht::Dht, Keypair};
 
 use common::{log, setup::Testnet, Result};
 
@@ -16,6 +16,70 @@ macro_rules! adht_setup {
     }};
 }
 
+/// Check that Rust's lookup works. The steps:
+/// js does an announce with a `topic` and `keypair`
+/// rs does a lookup for `topic`. Then checks the resulting keys found match `keypair`
+#[tokio::test]
+async fn js_announces_rs_looksup_lll() -> Result<()> {
+    let (mut tn, dht) = adht_setup!();
+
+    let topic = tn.make_topic("hello").await?;
+
+    // with js announc on topic with the node's default keypair
+    let _res = tn
+        .repl
+        .run_tcp(
+            "
+ann_node = testnet.nodes[testnet.nodes.length - 1];
+query = await ann_node.announce(topic, ann_node.defaultKeyPair);
+await query.finished();
+",
+        )
+        .await?;
+
+    // with RS do a lookup
+    let mut query = dht.lookup(topic.into(), Commit::No)?;
+    let mut rs_lookup_keys = vec![];
+    while let Some(Ok(msg)) = query.next().await {
+        println!("{msg:?}");
+        if let Some(msg) = msg {
+            rs_lookup_keys.extend(msg.peers);
+        }
+    }
+
+    // get the public key js announced with
+    let js_pk: Vec<u8> = tn
+        .repl
+        .json_run_tcp("outputJson([...ann_node.defaultKeyPair.publicKey])")
+        .await?;
+    // check js pub key matches the ones we found in rust
+    assert!(!rs_lookup_keys.is_empty());
+    for p in rs_lookup_keys {
+        assert_eq!(p.public_key.as_slice(), js_pk);
+    }
+    Ok(())
+}
+/// Test Rust's announce. The steps:
+/// rs does announce for a `topic` with `keypair`
+/// js does loookup, and we check that resulting publick keys match `keypair`
+#[tokio::test]
+async fn rs_announces_js_looksup() -> Result<()> {
+    let (mut testnet, mut dht) = adht_setup!();
+
+    let topic = testnet.make_topic("hello").await?;
+    let keypair = Keypair::default();
+    dht.announce(topic.into(), keypair.clone(), vec![]).await?;
+
+    // Run announce to completion
+    // do lookup in js.
+    let found_pk_js = testnet.get_pub_keys_for_lookup().await?;
+
+    assert!(!found_pk_js.is_empty());
+    for pk in found_pk_js {
+        assert_eq!(keypair.public.as_slice(), pk);
+    }
+    Ok(())
+}
 #[tokio::test]
 async fn adht_lookup() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
@@ -44,8 +108,7 @@ outputJson([...pub_key]);
     while let Some(x) = lery.next().await {
         println!("{x:?}");
     }
-    let res = lery.await?;
-    dbg!(&res);
+    let _res = lery.await?;
     Ok(())
 }
 
