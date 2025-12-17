@@ -1,26 +1,30 @@
-hyperswarm-dht
-=====================
-![Build](https://github.com/mattsse/hyperswarm-dht/workflows/Continuous%20integration/badge.svg)
-[![Crates.io](https://img.shields.io/crates/v/hyperswarm-dht.svg)](https://crates.io/crates/hyperswarm-dht)
-[![Documentation](https://docs.rs/hyperswarm-dht/badge.svg)](https://docs.rs/hyperswarm-dht)
+# Hyperswarm
+# ⚠️ WARNING 🚧 Work in Progress ⚒️Unstable 👷
 
-A rust implementation of [hyperswarm-dht](https://github.com/hyperswarm/dht) - The DHT powering the HyperSwarm stack.
+Rust implementation of [dht-rpc](https://github.com/holepunchto/dht-rpc), [hyperdht](https://github.com/holepunchto/hyperdht), and  [hyperswarm](https://github.com/holepunchto/hyperswarm). See roadmap for progress.
+
 
 The Kademlia implementation and logic is copied from [libp2-kad](https://github.com/libp2p/rust-libp2p/tree/e9952ea9e348fcc607dac0607ab532cc16208066/).
 
 ## Roadmap
 
-* [x] dht-rpc implementation
-* [ ] dht api fine tuning and testing
-* [x] hyperswarm-dht implementation
-* [ ] hyperswarm-dht cli
+### dht-rpc
 
-## References
+This is basically done. Using it in hyperdht is driving further changes.
+* [x] implement all query and request logic
+* [ ] Rename `AsyncRpcDht` to `Rpc`. Don't export `RpcDht`
 
-- [github.com/hyperswarm/dht](https://github.com/hyperswarm/dht)
-- [github.com/mafintosh/dht-rpc](https://github.com/mafintosh/dht-rpc)
-- [github.com/libp2p/rust-libp2p](https://github.com/libp2p/rust-libp2p)
+### hyperdht
 
+* [ ] Remove `HyperDht` and `HyperDhtInner` in favor of `Dht`
+* [x] Implement `Dht.connect`.
+* [ ] Add support for relayed connections to `Dht.connect`. See [here](https://github.com/holepunchto/hyperdht/blob/main/docs/handshake.md) for more info.
+* [ ] Add "server" functionality, allowing Rust to receive connections from JS hyperdht. JS docs [here](https://github.com/holepunchto/hyperdht?tab=readme-ov-file#await-serverlistenkeypair)
+
+### hyperswarm
+
+* [ ] finish hyperedht client & server modes
+* [ ] implement `swarm.join`
 ## License
 
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or
