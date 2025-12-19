@@ -74,6 +74,8 @@ use self::{
 };
 pub use crate::io::Tid;
 
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
     "node1.hyperdht.org:49737",
@@ -116,6 +118,8 @@ pub enum Error {
     RequestChannelSendError(),
     #[error("Error building request. Missing field: {0}")]
     RequestBuilderError(String),
+    #[error("Request timed out after {0:?}")]
+    Timeout(Duration),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -355,11 +359,7 @@ impl AsyncRpcDht {
         };
 
         // Create a future that polls RpcDht for events and waits for the response
-        RpcDhtRequestFuture {
-            inner: self.inner.clone(),
-            tid,
-            rx,
-        }
+        RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
     pub fn request_from_builder(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         let (tx, rx) = oneshot::channel();
@@ -371,11 +371,7 @@ impl AsyncRpcDht {
             tid
         };
         // Create a future that polls RpcDht for events and waits for the response
-        RpcDhtRequestFuture {
-            inner: self.inner.clone(),
-            tid,
-            rx,
-        }
+        RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
 
     pub async fn ping(&self, peer: Peer) -> Result<Arc<InResponse>> {
@@ -555,13 +551,42 @@ pub struct RpcDhtRequestFuture {
     #[expect(unused, reason = "may need in future")]
     tid: Tid,
     rx: Receiver<Arc<InResponse>>,
+    started_at: Instant,
+    timeout: Duration,
 }
 
 impl Future for RpcDhtRequestFuture {
     type Output = Result<Arc<InResponse>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        future_poller!(self, cx)
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+
+        match Pin::new(&mut self.rx).poll(cx) {
+            Poll::Ready(Ok(response)) => Poll::Ready(Ok(response)),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(Error::RecvError(e))),
+            Poll::Pending => {
+                if Instant::now().duration_since(self.started_at) > self.timeout {
+                    Poll::Ready(Err(Error::Timeout(self.timeout)))
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    }
+}
+
+impl RpcDhtRequestFuture {
+    pub fn new(inner: Arc<Mutex<RpcDht>>, tid: Tid, rx: Receiver<Arc<InResponse>>) -> Self {
+        Self {
+            inner,
+            tid,
+            rx,
+            started_at: Instant::now(),
+            timeout: DEFAULT_REQUEST_TIMEOUT,
+        }
     }
 }
 

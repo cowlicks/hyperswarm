@@ -152,7 +152,7 @@ async fn rs_announces_js_looksup() -> Result<()> {
 /// rs does announce
 /// js does lookup, check topic is found with correct pk
 /// rs does unannounce
-/// ss does a lookup, check no results found
+/// js does a lookup, check no results found
 #[tokio::test]
 async fn test_rs_unannounce() -> Result<()> {
     let (mut testnet, mut hdht) = setup_rs_node_and_js_testnet!();
