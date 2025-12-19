@@ -78,7 +78,7 @@ impl Dht {
 
     // TODO  return something more useful, maybe indicate if commits failed
     pub async fn announce(
-        &mut self,
+        &self,
         target: IdBytes,
         key_pair: Keypair,
         relay_addresses: Vec<SocketAddr>,
@@ -86,14 +86,14 @@ impl Dht {
         let query = self
             .rpc
             .query_next(commands::LOOKUP, target, None, Commit::No);
-        let ann = Announce {
+        let pending_commits = Announce {
             rpc: self.rpc.clone(),
             query,
             target,
             key_pair: key_pair.clone(),
             relay_addresses,
-        };
-        let pending_commits = ann.await?;
+        }
+        .await?;
         join_all(pending_commits).await;
         Ok(())
     }
