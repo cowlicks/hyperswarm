@@ -20,7 +20,7 @@ macro_rules! adht_setup {
 /// js does an announce with a `topic` and `keypair`
 /// rs does a lookup for `topic`. Then checks the resulting keys found match `keypair`
 #[tokio::test]
-async fn js_announces_rs_looksup_lll() -> Result<()> {
+async fn js_announces_rs_looksup() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
 
     let topic = tn.make_topic("hello").await?;
@@ -64,7 +64,7 @@ await query.finished();
 /// js does loookup, and we check that resulting publick keys match `keypair`
 #[tokio::test]
 async fn rs_announces_js_looksup() -> Result<()> {
-    let (mut testnet, mut dht) = adht_setup!();
+    let (mut testnet, dht) = adht_setup!();
 
     let topic = testnet.make_topic("hello").await?;
     let keypair = Keypair::default();
@@ -80,8 +80,9 @@ async fn rs_announces_js_looksup() -> Result<()> {
     }
     Ok(())
 }
+
 #[tokio::test]
-async fn adht_lookup() -> Result<()> {
+async fn dht_lookup() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: Vec<u8> = tn
         .repl
@@ -113,7 +114,7 @@ outputJson([...pub_key]);
 }
 
 #[tokio::test]
-async fn adht_find_peer() -> Result<()> {
+async fn dht_find_peer() -> Result<()> {
     log();
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
@@ -146,14 +147,14 @@ outputJson([...pub_key]);
     dht.boostrap().await?;
     let mut q = dht.find_peer(pub_key.into())?;
     while let Some(e) = q.next().await {
+        // TODO check results against something
         dbg!(&e);
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn adht_peer_handshake() -> Result<()> {
-    log();
+async fn dht_peer_handshake() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
@@ -185,7 +186,6 @@ outputJson([...pub_key]);
     dht.boostrap().await?;
 
     let port: u16 = tn.repl.get_name("server_addr").await?;
-    tn.repl.print_until_settled().await?;
     let dest = format!("127.0.0.1:{port}").parse()?;
     let mut conn = dht.peer_handshake(pub_key.into(), dest)?.await?;
     conn.send(b"from rust".into()).await?;
@@ -203,7 +203,7 @@ outputJson([...pub_key]);
 }
 
 #[tokio::test]
-async fn adht_connect() -> Result<()> {
+async fn test_dht_connect() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
@@ -245,5 +245,34 @@ outputJson([...pub_key]);
         todo!()
     };
     assert_eq!(String::from_utf8_lossy(&rx_from_js), "from js");
+    Ok(())
+}
+
+/// Test Rust's unannounce. The steps:
+/// rs does announce
+/// js does lookup, check topic is found with correct pk
+/// rs does unannounce
+/// js does a lookup, check no results found
+#[tokio::test]
+async fn tttttest_rs_unannounce() -> Result<()> {
+    let (mut tn, mut dht) = adht_setup!();
+    let topic = tn.make_topic("hello").await?;
+    let keypair = Keypair::default();
+    log();
+    // announce our rust node with `topic` and `keypair`
+    dht.announce(topic.into(), keypair.clone(), vec![]).await?;
+
+    // with js do a lookup and get pubkeys
+    let found_pk_js = tn.get_pub_keys_for_lookup().await?;
+    // get result for js and show it matches the RS keypair above
+    assert_eq!(keypair.public.as_slice(), found_pk_js[0]);
+
+    // Do the unannounce
+    dht.unannounce(topic.into(), keypair).await?;
+
+    // Do a lookup for a the topic again
+    let found_pk_js = tn.get_pub_keys_for_lookup().await?;
+    // assert no keys found for the topic
+    assert_eq!(found_pk_js.len(), 0);
     Ok(())
 }

@@ -2,7 +2,10 @@ use std::{
     future::Future,
     net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc,
+    },
     task::{Context, Poll},
 };
 
@@ -13,9 +16,9 @@ use dht_rpc::{
     io::{InResponse, OutRequestBuilder},
     AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
 };
-use futures::{future::join_all, Stream, StreamExt};
+use futures::{future::join_all, stream::FuturesUnordered, Stream, StreamExt};
 use hypercore_protocol::sstream::sm2::Machine;
-use tracing::instrument;
+use tracing::{error, instrument, trace};
 
 use crate::{
     cenc::{
@@ -23,7 +26,7 @@ use crate::{
     },
     commands,
     crypto::PublicKey,
-    decode_peer_handshake_response,
+    decode_peer_handshake_response, namespace,
     next_router::{connection::Connection, StreamIdMaker},
     queries::QueryResult,
     request_announce_or_unannounce_value, Error, Keypair, Result, DEFAULT_BOOTSTRAP,
@@ -96,6 +99,19 @@ impl Dht {
         .await?;
         join_all(pending_commits).await;
         Ok(())
+    }
+    pub fn unannounce(&mut self, target: IdBytes, key_pair: Keypair) -> Unannounce {
+        let query = self
+            .rpc
+            .query_next(commands::LOOKUP, target, None, Commit::No);
+        Unannounce {
+            rpc: self.rpc.clone(),
+            query,
+            target,
+            key_pair: key_pair.clone(),
+            done: false.into(),
+            pending_requests: Default::default(),
+        }
     }
 
     pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
@@ -375,5 +391,75 @@ impl Future for Announce {
             Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+pub struct Unannounce {
+    rpc: AsyncRpcDht,
+    query: QueryNext,
+    target: IdBytes,
+    key_pair: Keypair,
+    pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
+    done: AtomicBool,
+}
+
+impl Future for Unannounce {
+    type Output = Result<()>;
+
+    // Send a request for each response, push into FuturesUnordered.
+    // poll FuturesUnordered for each poll call.
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if !&self.done.load(Relaxed) {
+            match Pin::new(&mut self.query).poll_next(cx) {
+                Poll::Ready(Some(resp)) => {
+                    let (Some(token), Some(id), commands::LOOKUP) =
+                        (&resp.response.token, &resp.valid_peer_id(), resp.cmd())
+                    else {
+                        todo!("Don't have good stuf!!!!");
+                    };
+                    let destination = Peer {
+                        addr: resp.peer.addr,
+                        id: Some(id.0),
+                        referrer: None,
+                    };
+                    // do the stuff happening in hswarm/hdht/src/queries/mod.Un
+                    let value = request_announce_or_unannounce_value(
+                        &self.key_pair,
+                        self.target,
+                        token,
+                        *id,
+                        &[],
+                        &namespace::UNANNOUNCE,
+                    );
+
+                    let o = OutRequestBuilder::new(destination, crate::commands::UNANNOUNCE)
+                        .target(self.target)
+                        .value(value)
+                        .token(*token);
+                    self.pending_requests.push(self.rpc.request_from_builder(o));
+                }
+                Poll::Ready(None) => {
+                    self.done.store(true, Relaxed);
+                }
+                Poll::Pending => {}
+            }
+        }
+        match Pin::new(&mut self.pending_requests).poll_next(cx) {
+            Poll::Ready(Some(Ok(res))) => {
+                trace!(
+                    tid = res.request.tid,
+                    "Unannouncen_tx commit request completed"
+                );
+                cx.waker().wake_by_ref();
+            }
+            Poll::Ready(Some(Err(e))) => error!(error =? e, "Unannounce commit request error"),
+            Poll::Ready(None) => {
+                if self.done.load(Relaxed) {
+                    return Poll::Ready(Ok(()));
+                }
+            }
+            Poll::Pending => {}
+        }
+        Poll::Pending
     }
 }
