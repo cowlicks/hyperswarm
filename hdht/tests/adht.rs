@@ -131,7 +131,7 @@ outputJson([...pub_key]);
 // rs does find_peer for the pub_key
 // assert pub_key is matching
 #[tokio::test]
-async fn dht_find_peer() -> Result<()> {
+async fn js_server_listen_rs_find_peer() -> Result<()> {
     log();
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
