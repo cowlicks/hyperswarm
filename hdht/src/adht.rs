@@ -436,7 +436,9 @@ impl Future for Unannounce {
                         .target(self.target)
                         .value(value)
                         .token(*token);
-                    self.pending_requests.push(self.rpc.request_from_builder(o));
+                    let req = self.rpc.request_from_builder(o);
+                    trace!(tid = req.tid(), "TX unannounce commit");
+                    self.pending_requests.push(req);
                 }
                 Poll::Ready(None) => {
                     self.done.store(true, Relaxed);
@@ -446,10 +448,7 @@ impl Future for Unannounce {
         }
         match Pin::new(&mut self.pending_requests).poll_next(cx) {
             Poll::Ready(Some(Ok(res))) => {
-                trace!(
-                    tid = res.request.tid,
-                    "Unannouncen_tx commit request completed"
-                );
+                trace!(tid = res.request.tid, "RX unannounce commit");
                 cx.waker().wake_by_ref();
             }
             Poll::Ready(Some(Err(e))) => error!(error =? e, "Unannounce commit request error"),

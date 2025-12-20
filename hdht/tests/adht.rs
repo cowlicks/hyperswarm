@@ -81,12 +81,14 @@ async fn rs_announces_js_looksup() -> Result<()> {
     Ok(())
 }
 
+/// js server (it announces for hash of it's key pair)
+/// rs does lookup(hash(keypair))
 #[tokio::test]
 async fn dht_lookup() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
-    let pub_key: Vec<u8> = tn
+    let pub_key: [u8; 32] = tn
         .repl
-        .run_tcp(
+        .json_run_tcp(
             "
 server_addr = deferred();
 
@@ -103,16 +105,31 @@ outputJson([...pub_key]);
 ",
         )
         .await?;
-    let target = IdBytes(generic_hash(&pub_key));
 
+    let target = IdBytes(generic_hash(&pub_key));
     let mut lery = dht.lookup(target, Commit::No)?;
+
+    let mut some = false;
     while let Some(x) = lery.next().await {
-        println!("{x:?}");
+        if let Ok(Some(resp)) = &x {
+            assert_eq!(
+                resp.peers
+                    .first()
+                    .expect("Should have a peer. not sure why")
+                    .public_key,
+                pub_key.into()
+            );
+            some = true;
+        }
     }
+    assert!(some);
     let _res = lery.await?;
     Ok(())
 }
 
+// js server listens on certain pub key
+// rs does find_peer for the pub_key
+// assert pub_key is matching
 #[tokio::test]
 async fn dht_find_peer() -> Result<()> {
     log();
@@ -147,12 +164,16 @@ outputJson([...pub_key]);
     dht.boostrap().await?;
     let mut q = dht.find_peer(pub_key.into())?;
     while let Some(e) = q.next().await {
-        // TODO check results against something
-        dbg!(&e);
+        if let Ok(Some(resp)) = e {
+            assert_eq!(resp.peer.public_key, pub_key.into());
+        }
     }
     Ok(())
 }
 
+/// js create a hyperdht server
+/// rs use dht.peer_handshake to connect directly to js server by it's address
+/// check data goes both ways
 #[tokio::test]
 async fn dht_peer_handshake() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
@@ -202,6 +223,9 @@ outputJson([...pub_key]);
     Ok(())
 }
 
+/// js create hyperdht server
+/// rs dht.connect() to js server pub key
+/// send data both ways and check
 #[tokio::test]
 async fn test_dht_connect() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
@@ -254,7 +278,7 @@ outputJson([...pub_key]);
 /// rs does unannounce
 /// js does a lookup, check no results found
 #[tokio::test]
-async fn tttttest_rs_unannounce() -> Result<()> {
+async fn rs_unannounce() -> Result<()> {
     let (mut tn, mut dht) = adht_setup!();
     let topic = tn.make_topic("hello").await?;
     let keypair = Keypair::default();
@@ -273,6 +297,6 @@ async fn tttttest_rs_unannounce() -> Result<()> {
     // Do a lookup for a the topic again
     let found_pk_js = tn.get_pub_keys_for_lookup().await?;
     // assert no keys found for the topic
-    assert_eq!(found_pk_js.len(), 0);
+    assert!(found_pk_js.is_empty());
     Ok(())
 }
