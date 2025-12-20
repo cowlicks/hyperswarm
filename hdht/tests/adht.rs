@@ -300,3 +300,13 @@ async fn rs_unannounce() -> Result<()> {
     assert!(found_pk_js.is_empty());
     Ok(())
 }
+
+/// js do service listen
+/// rs do find_peer
+/// choose a peer that isn't server that can relay
+/// do handshake to that peer
+#[ignore]
+#[tokio::test]
+async fn relay_test() -> Result<()> {
+    todo!()
+}
