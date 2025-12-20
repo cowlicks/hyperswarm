@@ -409,28 +409,6 @@ impl AsyncRpcDht {
         .await
     }
 
-    pub fn query_stream(
-        &self,
-        command: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> Result<QueryResponseStream> {
-        const QUERY_STREAM_CHANNEL_SIZE: usize = 1024;
-        let (tx, rx) = mpsc::channel(QUERY_STREAM_CHANNEL_SIZE);
-
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let qid = inner.query(command, target, value, commit);
-            inner.store_qid_stream_sender(qid, tx);
-        };
-
-        Ok(QueryResponseStream {
-            inner: self.inner.clone(),
-            rx,
-        })
-    }
-
     pub fn query_next(
         &self,
         command: Command,
@@ -486,23 +464,6 @@ impl Future for QueryNext {
         Pin::new(&mut self.result_rx)
             .poll(cx)
             .map_err(Error::RecvError)
-    }
-}
-
-pub struct QueryResponseStream {
-    inner: Arc<Mutex<RpcDht>>,
-    rx: mpsc::Receiver<Arc<InResponse>>,
-}
-
-impl Stream for QueryResponseStream {
-    type Item = Arc<InResponse>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
-        }
-        Pin::new(&mut self.rx).poll_next(cx)
     }
 }
 

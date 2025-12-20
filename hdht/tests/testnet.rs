@@ -1,47 +1,14 @@
 mod common;
 use compact_encoding::CompactEncoding;
-use std::{net::SocketAddr, time::Duration};
 
 use common::Result;
-use dht_rpc::{commit::Commit, DhtConfig};
-use futures::{SinkExt, StreamExt};
-use hypercore_protocol::{handshake_constants::DHT_PATTERN, sstream::sm2::Event, HandshakeConfig};
+use hypercore_protocol::{handshake_constants::DHT_PATTERN, HandshakeConfig};
 use hyperdht::{
     cenc::{NoisePayload, UdxInfo},
     namespace::PEER_HANDSHAKE,
-    HyperDhtEvent, HyperDhtInner, Keypair,
 };
-use rusty_nodejs_repl::wait;
 
-use crate::common::{log, setup::Testnet};
-
-#[allow(unused)]
-fn show_bytes<T: AsRef<[u8]>>(x: T) {
-    println!("{}", String::from_utf8(x.as_ref().to_vec()).unwrap())
-}
-
-macro_rules! poll_until {
-    ($hdht:tt, $variant:path) => {{
-        let res = loop {
-            match $hdht.next().await {
-                Some($variant(x)) => break x,
-                _other => {
-                    //tracing::info!("{other:?}");
-                }
-            }
-        };
-        res
-    }};
-}
-macro_rules! setup_rs_node_and_js_testnet {
-    () => {{
-        let mut tn = Testnet::new().await?;
-        let bs_addr = tn.get_node_i_address(1).await?;
-        let hdht =
-            HyperDhtInner::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-        (tn, hdht)
-    }};
-}
+use crate::common::setup::Testnet;
 
 /// this was just checking internals of noise come out the way we would expect
 /// could probably be removed
