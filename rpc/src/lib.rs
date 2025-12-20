@@ -548,7 +548,6 @@ impl Future for BootstrapFuture {
 #[derive(Debug)]
 pub struct RpcDhtRequestFuture {
     inner: Arc<Mutex<RpcDht>>,
-    #[expect(unused, reason = "may need in future")]
     tid: Tid,
     rx: Receiver<Arc<InResponse>>,
     started_at: Instant,
@@ -565,12 +564,18 @@ impl Future for RpcDhtRequestFuture {
         }
 
         match Pin::new(&mut self.rx).poll(cx) {
-            Poll::Ready(Ok(response)) => Poll::Ready(Ok(response)),
+            Poll::Ready(Ok(response)) => {
+                cx.waker().wake_by_ref();
+                Poll::Ready(Ok(response))
+            }
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::RecvError(e))),
             Poll::Pending => {
                 if Instant::now().duration_since(self.started_at) > self.timeout {
+                    error!(tid = self.tid, "request timed out");
                     Poll::Ready(Err(Error::Timeout(self.timeout)))
                 } else {
+                    // TODO this should be removed
+                    cx.waker().wake_by_ref();
                     Poll::Pending
                 }
             }
@@ -587,6 +592,9 @@ impl RpcDhtRequestFuture {
             started_at: Instant::now(),
             timeout: DEFAULT_REQUEST_TIMEOUT,
         }
+    }
+    pub fn tid(&self) -> Tid {
+        self.tid
     }
 }
 
