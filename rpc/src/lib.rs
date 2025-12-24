@@ -535,7 +535,8 @@ impl Future for RpcDhtRequestFuture {
                     error!(tid = self.tid, "request timed out");
                     Poll::Ready(Err(Error::Timeout(self.timeout)))
                 } else {
-                    // TODO this should be removed
+                    // TODO basically a busy loop. Figure out how to wake at the right time when
+                    // timeout expiers, then remove this.
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }

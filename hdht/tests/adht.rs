@@ -305,10 +305,10 @@ async fn rs_unannounce() -> Result<()> {
 /// rs does announce
 /// js does lookup, check topic is found with correct pk
 /// rs does announce_clear with new pk
-/// js does a lookup for topic and finds it
+/// js does a lookup for topic and finds new pk
 #[tokio::test]
 async fn rs_announce_clear() -> Result<()> {
-    let (mut tn, mut dht) = adht_setup!();
+    let (mut tn, dht) = adht_setup!();
     let topic = tn.make_topic("hello").await?;
     let keypair = Keypair::default();
     log();
@@ -325,7 +325,7 @@ async fn rs_announce_clear() -> Result<()> {
     dht.announce_clear(topic.into(), keypair2.clone(), vec![])
         .await?;
 
-    // Do announce_clear with new keypair for a the topic again
+    // Do announce_clear with new keypair for the same topic
     let found_pk_js = tn.get_pub_keys_for_lookup().await?;
     let matched = found_pk_js.iter().any(|k| keypair2.public.as_slice() == k);
     assert!(matched);

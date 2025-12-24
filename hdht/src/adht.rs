@@ -79,7 +79,7 @@ impl Dht {
         })
     }
 
-    // TODO  return something more useful, maybe indicate if commits failed
+    // TODO  return something more useful, maybe indicate if commits failed, etc
     pub async fn announce(
         &self,
         target: IdBytes,
@@ -443,7 +443,6 @@ impl Future for Unannounce {
                         id: Some(id.0),
                         referrer: None,
                     };
-                    // do the stuff happening in hswarm/hdht/src/queries/mod.Un
                     let value = request_announce_or_unannounce_value(
                         &self.key_pair,
                         self.target,
@@ -512,7 +511,6 @@ impl AnnounceClear {
                     id: Some(id.0),
                     referrer: None,
                 };
-                // do the stuff happening in hswarm/hdht/src/queries/mod.Un
                 let value = request_announce_or_unannounce_value(
                     &self.key_pair,
                     self.target,
