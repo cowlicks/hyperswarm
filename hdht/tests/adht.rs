@@ -301,6 +301,37 @@ async fn rs_unannounce() -> Result<()> {
     Ok(())
 }
 
+/// Test Rust's unannounce. The steps:
+/// rs does announce
+/// js does lookup, check topic is found with correct pk
+/// rs does announce_clear with new pk
+/// js does a lookup for topic and finds it
+#[tokio::test]
+async fn rs_announce_clear() -> Result<()> {
+    let (mut tn, mut dht) = adht_setup!();
+    let topic = tn.make_topic("hello").await?;
+    let keypair = Keypair::default();
+    log();
+    // announce our rust node with `topic` and `keypair`
+    dht.announce(topic.into(), keypair.clone(), vec![]).await?;
+
+    // with js do a lookup and get pubkeys
+    let found_pk_js = tn.get_pub_keys_for_lookup().await?;
+    // get result for js and show it matches the RS keypair above
+    assert_eq!(keypair.public.as_slice(), found_pk_js[0]);
+
+    let keypair2 = Keypair::default();
+    // Do the unannounce
+    dht.announce_clear(topic.into(), keypair2.clone(), vec![])
+        .await?;
+
+    // Do announce_clear with new keypair for a the topic again
+    let found_pk_js = tn.get_pub_keys_for_lookup().await?;
+    let matched = found_pk_js.iter().any(|k| keypair2.public.as_slice() == k);
+    assert!(matched);
+    Ok(())
+}
+
 /// js do service listen
 /// rs do find_peer
 /// choose a peer that isn't server that can relay

@@ -484,7 +484,7 @@ impl Future for Unannounce {
     }
 }
 
-struct AnnounceClear {
+pub struct AnnounceClear {
     rpc: AsyncRpcDht,
     query: QueryNext,
     target: IdBytes,
