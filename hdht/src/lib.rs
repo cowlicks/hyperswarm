@@ -28,9 +28,8 @@ use dht_rpc::{
     commit::{Commit, CommitMessage, CommitRequestParams, Progress},
     io::{InResponse, MessageSender, OutRequestBuilder},
     query::{CommandQuery, Query, QueryId, QueryResult as RpcQueryResult},
-    Bootstrapped, Command, DhtConfig, IdBytes, Peer, PeerId, QueryResponseStream,
-    RequestFutureError, RequestMsgData, RequestOk, ResponseOk, RpcDht, RpcDhtBuilderError,
-    RpcDhtEvent, Tid,
+    Bootstrapped, Command, DhtConfig, IdBytes, Peer, PeerId, RequestFutureError, RequestMsgData,
+    RequestOk, ResponseOk, RpcDht, RpcDhtBuilderError, RpcDhtEvent, Tid,
 };
 use futures::{
     channel::mpsc::{self},
@@ -336,19 +335,6 @@ impl HyperDhtInner {
             QueryStreamType::FindPeer(FindPeerInner::new(query_id, target)),
         );
         query_id
-    }
-
-    pub fn find_peer_stream(&mut self, pub_key: PublicKey) -> QueryResponseStream {
-        let _target = IdBytes(generic_hash(&*pub_key));
-
-        //self.rpc
-        //.query_stream(commands::FIND_PEER, target, None, Commit::No)
-        todo!()
-    }
-
-    /// Store a channel sender for a find_peer query result
-    fn store_find_peer_sender(&mut self, query_id: QueryId, tx: oneshot::Sender<Arc<QueryResult>>) {
-        self.pending_find_peers.insert(query_id, tx);
     }
 
     /// Initiates an iterative query to the closest peers to lookup the topic.
@@ -711,10 +697,6 @@ impl Stream for HyperDhtInner {
     }
 }
 
-pub struct HyperDht {
-    pub inner: Arc<Mutex<HyperDhtInner>>,
-}
-
 /// Future that resolves when a QueryResult is received for the find_peer query
 pub struct FindPeerFuture {
     inner: Arc<Mutex<HyperDhtInner>>,
@@ -730,75 +712,6 @@ impl Future for FindPeerFuture {
             let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
         }
         Pin::new(&mut self.rx).poll(cx).map_err(Error::RecvError)
-    }
-}
-
-impl HyperDht {
-    pub async fn with_config(config: DhtConfig) -> Result<Self> {
-        let inner = HyperDhtInner::with_config(config).await?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(inner)),
-        })
-    }
-    /// Initiate a find_peer query for the given public key.
-    ///
-    /// Returns a future that resolves with the first FindPeerResponse received,
-    /// or an error if the query fails.
-    pub fn find_peer(&self, pub_key: PublicKey) -> FindPeerFuture {
-        let (tx, rx) = oneshot::channel();
-
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let query_id = inner.find_peer(pub_key);
-            inner.store_find_peer_sender(query_id, tx);
-        }
-
-        FindPeerFuture {
-            inner: self.inner.clone(),
-            rx,
-        }
-    }
-    pub async fn peer_handshake(
-        &self,
-        remote_public_key: PublicKey,
-        remote_addr: SocketAddrV4,
-    ) -> Result<Connection> {
-        let (tx, rx) = oneshot::channel::<Result<Connection>>();
-
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let tid = inner.request_peer_handshake(remote_public_key, remote_addr)?;
-            trace!("hdht.pending_msg.insert(tid={tid}");
-            inner
-                .pending_msg
-                .insert(tid, Box::new(tx) as Box<dyn Any + Send>);
-        }
-
-        PeerHandshakeFut {
-            inner: self.inner.clone(),
-            rx,
-        }
-        .await
-    }
-}
-
-struct PeerHandshakeFut {
-    inner: Arc<Mutex<HyperDhtInner>>,
-    rx: oneshot::Receiver<Result<Connection>>,
-}
-
-impl Future for PeerHandshakeFut {
-    type Output = Result<Connection>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
-        }
-        Pin::new(&mut self.rx)
-            .poll(cx)
-            .map_err(Error::RecvError)
-            .map(|x| x.flatten())
     }
 }
 
