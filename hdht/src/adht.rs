@@ -177,6 +177,27 @@ impl Dht {
             connection,
         })
     }
+
+    pub fn announce_clear(
+        &self,
+        target: IdBytes,
+        key_pair: Keypair,
+        relay_addresses: Vec<SocketAddr>,
+    ) -> AnnounceClear {
+        let query = self
+            .rpc
+            .query_next(commands::LOOKUP, target, None, Commit::No);
+        AnnounceClear {
+            rpc: self.rpc.clone(),
+            query,
+            target,
+            key_pair,
+            pending_requests: Default::default(),
+            relay_addresses,
+            query_done: false.into(),
+            commits_done: false.into(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -460,5 +481,131 @@ impl Future for Unannounce {
             Poll::Pending => {}
         }
         Poll::Pending
+    }
+}
+
+struct AnnounceClear {
+    rpc: AsyncRpcDht,
+    query: QueryNext,
+    target: IdBytes,
+    key_pair: Keypair,
+    pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
+    relay_addresses: Vec<SocketAddr>,
+    query_done: AtomicBool,
+    commits_done: AtomicBool,
+}
+
+impl AnnounceClear {
+    fn do_query(&mut self, cx: &mut Context<'_>) -> Option<Poll<Result<()>>> {
+        if self.query_done.load(Relaxed) {
+            return None;
+        }
+        match Pin::new(&mut self.query).poll_next(cx) {
+            Poll::Ready(Some(resp)) => {
+                let (Some(token), Some(id), commands::LOOKUP) =
+                    (&resp.response.token, &resp.valid_peer_id(), resp.cmd())
+                else {
+                    todo!("Don't have good stuf!!!!");
+                };
+                let destination = Peer {
+                    addr: resp.peer.addr,
+                    id: Some(id.0),
+                    referrer: None,
+                };
+                // do the stuff happening in hswarm/hdht/src/queries/mod.Un
+                let value = request_announce_or_unannounce_value(
+                    &self.key_pair,
+                    self.target,
+                    token,
+                    *id,
+                    &[],
+                    &namespace::UNANNOUNCE,
+                );
+
+                let o = OutRequestBuilder::new(destination, crate::commands::UNANNOUNCE)
+                    .target(self.target)
+                    .value(value)
+                    .token(*token);
+                let req = self.rpc.request_from_builder(o);
+                trace!(tid = req.tid(), "TX unannounce commit");
+                self.pending_requests.push(req);
+            }
+            Poll::Ready(None) => {
+                self.query_done.store(true, Relaxed);
+            }
+            Poll::Pending => {}
+        }
+        Some(Poll::Pending)
+    }
+    fn do_commit(&mut self, cx: &mut Context<'_>) -> Option<Poll<Result<()>>> {
+        if self.commits_done.load(Relaxed) {
+            return None;
+        }
+        match Pin::new(&mut self.query).poll(cx) {
+            Poll::Ready(Ok(query_result)) => {
+                for reply in query_result.closest_replies.iter() {
+                    let Some(token) = reply.response.token else {
+                        todo!("could not get token");
+                    };
+                    let value = request_announce_or_unannounce_value(
+                        &self.key_pair,
+                        self.target,
+                        &token,
+                        reply.request.to.id.expect("request.to.id TODO").into(),
+                        &self.relay_addresses,
+                        &crate::crypto::namespace::ANNOUNCE,
+                    );
+                    let from_peer = Peer {
+                        id: reply.request.to.id,
+                        addr: reply.request.to.addr,
+                        referrer: None,
+                    };
+                    let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
+                        .target(self.target)
+                        .value(value)
+                        .token(token);
+                    self.pending_requests.push(self.rpc.request_from_builder(o));
+                }
+                self.commits_done.store(true, Relaxed);
+            }
+            Poll::Ready(Err(e)) => return Some(Poll::Ready(Err(e.into()))),
+            Poll::Pending => return Some(Poll::Pending),
+        }
+        None
+    }
+
+    fn poll_pending_requests(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        match Pin::new(&mut self.pending_requests).poll_next(cx) {
+            Poll::Ready(Some(Ok(res))) => {
+                trace!(tid = res.request.tid, "RX AnnounceClear commit");
+                cx.waker().wake_by_ref();
+            }
+            Poll::Ready(Some(Err(e))) => {
+                error!(error =? e, "AnnounceClear commit request error")
+            }
+            Poll::Ready(None) => {
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending => {}
+        }
+        Poll::Pending
+    }
+}
+
+impl Future for AnnounceClear {
+    type Output = Result<()>;
+
+    // Send a request for each response, push into FuturesUnordered.
+    // poll FuturesUnordered for each poll call.
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Some(x) = self.do_query(cx) {
+            _ = self.poll_pending_requests(cx);
+            return x;
+        }
+        if let Some(x) = self.do_commit(cx) {
+            _ = self.poll_pending_requests(cx);
+            return x;
+        }
+        self.poll_pending_requests(cx)
     }
 }
