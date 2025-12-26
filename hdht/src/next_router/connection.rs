@@ -8,10 +8,7 @@ use std::{
 
 use async_compat::Compat;
 use futures::{Sink, Stream};
-use hypercore_protocol::{
-    sstream::sm2::{Event, Machine, MachineIo},
-    Uint24LELengthPrefixedFraming,
-};
+use hypercore_protocol::{CipherEvent, Machine, MachineIo, Uint24LELengthPrefixedFraming};
 use udx::{HalfOpenStreamHandle, UdxStream};
 
 use crate::{cenc::NoisePayload, Error};
@@ -52,7 +49,7 @@ impl ConnectionInner {
             step: ConnStep::Start(half_stream),
         }
     }
-    pub fn receive_next(&mut self, noise: Vec<u8>) -> Result<Event, Error> {
+    pub fn receive_next(&mut self, noise: Vec<u8>) -> Result<CipherEvent, Error> {
         self.handshake.receive_next(noise);
         Ok(self
             .handshake
@@ -91,7 +88,7 @@ impl ConnectionInner {
 }
 
 impl Stream for ConnectionInner {
-    type Item = Event;
+    type Item = CipherEvent;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.handshake).poll_next(cx)
     }
@@ -141,7 +138,7 @@ impl Connection {
             })),
         }
     }
-    pub fn receive_next(&self, noise: Vec<u8>) -> Result<Event, Error> {
+    pub fn receive_next(&self, noise: Vec<u8>) -> Result<CipherEvent, Error> {
         w!(self).handshake.receive_next(noise);
         Ok(w!(self)
             .handshake
@@ -169,7 +166,7 @@ impl Connection {
 }
 
 impl Stream for Connection {
-    type Item = Event;
+    type Item = CipherEvent;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.inner.write().unwrap().handshake).poll_next(cx)
     }

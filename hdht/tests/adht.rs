@@ -2,7 +2,7 @@ mod common;
 
 use dht_rpc::{cenc::generic_hash, commit::Commit, DhtConfig, IdBytes};
 use futures::{SinkExt, StreamExt};
-use hypercore_protocol::sstream::sm2::Event;
+use hypercore_protocol::CipherEvent;
 use hyperdht::{adht::Dht, Keypair};
 
 use common::{log, setup::Testnet, Result};
@@ -216,7 +216,7 @@ outputJson([...pub_key]);
     tn.repl
         .run_tcp("await SOCKET.write(Buffer.from('from js'))")
         .await?;
-    let Some(Event::Message(rx_from_js)) = conn.next().await else {
+    let Some(CipherEvent::Message(rx_from_js)) = conn.next().await else {
         todo!()
     };
     assert_eq!(String::from_utf8_lossy(&rx_from_js), "from js");
@@ -265,7 +265,7 @@ outputJson([...pub_key]);
     tn.repl
         .run_tcp("await SOCKET.write(Buffer.from('from js'))")
         .await?;
-    let Some(Event::Message(rx_from_js)) = conn.next().await else {
+    let Some(CipherEvent::Message(rx_from_js)) = conn.next().await else {
         todo!()
     };
     assert_eq!(String::from_utf8_lossy(&rx_from_js), "from js");

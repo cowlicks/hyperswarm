@@ -19,8 +19,8 @@ use futures::{Sink, Stream, StreamExt};
 use udx::{UdxSocket, UdxStream};
 
 use hypercore_protocol::{
-    sstream::sm2::{Event, Machine, MachineIo},
-    EncryptCipher, Handshake, HandshakeConfig, Uint24LELengthPrefixedFraming,
+    CipherEvent, EncryptCipher, Handshake, HandshakeConfig, Machine, MachineIo,
+    Uint24LELengthPrefixedFraming,
 };
 use rand::{rngs::StdRng, SeedableRng};
 use tracing::instrument;
@@ -81,9 +81,9 @@ impl Router {
         let mut conn = self.connections.remove(&resp.request.tid).unwrap();
         let res = conn.receive_next(ph.noise.clone())?;
         let msg: Vec<u8> = match res {
-            Event::HandshakePayload(payload) => payload,
-            Event::Message(items) => todo!(),
-            Event::ErrStuff(error) => todo!(),
+            CipherEvent::HandshakePayload(payload) => payload,
+            CipherEvent::Message(items) => todo!(),
+            CipherEvent::ErrStuff(error) => todo!(),
         };
         let (np, rest) = NoisePayload::decode(&msg)?;
         debug_assert!(rest.is_empty());
@@ -152,7 +152,7 @@ impl Router {
 #[cfg(test)]
 mod test {
     use super::*;
-    use hypercore_protocol::sstream::hc_specific::generate_keypair;
+    use hypercore_protocol::generate_keypair;
 
     #[tokio::test]
     #[ignore]
