@@ -10,7 +10,7 @@ use libsodium_sys::{
     crypto_sign_SEEDBYTES, crypto_sign_keypair, crypto_sign_seed_keypair,
 };
 
-use crate::{cenc::Announce, dht_proto::Mutable};
+use crate::{cenc::AnnounceRequestValue, dht_proto::Mutable};
 use ::dht_rpc::IdBytes;
 
 /// VALUE_MAX_SIZE + packet overhead (i.e. the key etc.)
@@ -256,7 +256,7 @@ pub fn sign_announce_or_unannounce(
     from_id: &[u8; 32],
     relay_addresses: &[SocketAddr],
     namespace: &[u8; 32],
-) -> Announce {
+) -> AnnounceRequestValue {
     use crate::cenc::Peer;
     let peer = Peer {
         public_key: keypair.public.clone(),
@@ -272,7 +272,7 @@ pub fn sign_announce_or_unannounce(
     let signable =
         make_signable_announce_or_unannounce(target, token, from_id, &encoded, namespace);
 
-    Announce {
+    AnnounceRequestValue {
         peer,
         refresh: None,
         signature: keypair.sign(&signable),

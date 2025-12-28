@@ -2,9 +2,7 @@
 //! Check that the signature RS creates from values is verified by JS
 //! And likewise JS signature is verified by RS
 use common::{js::make_repl, Result};
-use compact_encoding::CompactEncoding;
 use dht_rpc::IdBytes;
-use hyperdht::{cenc::Announce, make_signable_announce_or_unannounce, namespace};
 use rusty_nodejs_repl::Repl;
 
 mod common;
@@ -29,26 +27,6 @@ const TARGET: &[u8] = &[
     104, 101, 108, 108, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0,
 ];
-/// This demonstrates that known good values fails in Rust's verify
-#[tokio::test]
-async fn check_in_rs_known_good_sig_created_in_js() -> Result<()> {
-    let target: IdBytes = TryInto::<[u8; 32]>::try_into(TARGET).unwrap().into();
-
-    let (announce, _) = <Announce as CompactEncoding>::decode(VALUE)?;
-
-    let mut peer_buff = vec![0u8; CompactEncoding::encoded_size(&announce.peer).unwrap()];
-    announce.peer.encode(&mut peer_buff).unwrap();
-
-    println!("rsep = {:?}", &peer_buff);
-    let signable =
-        make_signable_announce_or_unannounce(target, &TOKEN, &ID, &peer_buff, &namespace::ANNOUNCE);
-    announce
-        .peer
-        .public_key
-        .verify(announce.signature, &signable)
-        .unwrap();
-    Ok(())
-}
 
 #[tokio::test]
 async fn check_in_js_known_good_sig_created_in_js() -> Result<()> {

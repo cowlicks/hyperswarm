@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
 };
 
+pub use cenc::AnnounceRequestValue;
 use cenc::{
     NoisePayloadBuilderError, PeerHandshakePayload, PeerHandshakePayloadBuilderError,
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
