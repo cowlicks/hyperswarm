@@ -57,6 +57,7 @@ impl Default for Router {
     }
 }
 
+#[expect(unused, reason = "will be used when we have multiple connections")]
 impl Router {
     #[instrument(skip_all, err)]
     pub fn inject_response(

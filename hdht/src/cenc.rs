@@ -235,6 +235,7 @@ impl CompactEncoding for PeerHandshakePayload {
     }
 }
 
+#[expect(unused, reason = "will be used when we do holepunching")]
 #[derive(Debug)]
 pub struct Holepunch {
     mode: HandshakeSteps,
@@ -498,6 +499,11 @@ macro_rules! else_zero {
     };
 }
 
+/// Values usued for firewall encoding
+#[expect(
+    unused,
+    reason = "all values are included for completeness. Not all are in use yet"
+)]
 pub mod firewall {
     pub const UNKNOWN: usize = 0;
     pub const OPEN: usize = 1;

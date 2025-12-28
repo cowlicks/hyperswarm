@@ -14,6 +14,7 @@ use dht_rpc::{
     cenc::generic_hash,
     commit::Commit,
     io::{InResponse, OutRequestBuilder},
+    query::QueryId,
     AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
 };
 use futures::{future::join_all, stream::FuturesUnordered, Stream, StreamExt};
@@ -28,9 +29,15 @@ use crate::{
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
     next_router::{connection::Connection, StreamIdMaker},
-    queries::QueryResult,
     request_announce_or_unannounce_value, Error, Keypair, Result, DEFAULT_BOOTSTRAP,
 };
+
+#[derive(Debug)]
+pub struct QueryResult {
+    pub topic: IdBytes,
+    pub responses: Vec<Arc<InResponse>>,
+    pub query_id: QueryId,
+}
 
 pub struct Dht {
     rpc: AsyncRpcDht,
