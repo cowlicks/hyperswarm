@@ -17,7 +17,7 @@ use dht_rpc::{
     AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
 };
 use futures::{future::join_all, stream::FuturesUnordered, Stream, StreamExt};
-use hypercore_protocol::Machine;
+use hypercore_handshake::Machine;
 use tracing::{error, instrument, trace};
 
 use crate::{
@@ -217,7 +217,7 @@ impl Future for PeerHandshake {
         };
 
         let phs = decode_peer_handshake_response(&resp)?;
-        let hypercore_protocol::CipherEvent::HandshakePayload(payload) =
+        let hypercore_handshake::CipherEvent::HandshakePayload(payload) =
             self.connection.receive_next(phs.noise.clone())?
         else {
             todo!()

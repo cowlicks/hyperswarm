@@ -2,7 +2,7 @@ mod common;
 
 use dht_rpc::{cenc::generic_hash, commit::Commit, DhtConfig, IdBytes};
 use futures::{SinkExt, StreamExt};
-use hypercore_protocol::CipherEvent;
+use hypercore_handshake::CipherEvent;
 use hyperdht::{adht::Dht, Keypair};
 
 use common::{log, setup::Testnet, Result};

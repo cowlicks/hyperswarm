@@ -8,8 +8,9 @@ use std::{
 
 use async_compat::Compat;
 use futures::{Sink, Stream};
-use hypercore_protocol::{CipherEvent, Machine, MachineIo, Uint24LELengthPrefixedFraming};
+use hypercore_handshake::{CipherEvent, Machine, MachineIo};
 use udx::HalfOpenStreamHandle;
+use uint24le_framing::Uint24LELengthPrefixedFraming;
 
 use crate::{cenc::NoisePayload, Error};
 

@@ -145,7 +145,7 @@ pub enum Error {
     #[error("Error building RelayThroughInfo: {0}")]
     RelayThroughInfoBuilder(#[from] RelayThroughInfoBuilderError),
     #[error("Hypercore Protocol Error: {0}")]
-    HypercoreProtocolError(#[from] hypercore_protocol::Error),
+    HypercoreProtocolError(#[from] hypercore_handshake::Error),
     // TODO make err  more useful here
     #[error("Peer handshake failed: {0}")]
     PeerHandshakeFailed(String),

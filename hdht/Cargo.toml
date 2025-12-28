@@ -33,11 +33,9 @@ features = ["rt", "net", "sync"]
 
 [dependencies.compact-encoding]
 version = "2.1.0"
-#path = "../../compact-encoding"
 
 [dependencies.udx]
 version = "0.1.0"
-#path = "../../async-udx/"
 
 [build-dependencies]
 prost-build = "0.6.1"
@@ -56,6 +54,7 @@ utils = { path  = "../../replicator/utils" }
 features = [ "serde" , "integration_utils"]
 version = "0.2.2"
 
-# TODO RMME
-[dependencies.hypercore-protocol]
-path = "../../protocol"
+[dependencies.hypercore_handshake]
+path = "../../handshake"
+[dependencies.uint24le_framing]
+path = "../../framing"

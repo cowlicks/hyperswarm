@@ -12,7 +12,7 @@ use compact_encoding::CompactEncoding;
 use dht_rpc::{io::InResponse, Tid};
 use udx::UdxSocket;
 
-use hypercore_protocol::{CipherEvent, Machine};
+use hypercore_handshake::{CipherEvent, Machine};
 use tracing::instrument;
 
 use crate::{
@@ -139,7 +139,7 @@ impl Router {
 #[cfg(test)]
 mod test {
     use super::*;
-    use hypercore_protocol::generate_keypair;
+    use hypercore_handshake::generate_keypair;
 
     #[tokio::test]
     #[ignore]
