@@ -93,7 +93,9 @@ outputJson([...pub_key]);
     let idbytes: [u8; 32] = idbytes.try_into().unwrap();
     let command = hyperdht::commands::FIND_PEER;
     log();
-    let x = rpc.query(command, idbytes.into(), None, Commit::No).await?;
+    let x = rpc
+        .query_next(command, idbytes.into(), None, Commit::No)
+        .await?;
     dbg!(&x);
     //assert_eq!(x.request.command, command);
     Ok(())

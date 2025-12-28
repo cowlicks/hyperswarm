@@ -385,30 +385,6 @@ impl AsyncRpcDht {
         .await
     }
 
-    pub async fn query(
-        &self,
-        command: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> Result<Arc<QueryResult>> {
-        let (tx, rx) = oneshot::channel();
-
-        let qid = {
-            let mut inner = self.inner.lock().unwrap();
-            let qid = inner.query(command, target, value, commit);
-            inner.store_qid_sender(qid, tx);
-            qid
-        };
-
-        RpcDhtQueryFuture {
-            inner: self.inner.clone(),
-            qid,
-            rx,
-        }
-        .await
-    }
-
     pub fn query_next(
         &self,
         command: Command,
@@ -476,20 +452,6 @@ macro_rules! future_poller {
         }
         Pin::new(&mut $self.rx).poll($cx).map_err(Error::RecvError)
     }};
-}
-
-pub struct RpcDhtQueryFuture {
-    inner: Arc<Mutex<RpcDht>>,
-    #[expect(unused, reason = "may need in future")]
-    qid: QueryId,
-    rx: Receiver<Arc<QueryResult>>,
-}
-impl Future for RpcDhtQueryFuture {
-    type Output = Result<Arc<QueryResult>>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        future_poller!(self, cx)
-    }
 }
 
 struct BootstrapFuture {
