@@ -9,12 +9,13 @@ use std::{
 use async_compat::Compat;
 use futures::{Sink, Stream};
 use hypercore_protocol::{CipherEvent, Machine, MachineIo, Uint24LELengthPrefixedFraming};
-use udx::{HalfOpenStreamHandle, UdxStream};
+use udx::HalfOpenStreamHandle;
 
 use crate::{cenc::NoisePayload, Error};
 
 #[derive(Debug)]
 pub struct ReadyData {
+    #[expect(unused, reason = "I think this will be used when we implement server")]
     noise_payload: NoisePayload,
 }
 

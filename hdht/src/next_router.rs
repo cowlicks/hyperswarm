@@ -1,38 +1,26 @@
-#![expect(unused)]
 pub mod connection;
 use std::{
-    any::Any,
     collections::BTreeMap,
     net::SocketAddrV4,
-    pin::Pin,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, RwLock,
+        Arc,
     },
-    task::{Context, Poll},
 };
 
-use async_compat::Compat;
 use compact_encoding::CompactEncoding;
 use dht_rpc::{io::InResponse, Tid};
-use futures::{Sink, Stream, StreamExt};
-use udx::{UdxSocket, UdxStream};
+use udx::UdxSocket;
 
-use hypercore_protocol::{
-    CipherEvent, EncryptCipher, Handshake, HandshakeConfig, Machine, MachineIo,
-    Uint24LELengthPrefixedFraming,
-};
-use rand::{rngs::StdRng, SeedableRng};
+use hypercore_protocol::{CipherEvent, Machine};
 use tracing::instrument;
 
 use crate::{
     cenc::{
-        firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayload,
-        PeerHandshakePayloadBuilder, UdxInfoBuilder,
+        firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder,
     },
-    namespace,
-    next_router::connection::{ConnStep, Connection, ConnectionInner, ReadyData},
-    Error, HyperDhtEvent, PeerHandshakeResponse,
+    next_router::connection::Connection,
+    Error, PeerHandshakeResponse,
 };
 
 // TODO: swap this with rng thing later. We increment now bc we're debugging stuff.
@@ -43,6 +31,7 @@ pub struct StreamIdMaker {
 }
 
 impl StreamIdMaker {
+    // TODO use RNG to pick id
     pub fn new() -> Self {
         Self {
             counter: AtomicU32::new(1u32),
@@ -55,7 +44,6 @@ impl StreamIdMaker {
 
 #[derive(Debug)]
 pub struct Router {
-    rng: StdRng,
     id_maker: StreamIdMaker,
     connections: BTreeMap<Tid, Connection>,
 }
@@ -63,7 +51,6 @@ pub struct Router {
 impl Default for Router {
     fn default() -> Self {
         Self {
-            rng: StdRng::from_entropy(),
             id_maker: StreamIdMaker::new(),
             connections: Default::default(),
         }
@@ -76,14 +63,14 @@ impl Router {
         &mut self,
         resp: &Arc<InResponse>,
         ph: Arc<PeerHandshakeResponse>,
-        socket: UdxSocket,
+        _socket: UdxSocket,
     ) -> crate::Result<Connection> {
-        let mut conn = self.connections.remove(&resp.request.tid).unwrap();
+        let conn = self.connections.remove(&resp.request.tid).unwrap();
         let res = conn.receive_next(ph.noise.clone())?;
         let msg: Vec<u8> = match res {
             CipherEvent::HandshakePayload(payload) => payload,
-            CipherEvent::Message(items) => todo!(),
-            CipherEvent::ErrStuff(error) => todo!(),
+            CipherEvent::Message(_items) => todo!(),
+            CipherEvent::ErrStuff(_error) => todo!(),
         };
         let (np, rest) = NoisePayload::decode(&msg)?;
         debug_assert!(rest.is_empty());
