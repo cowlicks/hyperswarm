@@ -4,13 +4,12 @@
 
 pub mod cenc;
 pub mod commit;
-pub mod constants;
+mod constants;
 mod futreqs;
 pub mod io;
 mod jobs;
-pub mod kbucket;
+mod kbucket;
 mod message;
-pub mod peers;
 pub mod query;
 mod stateobserver;
 mod stream;

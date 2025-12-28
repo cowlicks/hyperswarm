@@ -12,7 +12,6 @@ use compact_encoding::{
 use crate::{
     constants::{HASH_SIZE, ID_SIZE, REQUEST_ID, RESPONSE_ID},
     message::{MsgData, ReplyMsgData, RequestMsgData},
-    peers::PeersEncoding,
     Command, Error, ExternalCommand, IdBytes, InternalCommand, Peer, Result,
 };
 
@@ -389,17 +388,5 @@ impl CompactEncoding for MsgData {
             }
             _ => return Err(EncodingError::invalid_data(&format!("Could not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"))),
         })
-    }
-}
-
-impl PeersEncoding for &SocketAddr {
-    fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(6);
-        // TODO what to do with IPV6?
-        if let IpAddr::V4(ip) = self.ip() {
-            buf.extend_from_slice(&ip.octets()[..]);
-            buf.extend_from_slice(&self.port().to_be_bytes()[..]);
-        }
-        buf
     }
 }
