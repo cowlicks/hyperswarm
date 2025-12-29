@@ -24,7 +24,6 @@ libsodium-sys-stable = "1.21.2"
 derive_builder = "0.20.2"
 tracing = "0.1.41"
 const-hex = "1.14.0"
-pin-project = "1.1.9"
 async-compat = "0.2.1"
 
 [dependencies.tokio]
@@ -46,7 +45,6 @@ serde = "1.0.217"
 serde_json = "1.0.135"
 tempfile = "3.10.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-utils = { path  = "../../replicator/utils" }
 
 
 [dev-dependencies.rusty_nodejs_repl]
