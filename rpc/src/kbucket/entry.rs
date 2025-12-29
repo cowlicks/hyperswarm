@@ -84,6 +84,7 @@ pub enum Entry<'a, TVal> {
     /// The entry is absent and may be inserted.
     Absent(AbsentEntry<'a, TVal>),
     /// The entry represents the local node.
+    #[expect(clippy::enum_variant_names)]
     SelfEntry,
 }
 
