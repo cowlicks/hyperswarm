@@ -12,7 +12,7 @@ use compact_encoding::CompactEncoding;
 use dht_rpc::{io::InResponse, Tid};
 use udx::UdxSocket;
 
-use hypercore_handshake::{CipherEvent, Machine};
+use hypercore_handshake::{Cipher, CipherEvent};
 use tracing::instrument;
 
 use crate::{
@@ -108,7 +108,7 @@ impl Router {
         socket: UdxSocket,
     ) -> Result<Vec<u8>, Error> {
         let mut hs =
-            Machine::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
+            Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
         let udx_local_id = self.id_maker.new_id();
         let np = NoisePayloadBuilder::default()
             .firewall(firewall::OPEN)
@@ -134,27 +134,5 @@ impl Router {
         let conn = Connection::new(hs, udx_local_id, half_stream);
         self.connections.insert(tid, conn);
         Ok(peer_handshake_payload.into())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use hypercore_handshake::generate_keypair;
-
-    #[tokio::test]
-    #[ignore]
-    async fn qqstep_next_router() -> Result<(), Box<dyn std::error::Error>> {
-        let kp = generate_keypair()?;
-        let mut router = Router::default();
-        let tid = 1u16;
-        router.first_step(
-            tid,
-            kp.public.try_into().unwrap(),
-            None,
-            UdxSocket::bind("127.0.0.1:0")?,
-        )?;
-        //let remote_public_key
-        todo!()
     }
 }

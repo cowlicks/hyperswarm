@@ -8,7 +8,7 @@ use std::{
 
 use async_compat::Compat;
 use futures::{Sink, Stream};
-use hypercore_handshake::{CipherEvent, Machine, MachineIo};
+use hypercore_handshake::{Cipher, CipherEvent, CipherIo};
 use udx::HalfOpenStreamHandle;
 use uint24le_framing::Uint24LELengthPrefixedFraming;
 
@@ -38,13 +38,13 @@ pub enum ConnStep {
 
 #[derive(Debug)]
 pub struct ConnectionInner {
-    pub handshake: Machine,
+    pub handshake: Cipher,
     pub udx_local_id: u32,
     pub step: ConnStep,
 }
 
 impl ConnectionInner {
-    pub fn new(handshake: Machine, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
+    pub fn new(handshake: Cipher, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
         Self {
             handshake,
             udx_local_id,
@@ -64,7 +64,7 @@ impl ConnectionInner {
     pub fn udx_local_id(&self) -> u32 {
         self.udx_local_id
     }
-    pub fn handshake_set_io(&mut self, io: Box<dyn MachineIo<Error = std::io::Error>>) {
+    pub fn handshake_set_io(&mut self, io: Box<dyn CipherIo<Error = std::io::Error>>) {
         self.handshake.set_io(io)
     }
     pub fn set_step(&mut self, step: ConnStep) {
@@ -131,7 +131,7 @@ macro_rules! r {
 }
 
 impl Connection {
-    pub fn new(handshake: Machine, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
+    pub fn new(handshake: Cipher, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
         Self {
             inner: Arc::new(RwLock::new(ConnectionInner {
                 handshake,
@@ -156,7 +156,7 @@ impl Connection {
     pub fn udx_local_id(&self) -> u32 {
         r!(self).udx_local_id
     }
-    pub fn handshake_set_io(&self, io: Box<dyn MachineIo<Error = std::io::Error>>) {
+    pub fn handshake_set_io(&self, io: Box<dyn CipherIo<Error = std::io::Error>>) {
         w!(self).handshake.set_io(io)
     }
     pub fn set_step(&self, step: ConnStep) {

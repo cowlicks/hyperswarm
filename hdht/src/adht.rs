@@ -18,7 +18,7 @@ use dht_rpc::{
     AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
 };
 use futures::{future::join_all, stream::FuturesUnordered, Stream, StreamExt};
-use hypercore_handshake::Machine;
+use hypercore_handshake::Cipher;
 use tracing::{error, instrument, trace};
 
 use crate::{
@@ -150,7 +150,7 @@ impl Dht {
             todo!()
         };
         let mut hs =
-            Machine::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
+            Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
         let udx_local_id = self.id_maker.new_id();
         let np = NoisePayloadBuilder::default()
             .firewall(firewall::OPEN)
