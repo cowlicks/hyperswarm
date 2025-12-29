@@ -17,7 +17,7 @@ use cenc::{
 use compact_encoding::{CompactEncoding, EncodingError};
 use dht_rpc::{io::InResponse, IdBytes, RequestFutureError, RpcDhtBuilderError};
 use tokio::sync::oneshot::error::RecvError;
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::cenc::HandshakeSteps;
 
