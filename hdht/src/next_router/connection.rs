@@ -8,16 +8,15 @@ use std::{
 
 use async_compat::Compat;
 use futures::{Sink, Stream};
-use hypercore_protocol::{
-    sstream::sm2::{Event, Machine, MachineIo},
-    Uint24LELengthPrefixedFraming,
-};
-use udx::{HalfOpenStreamHandle, UdxStream};
+use hypercore_handshake::{Cipher, CipherEvent, CipherIo};
+use udx::HalfOpenStreamHandle;
+use uint24le_framing::Uint24LELengthPrefixedFraming;
 
 use crate::{cenc::NoisePayload, Error};
 
 #[derive(Debug)]
 pub struct ReadyData {
+    #[expect(unused, reason = "I think this will be used when we implement server")]
     noise_payload: NoisePayload,
 }
 
@@ -39,20 +38,20 @@ pub enum ConnStep {
 
 #[derive(Debug)]
 pub struct ConnectionInner {
-    pub handshake: Machine,
+    pub handshake: Cipher,
     pub udx_local_id: u32,
     pub step: ConnStep,
 }
 
 impl ConnectionInner {
-    pub fn new(handshake: Machine, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
+    pub fn new(handshake: Cipher, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
         Self {
             handshake,
             udx_local_id,
             step: ConnStep::Start(half_stream),
         }
     }
-    pub fn receive_next(&mut self, noise: Vec<u8>) -> Result<Event, Error> {
+    pub fn receive_next(&mut self, noise: Vec<u8>) -> Result<CipherEvent, Error> {
         self.handshake.receive_next(noise);
         Ok(self
             .handshake
@@ -65,7 +64,7 @@ impl ConnectionInner {
     pub fn udx_local_id(&self) -> u32 {
         self.udx_local_id
     }
-    pub fn handshake_set_io(&mut self, io: Box<dyn MachineIo<Error = std::io::Error>>) {
+    pub fn handshake_set_io(&mut self, io: Box<dyn CipherIo<Error = std::io::Error>>) {
         self.handshake.set_io(io)
     }
     pub fn set_step(&mut self, step: ConnStep) {
@@ -91,7 +90,7 @@ impl ConnectionInner {
 }
 
 impl Stream for ConnectionInner {
-    type Item = Event;
+    type Item = CipherEvent;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.handshake).poll_next(cx)
     }
@@ -132,7 +131,7 @@ macro_rules! r {
 }
 
 impl Connection {
-    pub fn new(handshake: Machine, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
+    pub fn new(handshake: Cipher, udx_local_id: u32, half_stream: HalfOpenStreamHandle) -> Self {
         Self {
             inner: Arc::new(RwLock::new(ConnectionInner {
                 handshake,
@@ -141,7 +140,7 @@ impl Connection {
             })),
         }
     }
-    pub fn receive_next(&self, noise: Vec<u8>) -> Result<Event, Error> {
+    pub fn receive_next(&self, noise: Vec<u8>) -> Result<CipherEvent, Error> {
         w!(self).handshake.receive_next(noise);
         Ok(w!(self)
             .handshake
@@ -157,7 +156,7 @@ impl Connection {
     pub fn udx_local_id(&self) -> u32 {
         r!(self).udx_local_id
     }
-    pub fn handshake_set_io(&self, io: Box<dyn MachineIo<Error = std::io::Error>>) {
+    pub fn handshake_set_io(&self, io: Box<dyn CipherIo<Error = std::io::Error>>) {
         w!(self).handshake.set_io(io)
     }
     pub fn set_step(&self, step: ConnStep) {
@@ -169,7 +168,7 @@ impl Connection {
 }
 
 impl Stream for Connection {
-    type Item = Event;
+    type Item = CipherEvent;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.inner.write().unwrap().handshake).poll_next(cx)
     }

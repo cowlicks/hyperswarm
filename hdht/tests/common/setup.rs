@@ -1,5 +1,5 @@
 #![allow(unused)]
-use std::net::SocketAddr;
+use std::{collections::BTreeSet, net::SocketAddr};
 
 use crate::common::js::make_repl;
 
@@ -73,6 +73,8 @@ outputJson(out)
 ",
             ))
             .await?;
-        Ok(found_pk_js)
+        // dedupe
+        let set: BTreeSet<Vec<u8>> = found_pk_js.into_iter().collect();
+        Ok(set.into_iter().collect())
     }
 }

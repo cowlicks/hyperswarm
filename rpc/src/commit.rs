@@ -52,13 +52,9 @@ pub enum Commit {
     Custom(Progress),
 }
 
-impl Default for Progress {
-    fn default() -> Self {
-        Self::BeforeStart
-    }
-}
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum Progress {
+    #[default]
     BeforeStart,
     /// Sending commit requests in progress. tids are added as they are sent, but also can be
     /// removed when responses are recieved

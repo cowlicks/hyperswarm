@@ -66,13 +66,13 @@ impl VecEncodable for Peer {
 
 #[derive(Debug)]
 /// Struct representing Announce OR Unannounce request value
-pub struct Announce {
+pub struct AnnounceRequestValue {
     pub peer: Peer,
     pub refresh: Option<[u8; 32]>,
     pub signature: Signature2,
 }
 
-impl CompactEncoding for Announce {
+impl CompactEncoding for AnnounceRequestValue {
     fn encoded_size(&self) -> Result<usize, EncodingError> {
         Ok(
             1 /* flags */ + self.peer.encoded_size()? + self.refresh.map(|_| 32).unwrap_or(0) + 64, /*signature*/
@@ -118,7 +118,7 @@ impl CompactEncoding for Announce {
             ));
         };
         Ok((
-            Announce {
+            AnnounceRequestValue {
                 peer,
                 refresh,
                 signature: Signature2(signature),
@@ -236,6 +236,7 @@ impl CompactEncoding for PeerHandshakePayload {
 }
 
 #[derive(Debug)]
+#[expect(unused, reason = "will be used when we implement holepunching")]
 pub struct Holepunch {
     mode: HandshakeSteps,
     id: usize,
@@ -498,6 +499,11 @@ macro_rules! else_zero {
     };
 }
 
+/// Values usued for firewall encoding
+#[expect(
+    unused,
+    reason = "all values are included for completeness. Not all are in use yet"
+)]
 pub mod firewall {
     pub const UNKNOWN: usize = 0;
     pub const OPEN: usize = 1;
@@ -657,8 +663,11 @@ impl CompactEncoding for NoisePayload {
 
 #[cfg(test)]
 mod test {
+    use crate::make_signable_announce_or_unannounce;
+
     use super::*;
     use compact_encoding::EncodingError;
+    use dht_rpc::IdBytes;
 
     #[test]
     fn socket_addr_enc_dec() -> Result<(), EncodingError> {
@@ -698,6 +707,53 @@ mod test {
         let (peer2, remaining_dec) = <Peer as CompactEncoding>::decode(&buf)?;
         assert_eq!(peer, peer2);
         assert!(remaining_dec.is_empty());
+        Ok(())
+    }
+    /// This demonstrates that known good values fails in Rust's verify
+    #[test]
+    fn check_in_rs_known_good_sig_created_in_js() -> Result<(), Box<dyn std::error::Error>> {
+        const VALUE: &[u8] = &[
+            5, 206, 205, 109, 15, 42, 98, 66, 107, 27, 31, 54, 201, 136, 155, 42, 245, 234, 210,
+            154, 31, 11, 151, 222, 135, 63, 208, 92, 4, 74, 24, 20, 109, 0, 49, 107, 254, 99, 36,
+            124, 108, 65, 174, 60, 38, 12, 182, 110, 6, 215, 255, 19, 177, 141, 34, 177, 44, 213,
+            226, 206, 148, 246, 168, 179, 176, 33, 117, 139, 191, 54, 19, 232, 12, 218, 55, 26,
+            107, 78, 178, 76, 252, 175, 89, 204, 117, 165, 89, 32, 234, 143, 60, 157, 40, 233, 236,
+            239, 41, 8,
+        ];
+        const TOKEN: [u8; 32] = [
+            36, 6, 6, 155, 30, 71, 106, 67, 42, 98, 245, 4, 186, 36, 240, 5, 122, 103, 150, 70,
+            158, 158, 55, 38, 154, 45, 194, 191, 37, 14, 50, 21,
+        ];
+        const ID: [u8; 32] = [
+            144, 142, 182, 97, 170, 104, 69, 6, 221, 242, 249, 208, 96, 76, 57, 128, 126, 140, 89,
+            26, 115, 131, 139, 110, 211, 183, 214, 39, 134, 156, 128, 165,
+        ];
+
+        const TARGET: &[u8] = &[
+            104, 101, 108, 108, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+        ];
+        use crate::namespace;
+        let target: IdBytes = TryInto::<[u8; 32]>::try_into(TARGET).unwrap().into();
+
+        let (announce, _) = <AnnounceRequestValue as CompactEncoding>::decode(VALUE)?;
+
+        let mut peer_buff = vec![0u8; CompactEncoding::encoded_size(&announce.peer).unwrap()];
+        announce.peer.encode(&mut peer_buff).unwrap();
+
+        println!("rsep = {:?}", &peer_buff);
+        let signable = make_signable_announce_or_unannounce(
+            target,
+            &TOKEN,
+            &ID,
+            &peer_buff,
+            &namespace::ANNOUNCE,
+        );
+        announce
+            .peer
+            .public_key
+            .verify(announce.signature, &signable)
+            .unwrap();
         Ok(())
     }
 }

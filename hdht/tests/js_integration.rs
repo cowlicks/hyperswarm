@@ -4,8 +4,8 @@ use std::net::SocketAddr;
 use compact_encoding::CompactEncoding;
 use dht_rpc::IdBytes;
 use hyperdht::{
-    cenc::Announce, namespace, request_announce_or_unannounce_value, sign_announce_or_unannounce,
-    Keypair,
+    namespace, request_announce_or_unannounce_value, sign_announce_or_unannounce,
+    AnnounceRequestValue, Keypair,
 };
 
 use common::{
@@ -24,7 +24,7 @@ fn sign_announce(
     token: &[u8; 32],
     from_id: &[u8; 32],
     relay_addresses: &[SocketAddr],
-) -> crate::Result<Announce> {
+) -> crate::Result<AnnounceRequestValue> {
     Ok(sign_announce_or_unannounce(
         keypair,
         target,
@@ -336,7 +336,7 @@ write(stringify([...encoded_announce]))
         &namespace::ANNOUNCE,
     );
 
-    let (ann, rest) = <Announce as CompactEncoding>::decode(&rs_ann_enc)?;
+    let (ann, rest) = <AnnounceRequestValue as CompactEncoding>::decode(&rs_ann_enc)?;
     assert!(rest.is_empty());
 
     repl.run_tcp(

@@ -24,7 +24,6 @@ libsodium-sys-stable = "1.21.2"
 derive_builder = "0.20.2"
 tracing = "0.1.41"
 const-hex = "1.14.0"
-pin-project = "1.1.9"
 async-compat = "0.2.1"
 
 [dependencies.tokio]
@@ -33,11 +32,9 @@ features = ["rt", "net", "sync"]
 
 [dependencies.compact-encoding]
 version = "2.1.0"
-#path = "../../compact-encoding"
 
 [dependencies.udx]
 version = "0.1.0"
-#path = "../../async-udx/"
 
 [build-dependencies]
 prost-build = "0.6.1"
@@ -48,7 +45,6 @@ serde = "1.0.217"
 serde_json = "1.0.135"
 tempfile = "3.10.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-utils = { path  = "../../replicator/utils" }
 
 
 [dev-dependencies.rusty_nodejs_repl]
@@ -56,6 +52,8 @@ utils = { path  = "../../replicator/utils" }
 features = [ "serde" , "integration_utils"]
 version = "0.2.2"
 
-# TODO RMME
-[dependencies.hypercore-protocol]
-path = "../../protocol"
+[dependencies.hypercore_handshake]
+version = "0.2.0"
+
+[dependencies.uint24le_framing]
+version = "0.1.0"

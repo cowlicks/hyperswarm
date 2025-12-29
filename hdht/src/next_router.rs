@@ -1,38 +1,26 @@
-#![expect(unused)]
 pub mod connection;
 use std::{
-    any::Any,
     collections::BTreeMap,
     net::SocketAddrV4,
-    pin::Pin,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, RwLock,
+        Arc,
     },
-    task::{Context, Poll},
 };
 
-use async_compat::Compat;
 use compact_encoding::CompactEncoding;
 use dht_rpc::{io::InResponse, Tid};
-use futures::{Sink, Stream, StreamExt};
-use udx::{UdxSocket, UdxStream};
+use udx::UdxSocket;
 
-use hypercore_protocol::{
-    sstream::sm2::{Event, Machine, MachineIo},
-    EncryptCipher, Handshake, HandshakeConfig, Uint24LELengthPrefixedFraming,
-};
-use rand::{rngs::StdRng, SeedableRng};
+use hypercore_handshake::{Cipher, CipherEvent};
 use tracing::instrument;
 
 use crate::{
     cenc::{
-        firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayload,
-        PeerHandshakePayloadBuilder, UdxInfoBuilder,
+        firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder,
     },
-    namespace,
-    next_router::connection::{ConnStep, Connection, ConnectionInner, ReadyData},
-    Error, HyperDhtEvent, PeerHandshakeResponse,
+    next_router::connection::Connection,
+    Error, PeerHandshakeResponse,
 };
 
 // TODO: swap this with rng thing later. We increment now bc we're debugging stuff.
@@ -43,6 +31,7 @@ pub struct StreamIdMaker {
 }
 
 impl StreamIdMaker {
+    // TODO use RNG to pick id
     pub fn new() -> Self {
         Self {
             counter: AtomicU32::new(1u32),
@@ -55,7 +44,6 @@ impl StreamIdMaker {
 
 #[derive(Debug)]
 pub struct Router {
-    rng: StdRng,
     id_maker: StreamIdMaker,
     connections: BTreeMap<Tid, Connection>,
 }
@@ -63,27 +51,27 @@ pub struct Router {
 impl Default for Router {
     fn default() -> Self {
         Self {
-            rng: StdRng::from_entropy(),
             id_maker: StreamIdMaker::new(),
             connections: Default::default(),
         }
     }
 }
 
+#[expect(unused, reason = "will be used when we have multiple connections")]
 impl Router {
     #[instrument(skip_all, err)]
     pub fn inject_response(
         &mut self,
         resp: &Arc<InResponse>,
         ph: Arc<PeerHandshakeResponse>,
-        socket: UdxSocket,
+        _socket: UdxSocket,
     ) -> crate::Result<Connection> {
-        let mut conn = self.connections.remove(&resp.request.tid).unwrap();
+        let conn = self.connections.remove(&resp.request.tid).unwrap();
         let res = conn.receive_next(ph.noise.clone())?;
         let msg: Vec<u8> = match res {
-            Event::HandshakePayload(payload) => payload,
-            Event::Message(items) => todo!(),
-            Event::ErrStuff(error) => todo!(),
+            CipherEvent::HandshakePayload(payload) => payload,
+            CipherEvent::Message(_items) => todo!(),
+            CipherEvent::ErrStuff(_error) => todo!(),
         };
         let (np, rest) = NoisePayload::decode(&msg)?;
         debug_assert!(rest.is_empty());
@@ -120,7 +108,7 @@ impl Router {
         socket: UdxSocket,
     ) -> Result<Vec<u8>, Error> {
         let mut hs =
-            Machine::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
+            Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
         let udx_local_id = self.id_maker.new_id();
         let np = NoisePayloadBuilder::default()
             .firewall(firewall::OPEN)
@@ -146,27 +134,5 @@ impl Router {
         let conn = Connection::new(hs, udx_local_id, half_stream);
         self.connections.insert(tid, conn);
         Ok(peer_handshake_payload.into())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use hypercore_protocol::sstream::hc_specific::generate_keypair;
-
-    #[tokio::test]
-    #[ignore]
-    async fn qqstep_next_router() -> Result<(), Box<dyn std::error::Error>> {
-        let kp = generate_keypair()?;
-        let mut router = Router::default();
-        let tid = 1u16;
-        router.first_step(
-            tid,
-            kp.public.try_into().unwrap(),
-            None,
-            UdxSocket::bind("127.0.0.1:0")?,
-        )?;
-        //let remote_public_key
-        todo!()
     }
 }

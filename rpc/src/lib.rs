@@ -4,13 +4,12 @@
 
 pub mod cenc;
 pub mod commit;
-pub mod constants;
+mod constants;
 mod futreqs;
 pub mod io;
 mod jobs;
-pub mod kbucket;
+mod kbucket;
 mod message;
-pub mod peers;
 pub mod query;
 mod stateobserver;
 mod stream;
@@ -74,6 +73,8 @@ use self::{
 };
 pub use crate::io::Tid;
 
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
     "node1.hyperdht.org:49737",
@@ -116,6 +117,8 @@ pub enum Error {
     RequestChannelSendError(),
     #[error("Error building request. Missing field: {0}")]
     RequestBuilderError(String),
+    #[error("Request timed out after {0:?}")]
+    Timeout(Duration),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -355,11 +358,7 @@ impl AsyncRpcDht {
         };
 
         // Create a future that polls RpcDht for events and waits for the response
-        RpcDhtRequestFuture {
-            inner: self.inner.clone(),
-            tid,
-            rx,
-        }
+        RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
     pub fn request_from_builder(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         let (tx, rx) = oneshot::channel();
@@ -371,11 +370,7 @@ impl AsyncRpcDht {
             tid
         };
         // Create a future that polls RpcDht for events and waits for the response
-        RpcDhtRequestFuture {
-            inner: self.inner.clone(),
-            tid,
-            rx,
-        }
+        RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
 
     pub async fn ping(&self, peer: Peer) -> Result<Arc<InResponse>> {
@@ -387,52 +382,6 @@ impl AsyncRpcDht {
             None,
         )
         .await
-    }
-
-    pub async fn query(
-        &self,
-        command: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> Result<Arc<QueryResult>> {
-        let (tx, rx) = oneshot::channel();
-
-        let qid = {
-            let mut inner = self.inner.lock().unwrap();
-            let qid = inner.query(command, target, value, commit);
-            inner.store_qid_sender(qid, tx);
-            qid
-        };
-
-        RpcDhtQueryFuture {
-            inner: self.inner.clone(),
-            qid,
-            rx,
-        }
-        .await
-    }
-
-    pub fn query_stream(
-        &self,
-        command: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> Result<QueryResponseStream> {
-        const QUERY_STREAM_CHANNEL_SIZE: usize = 1024;
-        let (tx, rx) = mpsc::channel(QUERY_STREAM_CHANNEL_SIZE);
-
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let qid = inner.query(command, target, value, commit);
-            inner.store_qid_stream_sender(qid, tx);
-        };
-
-        Ok(QueryResponseStream {
-            inner: self.inner.clone(),
-            rx,
-        })
     }
 
     pub fn query_next(
@@ -493,23 +442,6 @@ impl Future for QueryNext {
     }
 }
 
-pub struct QueryResponseStream {
-    inner: Arc<Mutex<RpcDht>>,
-    rx: mpsc::Receiver<Arc<InResponse>>,
-}
-
-impl Stream for QueryResponseStream {
-    type Item = Arc<InResponse>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        {
-            let mut inner = self.inner.lock().unwrap();
-            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
-        }
-        Pin::new(&mut self.rx).poll_next(cx)
-    }
-}
-
 macro_rules! future_poller {
     ($self:expr, $cx:expr) => {{
         // First, try to poll the response future
@@ -519,20 +451,6 @@ macro_rules! future_poller {
         }
         Pin::new(&mut $self.rx).poll($cx).map_err(Error::RecvError)
     }};
-}
-
-pub struct RpcDhtQueryFuture {
-    inner: Arc<Mutex<RpcDht>>,
-    #[expect(unused, reason = "may need in future")]
-    qid: QueryId,
-    rx: Receiver<Arc<QueryResult>>,
-}
-impl Future for RpcDhtQueryFuture {
-    type Output = Result<Arc<QueryResult>>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        future_poller!(self, cx)
-    }
 }
 
 struct BootstrapFuture {
@@ -552,16 +470,54 @@ impl Future for BootstrapFuture {
 #[derive(Debug)]
 pub struct RpcDhtRequestFuture {
     inner: Arc<Mutex<RpcDht>>,
-    #[expect(unused, reason = "may need in future")]
     tid: Tid,
     rx: Receiver<Arc<InResponse>>,
+    started_at: Instant,
+    timeout: Duration,
 }
 
 impl Future for RpcDhtRequestFuture {
     type Output = Result<Arc<InResponse>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        future_poller!(self, cx)
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        }
+
+        match Pin::new(&mut self.rx).poll(cx) {
+            Poll::Ready(Ok(response)) => {
+                cx.waker().wake_by_ref();
+                Poll::Ready(Ok(response))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(Error::RecvError(e))),
+            Poll::Pending => {
+                if Instant::now().duration_since(self.started_at) > self.timeout {
+                    error!(tid = self.tid, "request timed out");
+                    Poll::Ready(Err(Error::Timeout(self.timeout)))
+                } else {
+                    // TODO basically a busy loop. Figure out how to wake at the right time when
+                    // timeout expiers, then remove this.
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            }
+        }
+    }
+}
+
+impl RpcDhtRequestFuture {
+    pub fn new(inner: Arc<Mutex<RpcDht>>, tid: Tid, rx: Receiver<Arc<InResponse>>) -> Self {
+        Self {
+            inner,
+            tid,
+            rx,
+            started_at: Instant::now(),
+            timeout: DEFAULT_REQUEST_TIMEOUT,
+        }
+    }
+    pub fn tid(&self) -> Tid {
+        self.tid
     }
 }
 

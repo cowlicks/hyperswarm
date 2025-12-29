@@ -1,8 +1,4 @@
-#![expect(
-    clippy::ptr_offset_with_cast,
-    clippy::assign_op_pattern,
-    clippy::manual_range_contains
-)]
+#![expect(clippy::assign_op_pattern, clippy::manual_range_contains)]
 // Copyright 2018 Parity Technologies (UK) Ltd.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
