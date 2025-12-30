@@ -48,7 +48,6 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 
 [dev-dependencies.rusty_nodejs_repl]
-#path= "../../js-repl-rs"
 features = [ "serde" , "integration_utils"]
 version = "0.2.2"
 

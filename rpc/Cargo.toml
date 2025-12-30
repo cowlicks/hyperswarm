@@ -29,11 +29,9 @@ tracing = "0.1.41"
 
 [dependencies.compact-encoding]
 version = "2.1.0"
-#path = "../../compact-encoding"
 
 [dependencies.udx]
 version = "0.1.0"
-#path = "../../async-udx"
 
 [dependencies.tokio]
 version = "1.41.0"
@@ -45,7 +43,6 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dev-dependencies.rusty_nodejs_repl]
 version = "0.2.2"
-#path = "../../js-repl-rs"
 
 [dev-dependencies.tokio]
 version = "1.41.0"
