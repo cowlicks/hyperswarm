@@ -1,7 +1,0 @@
-{
-  "type": "module",
-  "dependencies": {
-    "dht-rpc": "^6.15.1",
-    "hyperdht": "^6.19.0"
-  }
-}

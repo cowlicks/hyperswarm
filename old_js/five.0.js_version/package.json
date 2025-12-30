@@ -1,6 +1,0 @@
-{
-  "type": "module",
-  "dependencies": {
-    "dht-rpc": "^5.0.0"
-  }
-}
