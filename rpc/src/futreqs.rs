@@ -7,7 +7,7 @@ use std::{
 };
 use wasm_timer::Instant;
 
-use futures::{channel::oneshot, FutureExt};
+use futures::{FutureExt, channel::oneshot};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(32);
 

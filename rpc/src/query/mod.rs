@@ -16,11 +16,11 @@ use tracing::{debug, info, instrument, trace, warn};
 use wasm_timer::Instant;
 
 use crate::{
+    IdBytes, PeerId,
     commit::{Commit, CommitEvent},
     constants::DEFAULT_COMMIT_CHANNEL_SIZE,
     io::InResponse,
     kbucket::{ALPHA_VALUE, K_VALUE},
-    IdBytes, PeerId,
 };
 
 mod closest;
@@ -31,7 +31,7 @@ use self::{
     peers::PeersIterState,
     table::{PeerState, QueryTable},
 };
-use super::{message::ReplyMsgData, Command, Peer};
+use super::{Command, Peer, message::ReplyMsgData};
 
 /// A `QueryPool` provides an aggregate state machine for driving `Query`s to
 /// completion.
@@ -370,10 +370,10 @@ impl Query {
                     warn!(error = data.response.error, "Error in peer response");
                     self.stats.failure += 1;
                     self.peer_iter.on_failure(&data.peer);
-                    if let Some(ref remote) = remote {
-                        if let Some(state) = self.inner.peers_mut().get_mut(remote) {
-                            *state = PeerState::Failed;
-                        }
+                    if let Some(ref remote) = remote
+                        && let Some(state) = self.inner.peers_mut().get_mut(remote)
+                    {
+                        *state = PeerState::Failed;
                     }
                     return None;
                 }
@@ -382,14 +382,11 @@ impl Query {
                 self.peer_iter
                     .on_success(&data.peer, &data.response.closer_nodes);
 
-                if let Some(token) = &data.response.token {
-                    if let Some(remote) = remote {
-                        self.inner.add_verified(
-                            remote,
-                            token.to_vec(),
-                            Some(data.response.to.addr),
-                        );
-                    }
+                if let Some(token) = &data.response.token
+                    && let Some(remote) = remote
+                {
+                    self.inner
+                        .add_verified(remote, token.to_vec(), Some(data.response.to.addr));
                 }
             }
         }
@@ -432,7 +429,7 @@ impl Query {
     }
 
     /// Create the final result from the query
-    pub fn into_result(&self) -> QueryResult {
+    pub fn get_result(&self) -> QueryResult {
         QueryResult {
             peers: self.inner.peers_iter(),
             query_id: self.id,

@@ -1,30 +1,44 @@
 //! Rust Implementation of the hyperswarm DHT
-#![deny(clippy::enum_glob_use)]
-#![warn(rust_2018_idioms)]
+#![warn(
+    //unreachable_pub, // TODO
+    //missing_debug_implementations, // TODO
+    //missing_docs, // TODO
+    redundant_lifetimes,
+    //unsafe_code, // TODO
+    non_local_definitions,
+    //clippy::needless_pass_by_value, // TODO
+    //clippy::needless_pass_by_ref_mut, // TODO
+    clippy::enum_glob_use
+)]
 
-pub mod cenc;
-pub mod commit;
+mod cenc;
+mod commit;
 mod constants;
 mod futreqs;
-pub mod io;
+mod io;
 mod jobs;
 mod kbucket;
 mod message;
-pub mod query;
+mod query;
 mod stateobserver;
 mod stream;
 mod util;
 
-pub use futreqs::{new_request_channel, Error as RequestFutureError, RequestFuture, RequestSender};
+pub use crate::{
+    cenc::generic_hash,
+    commit::Commit,
+    futreqs::Error as RequestFutureError,
+    io::{InResponse, OutRequestBuilder},
+    message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
+    query::{CommandQuery, CommandQueryResponse, QueryId, QueryResult},
+};
 
 #[cfg(test)]
 mod s_test;
 #[cfg(test)]
 pub mod test;
 use constants::ID_BYTES_LENGTH;
-use futures::{channel::mpsc, Stream};
-use io::OutRequestBuilder;
-use query::{CommandQueryResponse, QueryResult};
+use futures::{Stream, channel::mpsc};
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
@@ -44,29 +58,26 @@ use tracing::{debug, error, instrument, trace, warn};
 use wasm_timer::Instant;
 
 use rand::{
-    rngs::{OsRng, StdRng},
     RngCore, SeedableRng,
+    rngs::{OsRng, StdRng},
 };
 
 use crate::{
-    cenc::{generic_hash, validate_id},
-    commit::{Commit, CommitMessage, Progress},
-    io::InResponse,
+    cenc::validate_id,
+    commit::{CommitMessage, Progress},
     jobs::PeriodicJob,
-    kbucket::{distance, Distance},
-    kbucket::{Entry, EntryView, InsertResult, KBucketsTable, NodeStatus, K_VALUE},
-    query::QueryId,
+    kbucket::{
+        Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,
+    },
     util::pretty_bytes,
 };
 use compact_encoding::EncodingError;
-use tokio::sync::oneshot::{self, error::RecvError, Receiver, Sender};
+use tokio::sync::oneshot::{self, Receiver, Sender, error::RecvError};
 
-pub use self::message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner};
 use self::{
     io::{IoConfig, IoHandler, IoHandlerEvent},
     query::{
-        table::PeerState, CommandQuery, Query, QueryConfig, QueryEvent, QueryPool, QueryPoolEvent,
-        QueryStats,
+        Query, QueryConfig, QueryEvent, QueryPool, QueryPoolEvent, QueryStats, table::PeerState,
     },
     stateobserver::State,
     stream::MessageDataStream,
@@ -142,12 +153,16 @@ pub enum InternalCommand {
     DownHint,
 }
 
+/// Query Commands
 pub mod commands {
     use crate::Command;
+    /// Ping
     pub const PING: Command = Command::Internal(crate::InternalCommand::Ping);
+    /// Ping NAT
     pub const PING_NAT: Command = Command::Internal(crate::InternalCommand::PingNat);
-    // needs target
+    /// Find node
     pub const FIND_NODE: Command = Command::Internal(crate::InternalCommand::FindNode);
+    /// Down hint
     pub const DOWN_HINT: Command = Command::Internal(crate::InternalCommand::DownHint);
 }
 
@@ -625,11 +640,11 @@ impl RpcDht {
         let now = Instant::now();
         _ = pin.stream_waker.insert(cx.waker().clone());
 
-        if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now) {
-            if pin.kbuckets.iter().count() < 20 {
-                debug!("next bootstrap_job running");
-                pin.bootstrap();
-            }
+        if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now)
+            && pin.kbuckets.iter().count() < 20
+        {
+            debug!("next bootstrap_job running");
+            pin.bootstrap();
         }
 
         if let Poll::Ready(()) = pin.ping_job.poll(cx, now) {
@@ -952,7 +967,10 @@ impl RpcDht {
                         }
                     }
                 } else {
-                    debug!("Recieved response for missing query with id: {:?}. It could have been removed already", resp_data.query_id);
+                    debug!(
+                        "Recieved response for missing query with id: {:?}. It could have been removed already",
+                        resp_data.query_id
+                    );
                 }
             }
             None => match resp_data.request.command {
@@ -1107,13 +1125,11 @@ impl RpcDht {
 
     /// Get the `num` closest nodes in the bucket.
     fn closer_nodes(&mut self, key: IdBytes, num: usize) -> Vec<Peer> {
-        let nodes = self
-            .kbuckets
+        self.kbuckets
             .closest(&key)
             .take(num)
             .map(|p| Peer::from(&p.node.value.addr))
-            .collect::<Vec<_>>();
-        nodes
+            .collect::<Vec<_>>()
         //PeersEncoding::encode(&nodes)
     }
     fn on_down_hint(&mut self, request: RequestMsgData, peer: Peer) {
@@ -1339,7 +1355,7 @@ impl RpcDht {
             Command::Internal(InternalCommand::FindNode)
         );
 
-        let result = query.read().unwrap().into_result();
+        let result = query.read().unwrap().get_result();
 
         // add nodes to the table
         for (peer, state) in result.peers.iter() {
@@ -1714,8 +1730,8 @@ impl Borrow<[u8]> for PeerId {
 #[inline]
 pub fn fill_random_bytes(dest: &mut [u8]) {
     use rand::{
-        rngs::{OsRng, StdRng},
         RngCore, SeedableRng,
+        rngs::{OsRng, StdRng},
     };
     let mut rng = StdRng::from_rng(OsRng).unwrap();
     rng.fill_bytes(dest)

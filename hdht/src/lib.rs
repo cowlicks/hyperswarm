@@ -1,6 +1,15 @@
 //! Rust Implementation of the hyperswarm DHT
-#![warn(rust_2018_idioms)]
-#![deny(clippy::enum_glob_use)]
+#![warn(
+    //unreachable_pub, // TODO
+    //missing_debug_implementations, // TODO
+    //missing_docs, // TODO
+    redundant_lifetimes,
+    unsafe_code,
+    non_local_definitions,
+    //clippy::needless_pass_by_value, // TODO
+    clippy::needless_pass_by_ref_mut,
+    clippy::enum_glob_use
+)]
 
 use std::{
     array::TryFromSliceError,
@@ -15,9 +24,8 @@ use cenc::{
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
 use compact_encoding::{CompactEncoding, EncodingError};
-use dht_rpc::{io::InResponse, IdBytes, RequestFutureError, RpcDhtBuilderError};
+use dht_rpc::{IdBytes, InResponse, RequestFutureError, RpcDhtBuilderError};
 use tokio::sync::oneshot::error::RecvError;
-use tracing::warn;
 
 use crate::cenc::HandshakeSteps;
 
@@ -32,7 +40,7 @@ mod store;
 pub mod adht;
 
 pub use crypto::{
-    make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair,
+    Keypair, make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce,
 };
 
 /// The publicly available hyperswarm DHT addresses

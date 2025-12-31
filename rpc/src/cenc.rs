@@ -4,15 +4,15 @@ use std::{
 };
 
 use compact_encoding::{
-    decode_usize, encode_usize_var, encoded_size_usize, map_decode, take_array,
-    vec_encoded_size_for_fixed_sized_elements, write_array, CompactEncoding, EncodingError,
-    VecEncodable,
+    CompactEncoding, EncodingError, VecEncodable, decode_usize, encode_usize_var,
+    encoded_size_usize, map_decode, take_array, vec_encoded_size_for_fixed_sized_elements,
+    write_array,
 };
 
 use crate::{
+    Command, Error, ExternalCommand, IdBytes, InternalCommand, Peer, Result,
     constants::{HASH_SIZE, ID_SIZE, REQUEST_ID, RESPONSE_ID},
     message::{MsgData, ReplyMsgData, RequestMsgData},
-    Command, Error, ExternalCommand, IdBytes, InternalCommand, Peer, Result,
 };
 
 impl CompactEncoding for InternalCommand {
@@ -111,6 +111,7 @@ pub(crate) fn calculate_peer_id(from: &Peer) -> [u8; ID_SIZE] {
     id_from_socket(&from.addr)
 }
 
+#[allow(unsafe_code, reason = "needed for libsodium bindings")]
 pub fn generic_hash(input: &[u8]) -> [u8; HASH_SIZE] {
     let mut out = [0; HASH_SIZE];
     let ret = unsafe {
@@ -129,6 +130,7 @@ pub fn generic_hash(input: &[u8]) -> [u8; HASH_SIZE] {
     out
 }
 
+#[allow(unsafe_code, reason = "needed for libsodium bindings")]
 pub(crate) fn generic_hash_with_key(input: &[u8], key: &[u8]) -> Result<[u8; HASH_SIZE]> {
     let mut out = [0; HASH_SIZE];
     let ret = unsafe {
@@ -148,21 +150,17 @@ pub(crate) fn generic_hash_with_key(input: &[u8], key: &[u8]) -> Result<[u8; HAS
 }
 
 pub(crate) fn validate_id(id: &Option<[u8; ID_SIZE]>, from: &Peer) -> Option<IdBytes> {
-    if let Some(id) = id {
-        if id == &calculate_peer_id(from) {
-            return Some(IdBytes::from(*id));
-        }
+    if let Some(id) = id
+        && id == &calculate_peer_id(from)
+    {
+        return Some(IdBytes::from(*id));
     }
     None
 }
 
 macro_rules! maybe_add_flag {
     ($cond:expr, $shift:expr) => {
-        if $cond {
-            1 << $shift
-        } else {
-            0
-        }
+        if $cond { 1 << $shift } else { 0 }
     };
 }
 
@@ -386,7 +384,11 @@ impl CompactEncoding for MsgData {
                 let (msg, rest) = ReplyMsgData::decode(buffer)?;
                 (MsgData::Reply(msg), rest)
             }
-            _ => return Err(EncodingError::invalid_data(&format!("Could not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"))),
+            _ => {
+                return Err(EncodingError::invalid_data(&format!(
+                    "Could not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"
+                )));
+            }
         })
     }
 }

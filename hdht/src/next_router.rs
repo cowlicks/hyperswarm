@@ -3,24 +3,24 @@ use std::{
     collections::BTreeMap,
     net::SocketAddrV4,
     sync::{
-        atomic::{AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicU32, Ordering},
     },
 };
 
 use compact_encoding::CompactEncoding;
-use dht_rpc::{io::InResponse, Tid};
+use dht_rpc::{InResponse, Tid};
 use udx::UdxSocket;
 
 use hypercore_handshake::{Cipher, CipherEvent};
 use tracing::instrument;
 
 use crate::{
+    Error, PeerHandshakeResponse,
     cenc::{
-        firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder,
+        NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
     },
     next_router::connection::Connection,
-    Error, PeerHandshakeResponse,
 };
 
 // TODO: swap this with rng thing later. We increment now bc we're debugging stuff.

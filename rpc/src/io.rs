@@ -1,15 +1,15 @@
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, task::Waker};
 
 use crate::{
-    cenc::validate_id,
-    futreqs::{new_request_channel, RequestFuture, RequestSender},
     IdBytes, RequestMsgDataInner, Result,
+    cenc::validate_id,
+    futreqs::{RequestFuture, RequestSender, new_request_channel},
 };
 use fnv::FnvHashMap;
 use futures::{
+    Sink, Stream,
     channel::mpsc,
     task::{Context, Poll},
-    Sink, Stream,
 };
 use rand::Rng;
 use std::{
@@ -23,15 +23,14 @@ use tracing::{error, instrument, trace};
 use wasm_timer::Instant;
 
 use super::{
+    Command, Peer, QueryAndTid,
     cenc::{generic_hash, generic_hash_with_key, ipv4},
     message::{MsgData, ReplyMsgData, RequestMsgData},
     query::QueryId,
     stateobserver::Observer,
     stream::MessageDataStream,
-    thirty_two_random_bytes, Command, Peer, QueryAndTid,
+    thirty_two_random_bytes,
 };
-
-pub const VERSION: u64 = 1;
 
 const ROTATE_INTERVAL: u64 = 300_000;
 
@@ -270,7 +269,7 @@ impl IoHandler {
             pending_recv: Default::default(),
             inflight: Default::default(),
             secrets: Default::default(),
-            tid: AtomicU16::new(rand::thread_rng().gen()),
+            tid: AtomicU16::new(rand::thread_rng().r#gen()),
             txrx: mpsc::channel(IO_TX_RX_CHANNEL_DEFAULT_SIZE),
             stream_waker: Default::default(),
         }
@@ -503,12 +502,12 @@ impl IoHandler {
     }
 
     fn start_send_next(&mut self) -> crate::Result<()> {
-        if self.pending_flush.is_none() {
-            if let Some(msg) = self.pending_send.pop_front() {
-                self.inner_send(msg.clone())?;
-                self.pending_flush = Some(msg);
-                self.maybe_wake();
-            }
+        if self.pending_flush.is_none()
+            && let Some(msg) = self.pending_send.pop_front()
+        {
+            self.inner_send(msg.clone())?;
+            self.pending_flush = Some(msg);
+            self.maybe_wake();
         }
         Ok(())
     }
@@ -670,7 +669,7 @@ impl std::fmt::Display for IoHandlerEvent {
 
 #[cfg(test)]
 mod test {
-    use crate::{stateobserver::State, thirty_two_random_bytes, InternalCommand};
+    use crate::{InternalCommand, stateobserver::State, thirty_two_random_bytes};
     use futures::StreamExt;
 
     use super::*;
