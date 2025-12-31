@@ -1,12 +1,12 @@
 //! Rust Implementation of the hyperswarm DHT
 #![warn(
-    unreachable_pub,
-    missing_debug_implementations,
-    missing_docs,
+    //unreachable_pub, // TODO
+    //missing_debug_implementations, // TODO
+    //missing_docs, // TODO
     redundant_lifetimes,
     unsafe_code,
     non_local_definitions,
-    clippy::needless_pass_by_value,
+    //clippy::needless_pass_by_value, // TODO
     clippy::needless_pass_by_ref_mut,
     clippy::enum_glob_use
 )]

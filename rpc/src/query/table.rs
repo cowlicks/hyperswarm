@@ -26,8 +26,35 @@ impl QueryTable {
         Self { id, target, peers }
     }
 
-    pub fn peers(&self) -> &FnvHashMap<PeerId, PeerState> {
+    #[expect(unused, reason = "from libp2p, might be useful later?")]
+    fn peers(&self) -> &FnvHashMap<PeerId, PeerState> {
         &self.peers
+    }
+
+    #[expect(unused, reason = "from libp2p, might be useful later?")]
+    fn get_peer(&self, peer: &crate::Peer) -> Option<crate::Peer> {
+        self.peers
+            .keys()
+            .filter(|p| p.addr == peer.addr)
+            .map(|p| crate::Peer::from(p.addr))
+            .next()
+    }
+
+    #[expect(unused, reason = "from libp2p, might be useful later?")]
+    fn get_token(&self, peer: &crate::Peer) -> Option<&Vec<u8>> {
+        self.peers
+            .iter()
+            .filter(|(p, _)| p.addr == peer.addr)
+            .map(|(_, s)| s.get_token())
+            .next()
+            .flatten()
+    }
+    /// Set the state of every `Peer` to `PeerState::NotContacted`
+    #[expect(unused, reason = "from libp2p, might be useful later?")]
+    fn set_all_not_contacted(&mut self) {
+        for state in self.peers.values_mut() {
+            *state = PeerState::NotContacted;
+        }
     }
 
     pub(crate) fn peers_mut(&mut self) -> &mut FnvHashMap<PeerId, PeerState> {
@@ -36,23 +63,6 @@ impl QueryTable {
 
     pub fn target(&self) -> &IdBytes {
         &self.target
-    }
-
-    pub fn get_peer(&self, peer: &crate::Peer) -> Option<crate::Peer> {
-        self.peers
-            .keys()
-            .filter(|p| p.addr == peer.addr)
-            .map(|p| crate::Peer::from(p.addr))
-            .next()
-    }
-
-    pub fn get_token(&self, peer: &crate::Peer) -> Option<&Vec<u8>> {
-        self.peers
-            .iter()
-            .filter(|(p, _)| p.addr == peer.addr)
-            .map(|(_, s)| s.get_token())
-            .next()
-            .flatten()
     }
 
     pub(crate) fn _add_unverified(&mut self, peer: PeerId) {
@@ -84,13 +94,6 @@ impl QueryTable {
                     to,
                 },
             );
-        }
-    }
-
-    /// Set the state of every `Peer` to `PeerState::NotContacted`
-    pub fn set_all_not_contacted(&mut self) {
-        for state in self.peers.values_mut() {
-            *state = PeerState::NotContacted;
         }
     }
 

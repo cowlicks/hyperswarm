@@ -32,8 +32,6 @@ use super::{
     thirty_two_random_bytes,
 };
 
-pub const VERSION: u64 = 1;
-
 const ROTATE_INTERVAL: u64 = 300_000;
 
 const IO_TX_RX_CHANNEL_DEFAULT_SIZE: usize = 1024;
@@ -505,11 +503,12 @@ impl IoHandler {
 
     fn start_send_next(&mut self) -> crate::Result<()> {
         if self.pending_flush.is_none()
-            && let Some(msg) = self.pending_send.pop_front() {
-                self.inner_send(msg.clone())?;
-                self.pending_flush = Some(msg);
-                self.maybe_wake();
-            }
+            && let Some(msg) = self.pending_send.pop_front()
+        {
+            self.inner_send(msg.clone())?;
+            self.pending_flush = Some(msg);
+            self.maybe_wake();
+        }
         Ok(())
     }
 

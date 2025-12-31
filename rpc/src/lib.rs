@@ -1,13 +1,13 @@
 //! Rust Implementation of the hyperswarm DHT
 #![warn(
-    unreachable_pub,
-    missing_debug_implementations,
-    missing_docs,
+    //unreachable_pub, // TODO
+    //missing_debug_implementations, // TODO
+    //missing_docs, // TODO
     redundant_lifetimes,
-    unsafe_code,
+    //unsafe_code, // TODO
     non_local_definitions,
-    clippy::needless_pass_by_value,
-    clippy::needless_pass_by_ref_mut,
+    //clippy::needless_pass_by_value, // TODO
+    //clippy::needless_pass_by_ref_mut, // TODO
     clippy::enum_glob_use
 )]
 
@@ -641,10 +641,11 @@ impl RpcDht {
         _ = pin.stream_waker.insert(cx.waker().clone());
 
         if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now)
-            && pin.kbuckets.iter().count() < 20 {
-                debug!("next bootstrap_job running");
-                pin.bootstrap();
-            }
+            && pin.kbuckets.iter().count() < 20
+        {
+            debug!("next bootstrap_job running");
+            pin.bootstrap();
+        }
 
         if let Poll::Ready(()) = pin.ping_job.poll(cx, now) {
             pin.ping_some();
@@ -1124,9 +1125,7 @@ impl RpcDht {
 
     /// Get the `num` closest nodes in the bucket.
     fn closer_nodes(&mut self, key: IdBytes, num: usize) -> Vec<Peer> {
-        
-        self
-            .kbuckets
+        self.kbuckets
             .closest(&key)
             .take(num)
             .map(|p| Peer::from(&p.node.value.addr))
