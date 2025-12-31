@@ -1,7 +1,7 @@
 mod common;
 
 use common::{Result, setup::Testnet};
-use dht_rpc::{DhtConfig, Peer, commands, commit::Commit};
+use dht_rpc::{Commit, DhtConfig, Peer, commands};
 
 use crate::common::log;
 
