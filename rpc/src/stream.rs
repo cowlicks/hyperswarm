@@ -83,6 +83,9 @@ impl Stream for MessageDataStream {
             }
             Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e.into()))),
             Poll::Pending => {
+                // TODO RMME this is a sad busy loop :/ seems like the inner tokio
+                // AsyncFd::poll_read_ready() is not waking as we would expect
+                cx.waker().wake_by_ref();
                 _ = self.next_message.insert(fut);
                 Poll::Pending
             }

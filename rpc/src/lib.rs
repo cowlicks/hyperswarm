@@ -1438,7 +1438,7 @@ impl RpcInner {
 #[derive(Debug)]
 pub enum RpcEvent {
     /// Result wrapping an incomming Request
-    /// Only emits Ok on custom commands. Errs on any request error (custom or non-custom)
+    /// Only emits Ok on custom/external commands. Errs on any request error (custom or non-custom)
     RequestResult(RequestResult),
     /// Result wrapping an incomming Response
     /// Emits for any valid response
