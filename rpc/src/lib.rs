@@ -1355,7 +1355,7 @@ impl RpcDht {
             Command::Internal(InternalCommand::FindNode)
         );
 
-        let result = query.read().unwrap().into_result();
+        let result = query.read().unwrap().get_result();
 
         // add nodes to the table
         for (peer, state) in result.peers.iter() {

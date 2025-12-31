@@ -371,9 +371,10 @@ impl Query {
                     self.stats.failure += 1;
                     self.peer_iter.on_failure(&data.peer);
                     if let Some(ref remote) = remote
-                        && let Some(state) = self.inner.peers_mut().get_mut(remote) {
-                            *state = PeerState::Failed;
-                        }
+                        && let Some(state) = self.inner.peers_mut().get_mut(remote)
+                    {
+                        *state = PeerState::Failed;
+                    }
                     return None;
                 }
 
@@ -382,13 +383,11 @@ impl Query {
                     .on_success(&data.peer, &data.response.closer_nodes);
 
                 if let Some(token) = &data.response.token
-                    && let Some(remote) = remote {
-                        self.inner.add_verified(
-                            remote,
-                            token.to_vec(),
-                            Some(data.response.to.addr),
-                        );
-                    }
+                    && let Some(remote) = remote
+                {
+                    self.inner
+                        .add_verified(remote, token.to_vec(), Some(data.response.to.addr));
+                }
             }
         }
 
@@ -430,7 +429,7 @@ impl Query {
     }
 
     /// Create the final result from the query
-    pub fn into_result(&self) -> QueryResult {
+    pub fn get_result(&self) -> QueryResult {
         QueryResult {
             peers: self.inner.peers_iter(),
             query_id: self.id,
