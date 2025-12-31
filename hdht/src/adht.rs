@@ -59,10 +59,11 @@ impl Dht {
         })
     }
 
-    pub async fn boostrap(&self) -> Result<()> {
+    pub async fn bootstrap(&self) -> Result<()> {
         self.rpc.bootstrap().await?;
         Ok(())
     }
+
     pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
         let mut query = self.find_peer(pub_key.clone())?;
         while let Some(resp) = query.next().await {

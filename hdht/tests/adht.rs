@@ -161,7 +161,7 @@ outputJson([...pub_key]);
         )
         .await?;
 
-    dht.boostrap().await?;
+    dht.bootstrap().await?;
     let mut q = dht.find_peer(pub_key.into())?;
     while let Some(e) = q.next().await {
         if let Ok(Some(resp)) = e {
@@ -204,7 +204,7 @@ outputJson([...pub_key]);
         )
         .await?;
 
-    dht.boostrap().await?;
+    dht.bootstrap().await?;
 
     let port: u16 = tn.repl.get_name("server_addr").await?;
     let dest = format!("127.0.0.1:{port}").parse()?;
@@ -256,7 +256,7 @@ outputJson([...pub_key]);
         )
         .await?;
 
-    dht.boostrap().await?;
+    dht.bootstrap().await?;
     let mut conn = dht.connect(pub_key.into()).await?;
     conn.send(b"from rust".into()).await?;
     let msg: String = tn.repl.get_name("server_rx_data").await?;
