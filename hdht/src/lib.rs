@@ -1,5 +1,4 @@
 //! Rust Implementation of the hyperswarm DHT
-#![warn(rust_2018_idioms)]
 #![deny(clippy::enum_glob_use)]
 
 use std::{
@@ -17,7 +16,6 @@ use cenc::{
 use compact_encoding::{CompactEncoding, EncodingError};
 use dht_rpc::{IdBytes, RequestFutureError, RpcDhtBuilderError, io::InResponse};
 use tokio::sync::oneshot::error::RecvError;
-use tracing::warn;
 
 use crate::cenc::HandshakeSteps;
 

@@ -1,6 +1,5 @@
 //! Rust Implementation of the hyperswarm DHT
 #![deny(clippy::enum_glob_use)]
-#![warn(rust_2018_idioms)]
 
 pub mod cenc;
 pub mod commit;
