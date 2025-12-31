@@ -35,6 +35,7 @@ mod dht_proto {
 mod cenc;
 mod crypto;
 mod next_router;
+mod server;
 mod store;
 
 pub mod adht;

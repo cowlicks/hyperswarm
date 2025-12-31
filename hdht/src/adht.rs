@@ -28,6 +28,7 @@ use crate::{
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
     request_announce_or_unannounce_value,
+    server::Server,
 };
 
 #[derive(Debug)]
@@ -61,6 +62,24 @@ impl Dht {
     pub async fn boostrap(&self) -> Result<()> {
         self.rpc.bootstrap().await?;
         Ok(())
+    }
+    pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
+        let mut query = self.find_peer(pub_key.clone())?;
+        while let Some(resp) = query.next().await {
+            let Ok(Some(FindPeerResponse { response, .. })) = resp else {
+                continue;
+            };
+            if let Ok(conn) = self
+                .peer_handshake(pub_key.clone(), response.request.to.addr)?
+                .await
+            {
+                return Ok(conn);
+            }
+        }
+        todo!()
+    }
+    pub fn create_server(&self, target: IdBytes) -> Server {
+        todo!()
     }
 
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
@@ -117,22 +136,6 @@ impl Dht {
             done: false.into(),
             pending_requests: Default::default(),
         }
-    }
-
-    pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
-        let mut query = self.find_peer(pub_key.clone())?;
-        while let Some(resp) = query.next().await {
-            let Ok(Some(FindPeerResponse { response, .. })) = resp else {
-                continue;
-            };
-            if let Ok(conn) = self
-                .peer_handshake(pub_key.clone(), response.request.to.addr)?
-                .await
-            {
-                return Ok(conn);
-            }
-        }
-        todo!()
     }
 
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
