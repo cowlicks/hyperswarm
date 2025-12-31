@@ -1,6 +1,6 @@
 [package]
 name = "dht-rpc"
-edition = "2018"
+edition = "2024"
 description = "rust implementation of the DHT powering the hyperswarm stack"
 version = "0.1.0"
 authors = ["Matthias Seitz <matthias.seitz@tum.de>"]
