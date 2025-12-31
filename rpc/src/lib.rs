@@ -1,5 +1,15 @@
 //! Rust Implementation of the hyperswarm DHT
-#![deny(clippy::enum_glob_use)]
+#![warn(
+    unreachable_pub,
+    missing_debug_implementations,
+    missing_docs,
+    redundant_lifetimes,
+    unsafe_code,
+    non_local_definitions,
+    clippy::needless_pass_by_value,
+    clippy::needless_pass_by_ref_mut,
+    clippy::enum_glob_use
+)]
 
 pub mod cenc;
 pub mod commit;
