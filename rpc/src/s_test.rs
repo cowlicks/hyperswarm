@@ -2,7 +2,7 @@ use std::{net::ToSocketAddrs, sync::OnceLock};
 
 use futures::StreamExt;
 
-use crate::{DEFAULT_BOOTSTRAP, DhtConfig, Peer, RpcDht};
+use crate::{DEFAULT_BOOTSTRAP, DhtConfig, Peer, RpcInner};
 
 use super::RpcDhtEvent;
 
@@ -25,7 +25,7 @@ async fn bootstrap() -> crate::Result<()> {
     let conf = DhtConfig::default()
         .add_bootstrap_node(DEFAULT_BOOTSTRAP[0].to_socket_addrs()?.last().unwrap());
 
-    let mut rpc = RpcDht::with_config(conf).await?;
+    let mut rpc = RpcInner::with_config(conf).await?;
 
     rpc.bootstrap();
     let mut i = 0;
@@ -47,7 +47,7 @@ async fn ping() -> crate::Result<()> {
     let conf = DhtConfig::default()
         .add_bootstrap_node(DEFAULT_BOOTSTRAP[0].to_socket_addrs()?.last().unwrap());
 
-    let mut rpc = RpcDht::with_config(conf).await?;
+    let mut rpc = RpcInner::with_config(conf).await?;
 
     rpc.bootstrap();
     let mut i = 0;

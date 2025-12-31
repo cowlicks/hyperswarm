@@ -113,7 +113,7 @@ pub enum Error {
     #[error("Error in libsodium's genric_hash function. Return value: {0}")]
     LibSodiumGenericHashError(i32),
     #[error("RpcDhtBuilderError: {0}")]
-    RpcDhtBuilderError(#[from] RpcDhtBuilderError),
+    RpcDhtBuilderError(#[from] RpcInnerBuilderError),
     #[error("RecvError: {0}")]
     RecvError(#[from] RecvError),
     #[error("AddrParseError: {0}")]
@@ -264,7 +264,7 @@ pub(crate) type QueryAndTid = (Option<QueryId>, Tid);
 
 #[derive(Debug, derive_builder::Builder)]
 #[builder(pattern = "owned")]
-pub struct RpcDht {
+pub struct RpcInner {
     // TODO use message passing to update id's in IoHandler
     #[builder(default = "State::new(IdBytes::from(thirty_two_random_bytes()))")]
     pub id: State<IdBytes>,
@@ -294,13 +294,13 @@ pub struct RpcDht {
 
 #[derive(Clone)]
 pub struct AsyncRpcDht {
-    inner: Arc<Mutex<RpcDht>>,
+    inner: Arc<Mutex<RpcInner>>,
 }
 
 impl AsyncRpcDht {
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
-            inner: Arc::new(Mutex::new(RpcDht::with_config(config).await?)),
+            inner: Arc::new(Mutex::new(RpcInner::with_config(config).await?)),
         })
     }
 
@@ -425,9 +425,18 @@ impl AsyncRpcDht {
     }
 }
 
+impl Stream for AsyncRpcDht {
+    type Item = RpcDhtEvent;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut inner = self.inner.lock().unwrap();
+        Stream::poll_next(Pin::new(&mut *inner), cx)
+    }
+}
+
 #[derive(Debug)]
 pub struct QueryNext {
-    inner: Arc<Mutex<RpcDht>>,
+    inner: Arc<Mutex<RpcInner>>,
     parts_rx: mpsc::Receiver<Arc<InResponse>>,
     result_rx: Receiver<Arc<QueryResult>>,
 }
@@ -469,7 +478,7 @@ macro_rules! future_poller {
 }
 
 struct BootstrapFuture {
-    inner: Arc<Mutex<RpcDht>>,
+    inner: Arc<Mutex<RpcInner>>,
     rx: Receiver<Arc<Bootstrapped>>,
 }
 
@@ -484,7 +493,7 @@ impl Future for BootstrapFuture {
 /// A future that polls RpcDht for events while waiting for a specific response.
 #[derive(Debug)]
 pub struct RpcDhtRequestFuture {
-    inner: Arc<Mutex<RpcDht>>,
+    inner: Arc<Mutex<RpcInner>>,
     tid: Tid,
     rx: Receiver<Arc<InResponse>>,
     started_at: Instant,
@@ -522,7 +531,7 @@ impl Future for RpcDhtRequestFuture {
 }
 
 impl RpcDhtRequestFuture {
-    pub fn new(inner: Arc<Mutex<RpcDht>>, tid: Tid, rx: Receiver<Arc<InResponse>>) -> Self {
+    pub fn new(inner: Arc<Mutex<RpcInner>>, tid: Tid, rx: Receiver<Arc<InResponse>>) -> Self {
         Self {
             inner,
             tid,
@@ -624,7 +633,7 @@ impl DhtConfig {
     }
 }
 
-impl RpcDht {
+impl RpcInner {
     fn store_tid_sender(&mut self, tid: Tid, tx: Sender<Arc<InResponse>>) {
         self.pending_requests.insert(tid, tx);
     }
@@ -1524,7 +1533,7 @@ pub enum ResponseError {
     InvalidPong(Peer),
 }
 
-impl Stream for RpcDht {
+impl Stream for RpcInner {
     type Item = RpcDhtEvent;
 
     #[instrument(skip_all)]

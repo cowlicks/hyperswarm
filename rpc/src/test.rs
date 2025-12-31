@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use std::{net::TcpListener, time::Duration};
 
-use crate::{DhtConfig, Peer, Result, RpcDht, RpcDhtEvent, cenc::validate_id};
+use crate::{DhtConfig, Peer, Result, RpcDhtEvent, RpcInner, cenc::validate_id};
 pub fn free_port() -> Option<u16> {
     match TcpListener::bind(("127.0.0.1", 0)) {
         Ok(listener) => {
@@ -21,7 +21,7 @@ async fn wip_bootstrap() -> Result<()> {
     let confa = confa
         .bind(("127.0.0.1", dbg!(free_port().unwrap())))
         .unwrap();
-    let mut a_node = RpcDht::with_config(confa).await?;
+    let mut a_node = RpcInner::with_config(confa).await?;
 
     a_node.bootstrap();
     let a_addr = a_node.local_addr()?;
@@ -51,7 +51,7 @@ async fn wip_bootstrap() -> Result<()> {
         .unwrap();
 
     let confb = confb.set_bootstrap_nodes(&[a_addr]);
-    let mut b_node = RpcDht::with_config(confb).await?;
+    let mut b_node = RpcInner::with_config(confb).await?;
     b_node.bootstrap();
     loop {
         if let Ok(Some(b_evt)) =
