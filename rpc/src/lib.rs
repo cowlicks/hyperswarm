@@ -293,11 +293,11 @@ pub struct RpcInner {
 }
 
 #[derive(Clone)]
-pub struct AsyncRpcDht {
+pub struct Rpc {
     inner: Arc<Mutex<RpcInner>>,
 }
 
-impl AsyncRpcDht {
+impl Rpc {
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
             inner: Arc::new(Mutex::new(RpcInner::with_config(config).await?)),
@@ -425,7 +425,7 @@ impl AsyncRpcDht {
     }
 }
 
-impl Stream for AsyncRpcDht {
+impl Stream for Rpc {
     type Item = RpcDhtEvent;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

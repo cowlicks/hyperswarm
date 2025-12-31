@@ -11,8 +11,8 @@ use std::{
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    AsyncRpcDht, Commit, DhtConfig, IdBytes, InResponse, OutRequestBuilder, Peer, QueryId,
-    QueryNext, RpcDhtRequestFuture, generic_hash,
+    Commit, DhtConfig, IdBytes, InResponse, OutRequestBuilder, Peer, QueryId, QueryNext, Rpc,
+    RpcDhtRequestFuture, generic_hash,
 };
 use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
@@ -39,7 +39,7 @@ pub struct QueryResult {
 }
 
 pub struct Dht {
-    rpc: AsyncRpcDht,
+    rpc: Rpc,
     id_maker: StreamIdMaker,
 }
 
@@ -54,7 +54,7 @@ impl Dht {
         }
 
         Ok(Self {
-            rpc: AsyncRpcDht::with_config(config).await?,
+            rpc: Rpc::with_config(config).await?,
             id_maker: StreamIdMaker::new(),
         })
     }
@@ -378,7 +378,7 @@ impl Future for FindPeer {
 }
 
 pub struct Announce {
-    rpc: AsyncRpcDht,
+    rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
     key_pair: Keypair,
@@ -424,7 +424,7 @@ impl Future for Announce {
 }
 
 pub struct Unannounce {
-    rpc: AsyncRpcDht,
+    rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
     key_pair: Keypair,
@@ -492,7 +492,7 @@ impl Future for Unannounce {
 }
 
 pub struct AnnounceClear {
-    rpc: AsyncRpcDht,
+    rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
     key_pair: Keypair,

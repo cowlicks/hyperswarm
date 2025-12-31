@@ -24,7 +24,7 @@ use cenc::{
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
 use compact_encoding::{CompactEncoding, EncodingError};
-use dht_rpc::{IdBytes, InResponse, RequestFutureError, RpcDhtBuilderError};
+use dht_rpc::{IdBytes, InResponse, RequestFutureError, RpcInnerBuilderError};
 use tokio::sync::oneshot::error::RecvError;
 
 use crate::cenc::HandshakeSteps;
@@ -96,7 +96,7 @@ pub enum Error {
     #[error("Error in libsodium's genric_hash function. Return value: {0}")]
     LibSodiumGenericHashError(i32),
     #[error("RpcDhtBuilderError: {0}")]
-    RpcDhtBuilderError(#[from] RpcDhtBuilderError),
+    RpcDhtBuilderError(#[from] RpcInnerBuilderError),
     #[error("RecvError: {0}")]
     RecvError(#[from] RecvError),
     #[error("AddrParseError: {0}")]

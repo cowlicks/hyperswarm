@@ -10,8 +10,7 @@ macro_rules! rpc_setup {
         let mut tn = Testnet::new().await?;
         let bs_addr = tn.get_node_i_address(1).await?;
         let rpc =
-            dht_rpc::AsyncRpcDht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr))
-                .await?;
+            dht_rpc::Rpc::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
         (tn, rpc)
     }};
 }
