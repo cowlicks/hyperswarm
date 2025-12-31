@@ -123,11 +123,12 @@ impl Store {
     pub fn query_mut(&mut self, mut query: CommandQuery, mutable: Mutable) -> CommandQueryResponse {
         let key = StorageKey::Mutable(Self::get_mut_key(&mutable, &query.target));
         if let Some(val) = self.inner.get(&key).and_then(StorageEntry::as_mutable)
-            && val.seq.unwrap_or_default() >= mutable.seq.unwrap_or_default() {
-                let mut buf = Vec::with_capacity(val.encoded_len());
-                val.encode(&mut buf).unwrap();
-                query.value = Some(buf);
-            }
+            && val.seq.unwrap_or_default() >= mutable.seq.unwrap_or_default()
+        {
+            let mut buf = Vec::with_capacity(val.encoded_len());
+            val.encode(&mut buf).unwrap();
+            query.value = Some(buf);
+        }
         query.into()
     }
 
@@ -142,13 +143,14 @@ impl Store {
         }
 
         if let Some(local) = self.inner.get(&key).and_then(StorageEntry::as_mutable)
-            && let Err(err) = maybe_seq_error(&mutable, local) {
-                let mut resp = query.into_response_with_error(err);
-                let mut buf = Vec::with_capacity(local.encoded_len());
-                local.encode(&mut buf).unwrap();
-                resp.msg.value = Some(buf);
-                return resp;
-            }
+            && let Err(err) = maybe_seq_error(&mutable, local)
+        {
+            let mut resp = query.into_response_with_error(err);
+            let mut buf = Vec::with_capacity(local.encoded_len());
+            local.encode(&mut buf).unwrap();
+            resp.msg.value = Some(buf);
+            return resp;
+        }
 
         self.inner.put(key, StorageEntry::Mutable(mutable));
         query.into()

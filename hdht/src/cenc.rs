@@ -556,13 +556,15 @@ impl CompactEncoding for NoisePayload {
             rest = hp.encode(rest)?;
         }
         if let Some(addrs) = &self.addresses4
-            && !addrs.is_empty() {
-                rest = addrs.encode(rest)?;
-            }
+            && !addrs.is_empty()
+        {
+            rest = addrs.encode(rest)?;
+        }
         if let Some(addrs) = &self.addresses6
-            && !addrs.is_empty() {
-                rest = addrs.encode(rest)?;
-            }
+            && !addrs.is_empty()
+        {
+            rest = addrs.encode(rest)?;
+        }
         if let Some(udx) = &self.udx {
             rest = udx.encode(rest)?;
         }
