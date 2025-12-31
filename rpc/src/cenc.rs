@@ -150,11 +150,10 @@ pub(crate) fn generic_hash_with_key(input: &[u8], key: &[u8]) -> Result<[u8; HAS
 }
 
 pub(crate) fn validate_id(id: &Option<[u8; ID_SIZE]>, from: &Peer) -> Option<IdBytes> {
-    if let Some(id) = id {
-        if id == &calculate_peer_id(from) {
+    if let Some(id) = id
+        && id == &calculate_peer_id(from) {
             return Some(IdBytes::from(*id));
         }
-    }
     None
 }
 

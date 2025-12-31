@@ -370,11 +370,10 @@ impl Query {
                     warn!(error = data.response.error, "Error in peer response");
                     self.stats.failure += 1;
                     self.peer_iter.on_failure(&data.peer);
-                    if let Some(ref remote) = remote {
-                        if let Some(state) = self.inner.peers_mut().get_mut(remote) {
+                    if let Some(ref remote) = remote
+                        && let Some(state) = self.inner.peers_mut().get_mut(remote) {
                             *state = PeerState::Failed;
                         }
-                    }
                     return None;
                 }
 
@@ -382,15 +381,14 @@ impl Query {
                 self.peer_iter
                     .on_success(&data.peer, &data.response.closer_nodes);
 
-                if let Some(token) = &data.response.token {
-                    if let Some(remote) = remote {
+                if let Some(token) = &data.response.token
+                    && let Some(remote) = remote {
                         self.inner.add_verified(
                             remote,
                             token.to_vec(),
                             Some(data.response.to.addr),
                         );
                     }
-                }
             }
         }
 

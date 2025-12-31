@@ -640,12 +640,11 @@ impl RpcDht {
         let now = Instant::now();
         _ = pin.stream_waker.insert(cx.waker().clone());
 
-        if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now) {
-            if pin.kbuckets.iter().count() < 20 {
+        if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now)
+            && pin.kbuckets.iter().count() < 20 {
                 debug!("next bootstrap_job running");
                 pin.bootstrap();
             }
-        }
 
         if let Poll::Ready(()) = pin.ping_job.poll(cx, now) {
             pin.ping_some();
@@ -1125,13 +1124,13 @@ impl RpcDht {
 
     /// Get the `num` closest nodes in the bucket.
     fn closer_nodes(&mut self, key: IdBytes, num: usize) -> Vec<Peer> {
-        let nodes = self
+        
+        self
             .kbuckets
             .closest(&key)
             .take(num)
             .map(|p| Peer::from(&p.node.value.addr))
-            .collect::<Vec<_>>();
-        nodes
+            .collect::<Vec<_>>()
         //PeersEncoding::encode(&nodes)
     }
     fn on_down_hint(&mut self, request: RequestMsgData, peer: Peer) {

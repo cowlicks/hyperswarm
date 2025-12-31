@@ -504,13 +504,12 @@ impl IoHandler {
     }
 
     fn start_send_next(&mut self) -> crate::Result<()> {
-        if self.pending_flush.is_none() {
-            if let Some(msg) = self.pending_send.pop_front() {
+        if self.pending_flush.is_none()
+            && let Some(msg) = self.pending_send.pop_front() {
                 self.inner_send(msg.clone())?;
                 self.pending_flush = Some(msg);
                 self.maybe_wake();
             }
-        }
         Ok(())
     }
 
