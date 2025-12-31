@@ -52,6 +52,7 @@ impl Deref for PublicKey {
 
 impl PublicKey {
     pub fn verify(&self, signature: Signature2, message: &[u8]) -> crate::Result<()> {
+        #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
         let res = unsafe {
             libsodium_sys::crypto_sign_verify_detached(
                 signature.0.as_ptr(),
@@ -80,6 +81,7 @@ impl Default for Keypair {
     fn default() -> Self {
         let mut public = [0; crypto_sign_PUBLICKEYBYTES as usize];
         let mut secret = [0; crypto_sign_SECRETKEYBYTES as usize];
+        #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
         let err = unsafe { crypto_sign_keypair(public.as_mut_ptr(), secret.as_mut_ptr()) };
         if err != 0 {
             todo!()
@@ -95,6 +97,7 @@ impl Keypair {
     pub fn from_seed(seed: [u8; crypto_sign_SEEDBYTES as usize]) -> Self {
         let mut public = [0; crypto_sign_PUBLICKEYBYTES as usize];
         let mut secret = [0; crypto_sign_SECRETKEYBYTES as usize];
+        #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
         let err = unsafe {
             crypto_sign_seed_keypair(public.as_mut_ptr(), secret.as_mut_ptr(), seed.as_ptr())
         };
@@ -108,6 +111,7 @@ impl Keypair {
     }
     pub fn sign(&self, value: &[u8]) -> Signature2 {
         let mut signature: [u8; 64] = [0u8; crypto_sign_BYTES as usize];
+        #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
         let err = unsafe {
             libsodium_sys::crypto_sign_detached(
                 signature.as_mut_ptr(),
@@ -193,13 +197,16 @@ pub mod namespace {
 
 pub fn generic_hash_batch(inputs: &[&[u8]]) -> [u8; 32] {
     let mut out = [0u8; libsodium_sys::crypto_generichash_BYTES as usize];
+    #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
     let mut st = vec![0u8; unsafe { libsodium_sys::crypto_generichash_statebytes() }];
+    #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
     let pst = unsafe {
         std::mem::transmute::<*mut u8, *mut libsodium_sys::crypto_generichash_state>(
             st.as_mut_ptr(),
         )
     };
 
+    #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
     if 0 != unsafe {
         libsodium_sys::crypto_generichash_init(pst, std::ptr::null_mut(), 0, out.len())
     } {
@@ -209,6 +216,7 @@ pub fn generic_hash_batch(inputs: &[&[u8]]) -> [u8; 32] {
     }
 
     for chunk in inputs {
+        #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
         if 0 != unsafe {
             libsodium_sys::crypto_generichash_update(pst, chunk.as_ptr(), chunk.len() as u64)
         } {
@@ -217,6 +225,7 @@ pub fn generic_hash_batch(inputs: &[&[u8]]) -> [u8; 32] {
             );
         }
     }
+    #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
     if 0 != unsafe { libsodium_sys::crypto_generichash_final(pst, out.as_mut_ptr(), out.len()) } {
         panic!(
             "Should only error when out-of-memory OR when the input is invalid. Inputs here or checked"
