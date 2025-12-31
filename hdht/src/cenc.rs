@@ -2,9 +2,9 @@
 // - 4 = number of bytes in an ipv4 addresses
 // - 2 = number of bytes in a port
 use compact_encoding::{
-    decode_usize, encode_usize_var, encoded_size_usize, map_decode, map_encode, map_first,
-    sum_encoded_size, take_array, vec_encoded_size_for_fixed_sized_elements, write_array,
-    CompactEncoding, EncodingError, VecEncodable, SOCKET_ADDR_V4_ENCODED_SIZE,
+    CompactEncoding, EncodingError, SOCKET_ADDR_V4_ENCODED_SIZE, VecEncodable, decode_usize,
+    encode_usize_var, encoded_size_usize, map_decode, map_encode, map_first, sum_encoded_size,
+    take_array, vec_encoded_size_for_fixed_sized_elements, write_array,
 };
 use std::net::{SocketAddrV4, SocketAddrV6};
 
@@ -475,11 +475,7 @@ impl CompactEncoding for RelayThroughInfo {
 
 macro_rules! ternary {
     ($cond:expr,  $if_true:expr, $if_false:expr) => {
-        if $cond {
-            $if_true
-        } else {
-            $if_false
-        }
+        if $cond { $if_true } else { $if_false }
     };
     (let Some($name:ident) = $opt:expr, $if_true:expr, $if_false:expr) => {
         if let Some($name) = $opt {

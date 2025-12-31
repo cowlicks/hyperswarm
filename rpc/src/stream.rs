@@ -130,7 +130,7 @@ impl std::fmt::Debug for MessageDataStream {
 }
 #[cfg(test)]
 mod test {
-    use crate::{message::ReplyMsgData, Peer};
+    use crate::{Peer, message::ReplyMsgData};
     use futures::{SinkExt, StreamExt};
 
     use super::*;

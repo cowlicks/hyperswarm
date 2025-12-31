@@ -4,13 +4,13 @@ use std::net::SocketAddr;
 use compact_encoding::CompactEncoding;
 use dht_rpc::IdBytes;
 use hyperdht::{
-    namespace, request_announce_or_unannounce_value, sign_announce_or_unannounce,
-    AnnounceRequestValue, Keypair,
+    AnnounceRequestValue, Keypair, namespace, request_announce_or_unannounce_value,
+    sign_announce_or_unannounce,
 };
 
 use common::{
-    js::{make_repl, KEYPAIR_JS},
     Result,
+    js::{KEYPAIR_JS, make_repl},
 };
 use rusty_nodejs_repl::Repl;
 

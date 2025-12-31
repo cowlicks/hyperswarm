@@ -1,11 +1,11 @@
 mod common;
 
-use dht_rpc::{cenc::generic_hash, commit::Commit, DhtConfig, IdBytes};
+use dht_rpc::{DhtConfig, IdBytes, cenc::generic_hash, commit::Commit};
 use futures::{SinkExt, StreamExt};
 use hypercore_handshake::CipherEvent;
-use hyperdht::{adht::Dht, Keypair};
+use hyperdht::{Keypair, adht::Dht};
 
-use common::{log, setup::Testnet, Result};
+use common::{Result, log, setup::Testnet};
 
 macro_rules! adht_setup {
     () => {{

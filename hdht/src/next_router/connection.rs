@@ -12,7 +12,7 @@ use hypercore_handshake::{Cipher, CipherEvent, CipherIo};
 use udx::HalfOpenStreamHandle;
 use uint24le_framing::Uint24LELengthPrefixedFraming;
 
-use crate::{cenc::NoisePayload, Error};
+use crate::{Error, cenc::NoisePayload};
 
 #[derive(Debug)]
 pub struct ReadyData {

@@ -2,18 +2,18 @@
 use std::hash::Hash;
 
 use ::dht_rpc::{
-    query::{CommandQuery, CommandQueryResponse},
     IdBytes,
+    query::{CommandQuery, CommandQueryResponse},
 };
 use ed25519_dalek::{PublicKey, Signature, SignatureError, Verifier};
 use lru::LruCache;
 use prost::Message;
 
 use crate::{
-    crypto::{self, VALUE_MAX_SIZE},
-    dht_proto::Mutable,
     ERR_INVALID_INPUT, ERR_INVALID_SEQ, ERR_SEQ_MUST_EXCEED_CURRENT, IMMUTABLE_STORE_CMD,
     MUTABLE_STORE_CMD,
+    crypto::{self, VALUE_MAX_SIZE},
+    dht_proto::Mutable,
 };
 
 /// PUT_VALUE_MAX_SIZE (1000B) + packet overhead (i.e. the key etc.) should be

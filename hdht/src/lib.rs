@@ -15,7 +15,7 @@ use cenc::{
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
 use compact_encoding::{CompactEncoding, EncodingError};
-use dht_rpc::{io::InResponse, IdBytes, RequestFutureError, RpcDhtBuilderError};
+use dht_rpc::{IdBytes, RequestFutureError, RpcDhtBuilderError, io::InResponse};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::warn;
 
@@ -32,7 +32,7 @@ mod store;
 pub mod adht;
 
 pub use crypto::{
-    make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce, Keypair,
+    Keypair, make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce,
 };
 
 /// The publicly available hyperswarm DHT addresses

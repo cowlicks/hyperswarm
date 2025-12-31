@@ -16,11 +16,11 @@ use tracing::{debug, info, instrument, trace, warn};
 use wasm_timer::Instant;
 
 use crate::{
+    IdBytes, PeerId,
     commit::{Commit, CommitEvent},
     constants::DEFAULT_COMMIT_CHANNEL_SIZE,
     io::InResponse,
     kbucket::{ALPHA_VALUE, K_VALUE},
-    IdBytes, PeerId,
 };
 
 mod closest;
@@ -31,7 +31,7 @@ use self::{
     peers::PeersIterState,
     table::{PeerState, QueryTable},
 };
-use super::{message::ReplyMsgData, Command, Peer};
+use super::{Command, Peer, message::ReplyMsgData};
 
 /// A `QueryPool` provides an aggregate state machine for driving `Query`s to
 /// completion.

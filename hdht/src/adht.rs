@@ -3,33 +3,34 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
+        atomic::{AtomicBool, Ordering::Relaxed},
     },
     task::{Context, Poll},
 };
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
+    AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
     cenc::generic_hash,
     commit::Commit,
     io::{InResponse, OutRequestBuilder},
     query::QueryId,
-    AsyncRpcDht, DhtConfig, IdBytes, Peer, QueryNext, RpcDhtRequestFuture,
 };
-use futures::{future::join_all, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
 use tracing::{error, instrument, trace};
 
 use crate::{
+    DEFAULT_BOOTSTRAP, Error, Keypair, Result,
     cenc::{
-        firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder,
+        NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
     },
     commands,
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
-    next_router::{connection::Connection, StreamIdMaker},
-    request_announce_or_unannounce_value, Error, Keypair, Result, DEFAULT_BOOTSTRAP,
+    next_router::{StreamIdMaker, connection::Connection},
+    request_announce_or_unannounce_value,
 };
 
 #[derive(Debug)]

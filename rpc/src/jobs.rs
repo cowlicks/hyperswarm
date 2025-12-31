@@ -1,8 +1,8 @@
 use std::{pin::Pin, time::Duration};
 
 use futures::{
-    task::{Context, Poll},
     Future,
+    task::{Context, Poll},
 };
 use wasm_timer::{Delay, Instant};
 

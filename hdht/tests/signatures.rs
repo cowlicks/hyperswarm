@@ -1,7 +1,7 @@
 //! Given some known good values (they came from adding `console.log(...)` in JS hyperdht)
 //! Check that the signature RS creates from values is verified by JS
 //! And likewise JS signature is verified by RS
-use common::{js::make_repl, Result};
+use common::{Result, js::make_repl};
 use dht_rpc::IdBytes;
 use rusty_nodejs_repl::Repl;
 

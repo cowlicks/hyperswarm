@@ -6,7 +6,7 @@ use std::{collections::BTreeSet, iter::FromIterator, net::SocketAddr};
 
 use crate::{constants::DEFAULT_COMMIT_CHANNEL_SIZE, io::Tid};
 
-use crate::{query::QueryId, Command, IdBytes};
+use crate::{Command, IdBytes, query::QueryId};
 
 /// Emitted from a query's commit
 #[derive(Debug)]

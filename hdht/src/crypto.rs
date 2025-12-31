@@ -4,7 +4,7 @@ use std::{
 };
 
 use blake2::VarBlake2b;
-use compact_encoding::{write_array, CompactEncoding};
+use compact_encoding::{CompactEncoding, write_array};
 use libsodium_sys::{
     crypto_sign_BYTES, crypto_sign_PUBLICKEYBYTES, crypto_sign_SECRETKEYBYTES,
     crypto_sign_SEEDBYTES, crypto_sign_keypair, crypto_sign_seed_keypair,
@@ -203,18 +203,24 @@ pub fn generic_hash_batch(inputs: &[&[u8]]) -> [u8; 32] {
     if 0 != unsafe {
         libsodium_sys::crypto_generichash_init(pst, std::ptr::null_mut(), 0, out.len())
     } {
-        panic!("Should only error when out-of-memory OR when the input is invalid. Inputs here or checked");
+        panic!(
+            "Should only error when out-of-memory OR when the input is invalid. Inputs here or checked"
+        );
     }
 
     for chunk in inputs {
         if 0 != unsafe {
             libsodium_sys::crypto_generichash_update(pst, chunk.as_ptr(), chunk.len() as u64)
         } {
-            panic!("Should only error when out-of-memory OR when the input is invalid. Inputs here or checked");
+            panic!(
+                "Should only error when out-of-memory OR when the input is invalid. Inputs here or checked"
+            );
         }
     }
     if 0 != unsafe { libsodium_sys::crypto_generichash_final(pst, out.as_mut_ptr(), out.len()) } {
-        panic!("Should only error when out-of-memory OR when the input is invalid. Inputs here or checked");
+        panic!(
+            "Should only error when out-of-memory OR when the input is invalid. Inputs here or checked"
+        );
     }
     out
 }
@@ -309,7 +315,9 @@ mod test {
 
         assert_eq!(
             sign.as_slice(),
-            &[51, 58, 115, 101, 113, 105, 48, 101, 49, 58, 118, 53, 58, 118, 97, 108, 117, 101][..]
+            &[
+                51, 58, 115, 101, 113, 105, 48, 101, 49, 58, 118, 53, 58, 118, 97, 108, 117, 101
+            ][..]
         );
 
         assert_eq!(

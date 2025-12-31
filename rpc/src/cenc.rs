@@ -4,15 +4,15 @@ use std::{
 };
 
 use compact_encoding::{
-    decode_usize, encode_usize_var, encoded_size_usize, map_decode, take_array,
-    vec_encoded_size_for_fixed_sized_elements, write_array, CompactEncoding, EncodingError,
-    VecEncodable,
+    CompactEncoding, EncodingError, VecEncodable, decode_usize, encode_usize_var,
+    encoded_size_usize, map_decode, take_array, vec_encoded_size_for_fixed_sized_elements,
+    write_array,
 };
 
 use crate::{
+    Command, Error, ExternalCommand, IdBytes, InternalCommand, Peer, Result,
     constants::{HASH_SIZE, ID_SIZE, REQUEST_ID, RESPONSE_ID},
     message::{MsgData, ReplyMsgData, RequestMsgData},
-    Command, Error, ExternalCommand, IdBytes, InternalCommand, Peer, Result,
 };
 
 impl CompactEncoding for InternalCommand {
@@ -158,11 +158,7 @@ pub(crate) fn validate_id(id: &Option<[u8; ID_SIZE]>, from: &Peer) -> Option<IdB
 
 macro_rules! maybe_add_flag {
     ($cond:expr, $shift:expr) => {
-        if $cond {
-            1 << $shift
-        } else {
-            0
-        }
+        if $cond { 1 << $shift } else { 0 }
     };
 }
 
@@ -386,7 +382,11 @@ impl CompactEncoding for MsgData {
                 let (msg, rest) = ReplyMsgData::decode(buffer)?;
                 (MsgData::Reply(msg), rest)
             }
-            _ => return Err(EncodingError::invalid_data(&format!("Could not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"))),
+            _ => {
+                return Err(EncodingError::invalid_data(&format!(
+                    "Could not decode MsgData. The first byte [{req_resp_flag}] did not match the request [{REQUEST_ID}] or response [{RESPONSE_ID}] flags"
+                )));
+            }
         })
     }
 }

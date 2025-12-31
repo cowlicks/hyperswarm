@@ -15,14 +15,14 @@ mod stateobserver;
 mod stream;
 mod util;
 
-pub use futreqs::{new_request_channel, Error as RequestFutureError, RequestFuture, RequestSender};
+pub use futreqs::{Error as RequestFutureError, RequestFuture, RequestSender, new_request_channel};
 
 #[cfg(test)]
 mod s_test;
 #[cfg(test)]
 pub mod test;
 use constants::ID_BYTES_LENGTH;
-use futures::{channel::mpsc, Stream};
+use futures::{Stream, channel::mpsc};
 use io::OutRequestBuilder;
 use query::{CommandQueryResponse, QueryResult};
 use std::{
@@ -44,8 +44,8 @@ use tracing::{debug, error, instrument, trace, warn};
 use wasm_timer::Instant;
 
 use rand::{
-    rngs::{OsRng, StdRng},
     RngCore, SeedableRng,
+    rngs::{OsRng, StdRng},
 };
 
 use crate::{
@@ -53,20 +53,21 @@ use crate::{
     commit::{Commit, CommitMessage, Progress},
     io::InResponse,
     jobs::PeriodicJob,
-    kbucket::{distance, Distance},
-    kbucket::{Entry, EntryView, InsertResult, KBucketsTable, NodeStatus, K_VALUE},
+    kbucket::{
+        Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,
+    },
     query::QueryId,
     util::pretty_bytes,
 };
 use compact_encoding::EncodingError;
-use tokio::sync::oneshot::{self, error::RecvError, Receiver, Sender};
+use tokio::sync::oneshot::{self, Receiver, Sender, error::RecvError};
 
 pub use self::message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner};
 use self::{
     io::{IoConfig, IoHandler, IoHandlerEvent},
     query::{
-        table::PeerState, CommandQuery, Query, QueryConfig, QueryEvent, QueryPool, QueryPoolEvent,
-        QueryStats,
+        CommandQuery, Query, QueryConfig, QueryEvent, QueryPool, QueryPoolEvent, QueryStats,
+        table::PeerState,
     },
     stateobserver::State,
     stream::MessageDataStream,
@@ -952,7 +953,10 @@ impl RpcDht {
                         }
                     }
                 } else {
-                    debug!("Recieved response for missing query with id: {:?}. It could have been removed already", resp_data.query_id);
+                    debug!(
+                        "Recieved response for missing query with id: {:?}. It could have been removed already",
+                        resp_data.query_id
+                    );
                 }
             }
             None => match resp_data.request.command {
@@ -1714,8 +1718,8 @@ impl Borrow<[u8]> for PeerId {
 #[inline]
 pub fn fill_random_bytes(dest: &mut [u8]) {
     use rand::{
-        rngs::{OsRng, StdRng},
         RngCore, SeedableRng,
+        rngs::{OsRng, StdRng},
     };
     let mut rng = StdRng::from_rng(OsRng).unwrap();
     rng.fill_bytes(dest)
