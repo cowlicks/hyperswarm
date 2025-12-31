@@ -15,7 +15,7 @@ pub mod cenc;
 pub mod commit;
 mod constants;
 mod futreqs;
-pub mod io;
+mod io;
 mod jobs;
 mod kbucket;
 mod message;
@@ -26,13 +26,14 @@ mod util;
 
 pub use futreqs::{Error as RequestFutureError, RequestFuture, RequestSender, new_request_channel};
 
+pub use io::{InResponse, OutRequestBuilder};
+
 #[cfg(test)]
 mod s_test;
 #[cfg(test)]
 pub mod test;
 use constants::ID_BYTES_LENGTH;
 use futures::{Stream, channel::mpsc};
-use io::OutRequestBuilder;
 use query::{CommandQueryResponse, QueryResult};
 use std::{
     array::TryFromSliceError,
@@ -60,7 +61,6 @@ use rand::{
 use crate::{
     cenc::{generic_hash, validate_id},
     commit::{Commit, CommitMessage, Progress},
-    io::InResponse,
     jobs::PeriodicJob,
     kbucket::{
         Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,

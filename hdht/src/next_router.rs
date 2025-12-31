@@ -9,7 +9,7 @@ use std::{
 };
 
 use compact_encoding::CompactEncoding;
-use dht_rpc::{Tid, io::InResponse};
+use dht_rpc::{InResponse, Tid};
 use udx::UdxSocket;
 
 use hypercore_handshake::{Cipher, CipherEvent};

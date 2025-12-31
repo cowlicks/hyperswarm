@@ -24,7 +24,7 @@ use cenc::{
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
 use compact_encoding::{CompactEncoding, EncodingError};
-use dht_rpc::{IdBytes, RequestFutureError, RpcDhtBuilderError, io::InResponse};
+use dht_rpc::{IdBytes, InResponse, RequestFutureError, RpcDhtBuilderError};
 use tokio::sync::oneshot::error::RecvError;
 
 use crate::cenc::HandshakeSteps;
