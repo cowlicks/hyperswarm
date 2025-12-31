@@ -4,7 +4,7 @@ use futures::StreamExt;
 
 use crate::{DEFAULT_BOOTSTRAP, DhtConfig, Peer, RpcInner};
 
-use super::RpcDhtEvent;
+use super::RpcEvent;
 
 #[allow(unused)]
 pub fn log() {
@@ -30,7 +30,7 @@ async fn bootstrap() -> crate::Result<()> {
     rpc.bootstrap();
     let mut i = 0;
     loop {
-        if let Some(RpcDhtEvent::QueryResult { .. }) = rpc.next().await {
+        if let Some(RpcEvent::QueryResult { .. }) = rpc.next().await {
             break;
         };
         dbg!(i);
@@ -52,7 +52,7 @@ async fn ping() -> crate::Result<()> {
     rpc.bootstrap();
     let mut i = 0;
     loop {
-        if let Some(RpcDhtEvent::QueryResult { .. }) = rpc.next().await {
+        if let Some(RpcEvent::QueryResult { .. }) = rpc.next().await {
             break;
         };
         i += 1;

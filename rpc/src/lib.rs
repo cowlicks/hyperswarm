@@ -280,7 +280,7 @@ pub struct RpcInner {
     #[expect(unused)]
     commands: HashSet<usize>,
     /// Queued events to return when being polled.
-    queued_events: VecDeque<RpcDhtEvent>,
+    queued_events: VecDeque<RpcEvent>,
     #[builder(field(ty = "Vec<SocketAddr>"))]
     bootstrap_nodes: Vec<SocketAddr>,
     bootstrapped: bool,
@@ -426,7 +426,7 @@ impl Rpc {
 }
 
 impl Stream for Rpc {
-    type Item = RpcDhtEvent;
+    type Item = RpcEvent;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut inner = self.inner.lock().unwrap();
@@ -644,7 +644,7 @@ impl RpcInner {
         self.pending_query_streams.insert(qid, tx);
     }
 
-    fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
+    fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcEvent>> {
         let pin = self.get_mut();
         let now = Instant::now();
         _ = pin.stream_waker.insert(cx.waker().clone());
@@ -688,7 +688,7 @@ impl RpcInner {
                                         C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
                                 }
                                 E::CustomStart((tx_commit_messages, _)) => {
-                                    return Poll::Ready(Some(RpcDhtEvent::ReadyToCommit {
+                                    return Poll::Ready(Some(RpcEvent::ReadyToCommit {
                                         query,
                                         tx_commit_messages,
                                     }));
@@ -773,7 +773,7 @@ impl RpcInner {
         }
     }
 
-    fn enque_stream_event(&mut self, event: RpcDhtEvent) {
+    fn enque_stream_event(&mut self, event: RpcEvent) {
         self.queued_events.push_back(event);
         if let Some(w) = self.stream_waker.take() {
             w.wake()
@@ -846,7 +846,7 @@ impl RpcInner {
                 _ = tx.send(e.clone());
             }
 
-            self.enque_stream_event(RpcDhtEvent::Bootstrapped(e));
+            self.enque_stream_event(RpcEvent::Bootstrapped(e));
             self.bootstrapped = true;
         }
     }
@@ -965,10 +965,10 @@ impl RpcInner {
                     if let Some(resp) = query.write().unwrap().inject_response(resp_data) {
                         // TODO remove ResponoseResult here and relpace downstream with
                         // QueryResponse
-                        self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(
+                        self.enque_stream_event(RpcEvent::ResponseResult(Ok(
                             ResponseOk::Response(resp.clone()),
                         )));
-                        self.enque_stream_event(RpcDhtEvent::QueryResponse(resp.clone()));
+                        self.enque_stream_event(RpcEvent::QueryResponse(resp.clone()));
                         if let Some(tx) = self.pending_query_streams.get(&query_id) {
                             let _ = tx.clone().try_send(resp.clone()).inspect_err(|e| {
                                 error!("Failed to send response to query stream: {e:?}")
@@ -987,7 +987,7 @@ impl RpcInner {
                     self.on_pong(&resp_data.response, resp_data.peer.clone());
                 }
                 Command::External(_) => {
-                    self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(
+                    self.enque_stream_event(RpcEvent::ResponseResult(Ok(ResponseOk::Response(
                         resp_data,
                     ))));
                 }
@@ -1047,7 +1047,7 @@ impl RpcInner {
                 use InsertResult as Ir;
                 match entry.insert(node, NodeStatus::Connected) {
                     Ir::Inserted => {
-                        self.enque_stream_event(RpcDhtEvent::RoutingUpdated {
+                        self.enque_stream_event(RpcEvent::RoutingUpdated {
                             peer,
                             old_peer: None,
                         });
@@ -1270,7 +1270,7 @@ impl RpcInner {
             }
         }
 
-        self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
+        self.enque_stream_event(RpcEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
     }
 
     fn default_commit(&mut self, query: Arc<RwLock<Query>>) -> Vec<Tid> {
@@ -1358,7 +1358,7 @@ impl RpcInner {
 
     /// Handles a finished query.
     #[instrument(skip_all)]
-    fn query_finished(&mut self, query: Arc<RwLock<Query>>) -> RpcDhtEvent {
+    fn query_finished(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
         let is_find_node = matches!(
             query.read().unwrap().command(),
             Command::Internal(InternalCommand::FindNode)
@@ -1402,7 +1402,7 @@ impl RpcInner {
                 _ = tx.send(e.clone());
             }
 
-            RpcDhtEvent::Bootstrapped(e)
+            RpcEvent::Bootstrapped(e)
         } else {
             let result = Arc::new(result);
             if let Some(tx) = self.pending_queries.remove(&result.query_id) {
@@ -1418,11 +1418,11 @@ impl RpcInner {
                 cmd = tracing::field::display(result.cmd),
                 "Query result ready"
             );
-            RpcDhtEvent::QueryResult(result)
+            RpcEvent::QueryResult(result)
         }
     }
     /// Handles a query that timed out.
-    fn query_timeout(&mut self, query: Arc<RwLock<Query>>) -> RpcDhtEvent {
+    fn query_timeout(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
         self.query_finished(query)
     }
 
@@ -1436,7 +1436,7 @@ impl RpcInner {
 }
 
 #[derive(Debug)]
-pub enum RpcDhtEvent {
+pub enum RpcEvent {
     /// Result wrapping an incomming Request
     /// Only emits Ok on custom commands. Errs on any request error (custom or non-custom)
     RequestResult(RequestResult),
@@ -1534,7 +1534,7 @@ pub enum ResponseError {
 }
 
 impl Stream for RpcInner {
-    type Item = RpcDhtEvent;
+    type Item = RpcEvent;
 
     #[instrument(skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
