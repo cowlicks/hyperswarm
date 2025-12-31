@@ -1,10 +1,7 @@
 #![expect(unused)]
 use std::hash::Hash;
 
-use ::dht_rpc::{
-    IdBytes,
-    query::{CommandQuery, CommandQueryResponse},
-};
+use ::dht_rpc::{CommandQuery, CommandQueryResponse, IdBytes};
 use ed25519_dalek::{PublicKey, Signature, SignatureError, Verifier};
 use lru::LruCache;
 use prost::Message;

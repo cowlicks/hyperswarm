@@ -11,22 +11,27 @@
     clippy::enum_glob_use
 )]
 
-pub mod cenc;
-pub mod commit;
+mod cenc;
+mod commit;
 mod constants;
 mod futreqs;
 mod io;
 mod jobs;
 mod kbucket;
 mod message;
-pub mod query;
+mod query;
 mod stateobserver;
 mod stream;
 mod util;
 
-pub use futreqs::{Error as RequestFutureError, RequestFuture, RequestSender, new_request_channel};
-
-pub use io::{InResponse, OutRequestBuilder};
+pub use crate::{
+    cenc::generic_hash,
+    commit::Commit,
+    futreqs::Error as RequestFutureError,
+    io::{InResponse, OutRequestBuilder},
+    message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
+    query::{CommandQuery, CommandQueryResponse, QueryId, QueryResult},
+};
 
 #[cfg(test)]
 mod s_test;
@@ -34,7 +39,6 @@ mod s_test;
 pub mod test;
 use constants::ID_BYTES_LENGTH;
 use futures::{Stream, channel::mpsc};
-use query::{CommandQueryResponse, QueryResult};
 use std::{
     array::TryFromSliceError,
     borrow::Borrow,
@@ -59,24 +63,21 @@ use rand::{
 };
 
 use crate::{
-    cenc::{generic_hash, validate_id},
-    commit::{Commit, CommitMessage, Progress},
+    cenc::validate_id,
+    commit::{CommitMessage, Progress},
     jobs::PeriodicJob,
     kbucket::{
         Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,
     },
-    query::QueryId,
     util::pretty_bytes,
 };
 use compact_encoding::EncodingError;
 use tokio::sync::oneshot::{self, Receiver, Sender, error::RecvError};
 
-pub use self::message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner};
 use self::{
     io::{IoConfig, IoHandler, IoHandlerEvent},
     query::{
-        CommandQuery, Query, QueryConfig, QueryEvent, QueryPool, QueryPoolEvent, QueryStats,
-        table::PeerState,
+        Query, QueryConfig, QueryEvent, QueryPool, QueryPoolEvent, QueryStats, table::PeerState,
     },
     stateobserver::State,
     stream::MessageDataStream,
@@ -152,12 +153,16 @@ pub enum InternalCommand {
     DownHint,
 }
 
+/// Query Commands
 pub mod commands {
     use crate::Command;
+    /// Ping
     pub const PING: Command = Command::Internal(crate::InternalCommand::Ping);
+    /// Ping NAT
     pub const PING_NAT: Command = Command::Internal(crate::InternalCommand::PingNat);
-    // needs target
+    /// Find node
     pub const FIND_NODE: Command = Command::Internal(crate::InternalCommand::FindNode);
+    /// Down hint
     pub const DOWN_HINT: Command = Command::Internal(crate::InternalCommand::DownHint);
 }
 

@@ -11,8 +11,8 @@ use std::{
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    AsyncRpcDht, DhtConfig, IdBytes, InResponse, OutRequestBuilder, Peer, QueryNext,
-    RpcDhtRequestFuture, cenc::generic_hash, commit::Commit, query::QueryId,
+    AsyncRpcDht, Commit, DhtConfig, IdBytes, InResponse, OutRequestBuilder, Peer, QueryId,
+    QueryNext, RpcDhtRequestFuture, generic_hash,
 };
 use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
