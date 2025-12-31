@@ -111,6 +111,7 @@ pub(crate) fn calculate_peer_id(from: &Peer) -> [u8; ID_SIZE] {
     id_from_socket(&from.addr)
 }
 
+#[allow(unsafe_code, reason = "needed for libsodium bindings")]
 pub fn generic_hash(input: &[u8]) -> [u8; HASH_SIZE] {
     let mut out = [0; HASH_SIZE];
     let ret = unsafe {
@@ -129,6 +130,7 @@ pub fn generic_hash(input: &[u8]) -> [u8; HASH_SIZE] {
     out
 }
 
+#[allow(unsafe_code, reason = "needed for libsodium bindings")]
 pub(crate) fn generic_hash_with_key(input: &[u8], key: &[u8]) -> Result<[u8; HASH_SIZE]> {
     let mut out = [0; HASH_SIZE];
     let ret = unsafe {
