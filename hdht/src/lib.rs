@@ -122,6 +122,10 @@ pub enum Error {
     // TODO make err  more useful here
     #[error("Peer handshake failed: {0}")]
     PeerHandshakeFailed(String),
+    //TODO add useful data
+    /// Failed to connect
+    #[error("Failed to connect")]
+    ConnectionFailed,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -77,7 +77,7 @@ impl Dht {
                 return Ok(conn);
             }
         }
-        todo!()
+        Err(crate::Error::ConnectionFailed)
     }
     pub fn create_server(&self, target: IdBytes) -> Server {
         todo!()
