@@ -142,6 +142,9 @@ impl Dht {
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         self.rpc.request_from_builder(o)
     }
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.rpc.local_addr()?)
+    }
 
     pub fn peer_handshake(
         &self,
