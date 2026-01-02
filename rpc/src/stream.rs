@@ -67,11 +67,6 @@ impl Stream for MessageDataStream {
                 // Try to decode the received message
                 match MsgData::decode(&buff) {
                     Ok((msg, _rest)) => {
-                        trace!(
-                            msg.tid = msg.tid(),
-                            to =?addr,
-                            "RX"
-                        );
                         debug_assert!(_rest.is_empty());
 
                         self.recv_queue.push_back((msg, addr));
@@ -102,11 +97,6 @@ impl Sink<(MsgData, SocketAddr)> for MessageDataStream {
 
     fn start_send(self: Pin<&mut Self>, item: (MsgData, SocketAddr)) -> Result<()> {
         let (message, addr) = item;
-        trace!(
-            msg.tid = message.tid(),
-            to =?addr,
-            "TX"
-        );
         let buff = message.to_encoded_bytes()?;
         self.socket.send(addr, &buff);
         Ok(())

@@ -431,11 +431,6 @@ impl IoHandler {
             return IoHandlerEvent::ChanneledResponse(tid);
         }
         if let Some(req) = self.pending_recv.remove(&recv.tid) {
-            trace!(
-                msg.tid = recv.tid,
-                cmd = tracing::field::display(&req.message.command),
-                "RX:Response"
-            );
             return IoHandlerEvent::InResponse(Arc::new(InResponse::new(
                 Box::new(req.message),
                 recv,
@@ -452,8 +447,14 @@ impl IoHandler {
     fn on_message(&mut self, msg: MsgData, rinfo: SocketAddr) -> IoHandlerEvent {
         let peer = Peer::from(&rinfo);
         match msg {
-            MsgData::Request(req) => IoHandlerEvent::InRequest { message: req, peer },
-            MsgData::Reply(rep) => self.on_response(rep, peer),
+            MsgData::Request(req) => {
+                trace!(tid = req.tid, command =? req.command, "RX:Request");
+                IoHandlerEvent::InRequest { message: req, peer }
+            }
+            MsgData::Reply(rep) => {
+                trace!(tid = rep.tid, "RX:Reply");
+                self.on_response(rep, peer)
+            }
         }
     }
 
@@ -514,6 +515,10 @@ impl IoHandler {
 
     fn inner_send(&mut self, msg: OutMessage) -> crate::Result<()> {
         let addr = SocketAddr::from(&msg.to());
+        match &msg {
+            OutMessage::Request(r) => trace!(tid = r.1.tid, command =% r.1.command, "TX:Request"),
+            OutMessage::Reply(r) => trace!(tid = r.tid, "TX:Reply"),
+        }
         Sink::start_send(Pin::new(&mut self.message_stream), (msg.inner(), addr))
     }
     fn maybe_wake(&mut self) {
