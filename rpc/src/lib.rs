@@ -1536,7 +1536,6 @@ pub enum ResponseError {
 impl Stream for RpcInner {
     type Item = RpcEvent;
 
-    #[instrument(skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.poll_next_inner(cx)
     }
