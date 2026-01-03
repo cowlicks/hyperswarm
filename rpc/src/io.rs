@@ -448,7 +448,7 @@ impl IoHandler {
         let peer = Peer::from(&rinfo);
         match msg {
             MsgData::Request(req) => {
-                trace!(tid = req.tid, command =? req.command, "RX:Request");
+                trace!(tid = req.tid, command =% req.command, "RX:Request");
                 IoHandlerEvent::InRequest { message: req, peer }
             }
             MsgData::Reply(rep) => {

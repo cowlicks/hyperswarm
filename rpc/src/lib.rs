@@ -671,7 +671,10 @@ impl RpcInner {
             loop {
                 if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
                     debug!("RpcDht got IoHandlerEvent::{event}");
-                    pin.inject_event(event);
+                    if let Ok(Some(e)) = pin.inject_event(event) {
+                        cx.waker().wake_by_ref();
+                        return Poll::Ready(Some(e));
+                    }
                     if let Some(event) = pin.queued_events.pop_front() {
                         trace!("emit queue event: {event:?}");
                         return Poll::Ready(Some(event));
@@ -914,12 +917,12 @@ impl RpcInner {
     }
 
     /// Handle the event generated from the underlying IO
-    fn inject_event(&mut self, event: IoHandlerEvent) {
+    fn inject_event(&mut self, event: IoHandlerEvent) -> Result<Option<RpcEvent>> {
         match event {
             IoHandlerEvent::OutResponse { .. } => {}
             IoHandlerEvent::OutSocketErr { .. } => {}
             IoHandlerEvent::InRequest { message, peer } => {
-                self.on_request(message, peer);
+                return self.on_request(message, peer);
             }
             IoHandlerEvent::InMessageErr { .. } => {}
             IoHandlerEvent::InSocketErr { .. } => {}
@@ -941,6 +944,7 @@ impl RpcInner {
                 trace!(msg.id = tid, "Passed io response through channel")
             }
         }
+        Ok(None)
     }
 
     /// Process a response.
@@ -1001,20 +1005,27 @@ impl RpcInner {
     /// Handle an incoming request.
     ///
     /// Eventually send a response.
-    fn on_request(&mut self, msg: RequestMsgData, peer: Peer) {
-        if let Some(id) = validate_id(&msg.id, &peer) {
-            self.add_node(id, peer.clone(), None, Some(SocketAddr::from(&msg.to)));
+    fn on_request(&mut self, request: RequestMsgData, peer: Peer) -> Result<Option<RpcEvent>> {
+        if let Some(id) = validate_id(&request.id, &peer) {
+            self.add_node(id, peer.clone(), None, Some(SocketAddr::from(&request.to)));
         }
 
-        match msg.command {
+        match request.command {
             Command::Internal(cmd) => match cmd {
-                InternalCommand::Ping => self.on_ping(msg, &peer),
-                InternalCommand::FindNode => self.on_find_node(msg, peer),
-                InternalCommand::PingNat => self.on_ping_nat(msg, peer),
-                InternalCommand::DownHint => self.on_down_hint(msg, peer),
+                InternalCommand::Ping => self.on_ping(request, &peer),
+                InternalCommand::FindNode => self.on_find_node(request, peer),
+                InternalCommand::PingNat => self.on_ping_nat(request, peer),
+                InternalCommand::DownHint => self.on_down_hint(request, peer),
             },
-            Command::External(_cmd) => todo!(),
+            Command::External(_cmd) => {
+                dbg!();
+                return Ok(Some(RpcEvent::RequestResult(Ok(CustomCommandRequest {
+                    request: Box::new(request),
+                    peer,
+                }))));
+            }
         }
+        Ok(None)
     }
 
     fn add_node(
@@ -1468,28 +1479,25 @@ pub enum RpcEvent {
     QueryResponse(Arc<InResponse>),
 }
 
-pub type RequestResult = std::result::Result<RequestOk, RequestError>;
-
 #[derive(Debug)]
 pub struct Bootstrapped {
     /// Execution statistics from the bootstrap query.
     pub stats: QueryStats,
 }
 
+pub type RequestResult = std::result::Result<CustomCommandRequest, RequestError>;
+
+/// Custom incoming request to a registered command
+///
+/// # Note
+///
+/// Custom commands are not automatically replied to and need to be answered
+/// manually
+/// The query we received and need to respond to
 #[derive(Debug)]
-pub enum RequestOk {
-    /// Custom incoming request to a registered command
-    ///
-    /// # Note
-    ///
-    /// Custom commands are not automatically replied to and need to be answered
-    /// manually
-    CustomCommandRequest {
-        /// The query we received and need to respond to
-        query: CommandQuery,
-        request: Box<RequestMsgData>,
-        peer: Peer, // maybe peerid? or SocketAddr
-    },
+pub struct CustomCommandRequest {
+    request: Box<RequestMsgData>,
+    peer: Peer, // maybe peerid? or SocketAddr
 }
 
 #[derive(Debug)]
