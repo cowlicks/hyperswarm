@@ -32,7 +32,7 @@ async fn wip_bootstrap() -> Result<()> {
                 println!("A = {a_evt:?}");
                 match a_evt {
                     RpcEvent::ReadyToCommit { .. } => println!("ready to commit"),
-                    RpcEvent::RequestResult(_res) => println!("request result"),
+                    RpcEvent::CustomRequest(_res) => println!("request result"),
                     RpcEvent::ResponseResult(_) => println!("response result"),
                     RpcEvent::RoutingUpdated { .. } => println!("routing updated"),
                     RpcEvent::QueryResult { .. } => println!("query result"),
@@ -59,7 +59,7 @@ async fn wip_bootstrap() -> Result<()> {
         {
             println!("B = {b_evt:?}");
             match b_evt {
-                RpcEvent::RequestResult(_res) => println!("request result"),
+                RpcEvent::CustomRequest(_res) => println!("request result"),
                 RpcEvent::ResponseResult(_) => println!("response result"),
                 RpcEvent::RoutingUpdated { .. } => println!("routing updated"),
                 RpcEvent::ReadyToCommit { .. } => println!("ready to commit"),

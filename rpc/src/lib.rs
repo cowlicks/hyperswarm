@@ -330,7 +330,7 @@ impl Rpc {
     }
 
     // TODO Error on timeout
-    pub async fn bootstrap(&self) -> Result<Arc<Bootstrapped>> {
+    pub fn bootstrap(&self) -> BootstrapFuture {
         let (tx, rx) = oneshot::channel();
         {
             let mut inner = self.inner.lock().unwrap();
@@ -341,7 +341,6 @@ impl Rpc {
             inner: self.inner.clone(),
             rx,
         }
-        .await
     }
 
     pub fn request(
@@ -477,7 +476,7 @@ macro_rules! future_poller {
     }};
 }
 
-struct BootstrapFuture {
+pub struct BootstrapFuture {
     inner: Arc<Mutex<RpcInner>>,
     rx: Receiver<Arc<Bootstrapped>>,
 }
@@ -1017,12 +1016,12 @@ impl RpcInner {
                 InternalCommand::PingNat => self.on_ping_nat(request, peer),
                 InternalCommand::DownHint => self.on_down_hint(request, peer),
             },
-            Command::External(_cmd) => {
-                dbg!();
-                return Ok(Some(RpcEvent::RequestResult(Ok(CustomCommandRequest {
+            Command::External(command) => {
+                return Ok(Some(RpcEvent::CustomRequest(CustomCommandRequest {
                     request: Box::new(request),
                     peer,
-                }))));
+                    command,
+                })));
             }
         }
         Ok(None)
@@ -1450,7 +1449,7 @@ impl RpcInner {
 pub enum RpcEvent {
     /// Result wrapping an incomming Request
     /// Only emits Ok on custom/external commands. Errs on any request error (custom or non-custom)
-    RequestResult(RequestResult),
+    CustomRequest(CustomCommandRequest),
     /// Result wrapping an incomming Response
     /// Emits for any valid response
     ResponseResult(ResponseResult),
@@ -1485,8 +1484,6 @@ pub struct Bootstrapped {
     pub stats: QueryStats,
 }
 
-pub type RequestResult = std::result::Result<CustomCommandRequest, RequestError>;
-
 /// Custom incoming request to a registered command
 ///
 /// # Note
@@ -1496,8 +1493,10 @@ pub type RequestResult = std::result::Result<CustomCommandRequest, RequestError>
 /// The query we received and need to respond to
 #[derive(Debug)]
 pub struct CustomCommandRequest {
-    request: Box<RequestMsgData>,
-    peer: Peer, // maybe peerid? or SocketAddr
+    pub request: Box<RequestMsgData>,
+    /// Peer that sent th erequest
+    pub peer: Peer, // maybe peerid? or SocketAddr
+    pub command: ExternalCommand,
 }
 
 #[derive(Debug)]
