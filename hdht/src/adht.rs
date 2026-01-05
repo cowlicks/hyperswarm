@@ -94,11 +94,16 @@ impl Dht {
     ) -> AnnounceClear {
         self.inner.announce_clear(target, key_pair, relay_addresses)
     }
+    pub async fn next_connection(&mut self) -> Result<()> {
+        dbg!(self.inner.next().await);
+        Ok(())
+    }
 }
 
 pub struct DhtInner {
     rpc: Rpc,
     id_maker: StreamIdMaker,
+    default_keypair: Keypair,
 }
 
 impl DhtInner {
@@ -114,7 +119,41 @@ impl DhtInner {
         Ok(Self {
             rpc: Rpc::with_config(config).await?,
             id_maker: StreamIdMaker::new(),
+            default_keypair: Default::default(),
         })
+    }
+
+    pub fn on_request(
+        &self,
+        CustomCommandRequest {
+            request,
+            peer,
+            command: ExternalCommand(command),
+        }: CustomCommandRequest,
+    ) -> Result<()> {
+        use crate::commands::values;
+        match command {
+            values::PEER_HANDSHAKE => self.on_peer_handshake(*request, peer)?,
+            values::PEER_HOLEPUNCH => todo!(),
+            values::FIND_PEER => todo!(),
+            values::LOOKUP => todo!(),
+            values::ANNOUNCE => todo!(),
+            values::UNANNOUNCE => todo!(),
+            x => todo!("{x}"),
+        }
+        Ok(())
+    }
+
+    pub fn on_peer_handshake(&self, request: RequestMsgData, peer: Peer) -> Result<()> {
+        let Some(value) = request.value else { todo!() };
+        let (php, rest) = PeerHandshakePayload::decode(&value)?;
+        debug_assert!(rest.is_empty());
+        let mut hs = Cipher::resp_from_private(None, &self.default_keypair.secret)?;
+        hs.receive_next(php.noise);
+        let msg = hs.get_next_sendable_message()?;
+        dbg!(&msg);
+
+        todo!()
     }
 
     pub fn bootstrap(&self) -> BootstrapFuture {
