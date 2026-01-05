@@ -12,7 +12,8 @@ use std::{
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
     BootstrapFuture, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
-    OutRequestBuilder, Peer, QueryId, QueryNext, Rpc, RpcDhtRequestFuture, generic_hash,
+    OutRequestBuilder, Peer, QueryId, QueryNext, RequestMsgData, Rpc, RpcDhtRequestFuture,
+    generic_hash,
 };
 use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
@@ -21,14 +22,14 @@ use tracing::{error, instrument, trace};
 use crate::{
     DEFAULT_BOOTSTRAP, Error, Keypair, Result,
     cenc::{
-        NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
+        NoisePayload, NoisePayloadBuilder, PeerHandshakePayload, PeerHandshakePayloadBuilder,
+        UdxInfoBuilder, firewall,
     },
     commands,
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
     request_announce_or_unannounce_value,
-    server::Server,
 };
 
 #[derive(Debug)]
@@ -134,9 +135,6 @@ impl DhtInner {
             }
         }
         Err(crate::Error::ConnectionFailed)
-    }
-    pub fn create_server(&self, target: IdBytes) -> Server {
-        todo!()
     }
 
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
@@ -265,6 +263,37 @@ impl DhtInner {
             query_done: false.into(),
             commits_done: false.into(),
         }
+    }
+}
+
+impl Stream for DhtInner {
+    type Item = Result<CustomCommandRequest>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Stream::poll_next(Pin::new(&mut self.rpc), cx) {
+            Poll::Ready(x) => match x {
+                Some(y) => match y {
+                    dht_rpc::RpcEvent::CustomRequest(request) => {
+                        self.on_request(request)?;
+                    }
+                    dht_rpc::RpcEvent::ResponseResult(_response_ok) => {
+                        return Poll::Pending;
+                    }
+                    dht_rpc::RpcEvent::RoutingUpdated { .. } => todo!(),
+                    dht_rpc::RpcEvent::Bootstrapped(_bootstrapped) => todo!(),
+                    dht_rpc::RpcEvent::ReadyToCommit { .. } => todo!(),
+                    dht_rpc::RpcEvent::QueryResult(_query_result) => {
+                        return Poll::Pending;
+                    }
+                    dht_rpc::RpcEvent::QueryResponse(_in_response) => {
+                        return Poll::Pending;
+                    }
+                },
+                None => return Poll::Ready(None),
+            },
+            Poll::Pending => return Poll::Pending,
+        }
+        Poll::Pending
     }
 }
 
