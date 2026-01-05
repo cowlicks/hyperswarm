@@ -11,9 +11,8 @@ use std::{
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
-    OutRequestBuilder, Peer, QueryId, QueryNext, RequestMsgData, Rpc, RpcDhtRequestFuture,
-    generic_hash,
+    BootstrapFuture, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
+    OutRequestBuilder, Peer, QueryId, QueryNext, Rpc, RpcDhtRequestFuture, generic_hash,
 };
 use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
@@ -50,7 +49,8 @@ impl Dht {
         })
     }
     pub async fn bootstrap(&self) -> Result<()> {
-        self.inner.bootstrap().await
+        self.inner.bootstrap().await?;
+        Ok(())
     }
     pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
         self.inner.connect(pub_key).await
@@ -70,13 +70,13 @@ impl Dht {
         self.inner.announce(target, key_pair, relay_addresses).await
     }
     pub fn unannounce(&self, target: IdBytes, key_pair: Keypair) -> Unannounce {
-        self.unannounce(target, key_pair)
+        self.inner.unannounce(target, key_pair)
     }
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         self.inner.request(o)
     }
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        self.local_addr()
+        self.inner.local_addr()
     }
     pub fn peer_handshake(
         &self,
@@ -116,9 +116,8 @@ impl DhtInner {
         })
     }
 
-    pub async fn bootstrap(&self) -> Result<()> {
-        self.rpc.bootstrap().await?;
-        Ok(())
+    pub fn bootstrap(&self) -> BootstrapFuture {
+        self.rpc.bootstrap()
     }
 
     pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
