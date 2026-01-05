@@ -11,9 +11,34 @@ macro_rules! adht_setup {
     () => {{
         let mut tn = Testnet::new().await?;
         let bs_addr = tn.get_node_i_address(1).await?;
-        let rpc = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-        (tn, rpc)
+        let dht = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+        (tn, dht)
     }};
+}
+
+#[tokio::test]
+async fn rs_connects_to_rs() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.get_node_i_address(1).await?;
+    let mut a = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let keypair = Keypair::default();
+    let topic = IdBytes::random();
+    let a_addr = a.local_addr()?;
+    let mut b = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    a.bootstrap().await?;
+    b.bootstrap().await?;
+    a.announce(topic, keypair.clone(), vec![]).await?;
+
+    log();
+
+    tokio::spawn(async move {
+        dbg!(b.peer_handshake(keypair.public, a_addr)?.await)?;
+        Ok::<(), Error>(())
+    });
+    let zz = a.next_connection().await?;
+
+    Ok(())
 }
 
 /// Check that Rust's lookup works. The steps:

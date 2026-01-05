@@ -65,13 +65,13 @@ impl Dht {
     pub async fn announce(
         &self,
         target: IdBytes,
-        key_pair: Keypair,
+        keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> Result<()> {
-        self.inner.announce(target, key_pair, relay_addresses).await
+        self.inner.announce(target, keypair, relay_addresses).await
     }
-    pub fn unannounce(&self, target: IdBytes, key_pair: Keypair) -> Unannounce {
-        self.inner.unannounce(target, key_pair)
+    pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
+        self.inner.unannounce(target, keypair)
     }
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         self.inner.request(o)
@@ -89,10 +89,10 @@ impl Dht {
     pub fn announce_clear(
         &self,
         target: IdBytes,
-        key_pair: Keypair,
+        keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> AnnounceClear {
-        self.inner.announce_clear(target, key_pair, relay_addresses)
+        self.inner.announce_clear(target, keypair, relay_addresses)
     }
     pub async fn next_connection(&mut self) -> Result<()> {
         dbg!(self.inner.next().await);
@@ -201,7 +201,7 @@ impl DhtInner {
     pub async fn announce(
         &self,
         target: IdBytes,
-        key_pair: Keypair,
+        keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> Result<()> {
         let query = self
@@ -211,14 +211,14 @@ impl DhtInner {
             rpc: self.rpc.clone(),
             query,
             target,
-            key_pair: key_pair.clone(),
+            keypair: keypair.clone(),
             relay_addresses,
         }
         .await?;
         join_all(pending_commits).await;
         Ok(())
     }
-    pub fn unannounce(&self, target: IdBytes, key_pair: Keypair) -> Unannounce {
+    pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
         let query = self
             .rpc
             .query_next(commands::LOOKUP, target, None, Commit::No);
@@ -226,7 +226,7 @@ impl DhtInner {
             rpc: self.rpc.clone(),
             query,
             target,
-            key_pair: key_pair.clone(),
+            keypair: keypair.clone(),
             done: false.into(),
             pending_requests: Default::default(),
         }
@@ -286,7 +286,7 @@ impl DhtInner {
     pub fn announce_clear(
         &self,
         target: IdBytes,
-        key_pair: Keypair,
+        keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> AnnounceClear {
         let query = self
@@ -296,7 +296,7 @@ impl DhtInner {
             rpc: self.rpc.clone(),
             query,
             target,
-            key_pair,
+            keypair,
             pending_requests: Default::default(),
             relay_addresses,
             query_done: false.into(),
@@ -509,7 +509,7 @@ pub struct Announce {
     rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
-    key_pair: Keypair,
+    keypair: Keypair,
     relay_addresses: Vec<SocketAddr>,
 }
 
@@ -525,7 +525,7 @@ impl Future for Announce {
                         todo!("could not get token");
                     };
                     let value = request_announce_or_unannounce_value(
-                        &self.key_pair,
+                        &self.keypair,
                         self.target,
                         &token,
                         reply.request.to.id.expect("request.to.id TODO").into(),
@@ -555,7 +555,7 @@ pub struct Unannounce {
     rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
-    key_pair: Keypair,
+    keypair: Keypair,
     pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
     done: AtomicBool,
 }
@@ -580,7 +580,7 @@ impl Future for Unannounce {
                         referrer: None,
                     };
                     let value = request_announce_or_unannounce_value(
-                        &self.key_pair,
+                        &self.keypair,
                         self.target,
                         token,
                         *id,
@@ -623,7 +623,7 @@ pub struct AnnounceClear {
     rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
-    key_pair: Keypair,
+    keypair: Keypair,
     pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
     relay_addresses: Vec<SocketAddr>,
     query_done: AtomicBool,
@@ -648,7 +648,7 @@ impl AnnounceClear {
                     referrer: None,
                 };
                 let value = request_announce_or_unannounce_value(
-                    &self.key_pair,
+                    &self.keypair,
                     self.target,
                     token,
                     *id,
@@ -682,7 +682,7 @@ impl AnnounceClear {
                         todo!("could not get token");
                     };
                     let value = request_announce_or_unannounce_value(
-                        &self.key_pair,
+                        &self.keypair,
                         self.target,
                         &token,
                         reply.request.to.id.expect("request.to.id TODO").into(),
