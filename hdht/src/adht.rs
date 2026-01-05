@@ -11,8 +11,9 @@ use std::{
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    Commit, DhtConfig, IdBytes, InResponse, OutRequestBuilder, Peer, QueryId, QueryNext, Rpc,
-    RpcDhtRequestFuture, generic_hash,
+    Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
+    OutRequestBuilder, Peer, QueryId, QueryNext, RequestMsgData, Rpc, RpcDhtRequestFuture,
+    generic_hash,
 };
 use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
@@ -39,11 +40,67 @@ pub struct QueryResult {
 }
 
 pub struct Dht {
+    inner: DhtInner,
+}
+
+impl Dht {
+    pub async fn with_config(config: DhtConfig) -> Result<Self> {
+        Ok(Self {
+            inner: DhtInner::with_config(config).await?,
+        })
+    }
+    pub async fn bootstrap(&self) -> Result<()> {
+        self.inner.bootstrap().await
+    }
+    pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
+        self.inner.connect(pub_key).await
+    }
+    pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
+        self.inner.lookup(target, commit)
+    }
+    pub fn find_peer(&self, pub_key: PublicKey) -> Result<FindPeer> {
+        self.inner.find_peer(pub_key)
+    }
+    pub async fn announce(
+        &self,
+        target: IdBytes,
+        key_pair: Keypair,
+        relay_addresses: Vec<SocketAddr>,
+    ) -> Result<()> {
+        self.inner.announce(target, key_pair, relay_addresses).await
+    }
+    pub fn unannounce(&self, target: IdBytes, key_pair: Keypair) -> Unannounce {
+        self.unannounce(target, key_pair)
+    }
+    pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
+        self.inner.request(o)
+    }
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        self.local_addr()
+    }
+    pub fn peer_handshake(
+        &self,
+        remote_public_key: PublicKey,
+        destination: SocketAddr,
+    ) -> Result<PeerHandshake> {
+        self.inner.peer_handshake(remote_public_key, destination)
+    }
+    pub fn announce_clear(
+        &self,
+        target: IdBytes,
+        key_pair: Keypair,
+        relay_addresses: Vec<SocketAddr>,
+    ) -> AnnounceClear {
+        self.inner.announce_clear(target, key_pair, relay_addresses)
+    }
+}
+
+pub struct DhtInner {
     rpc: Rpc,
     id_maker: StreamIdMaker,
 }
 
-impl Dht {
+impl DhtInner {
     pub async fn with_config(mut config: DhtConfig) -> Result<Self> {
         if config.bootstrap_nodes.is_empty() {
             for addr_str in DEFAULT_BOOTSTRAP.iter() {
@@ -125,7 +182,7 @@ impl Dht {
         join_all(pending_commits).await;
         Ok(())
     }
-    pub fn unannounce(&mut self, target: IdBytes, key_pair: Keypair) -> Unannounce {
+    pub fn unannounce(&self, target: IdBytes, key_pair: Keypair) -> Unannounce {
         let query = self
             .rpc
             .query_next(commands::LOOKUP, target, None, Commit::No);
