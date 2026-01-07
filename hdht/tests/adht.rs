@@ -36,7 +36,7 @@ async fn rs_connects_to_rs() -> Result<()> {
         dbg!(b.peer_handshake(keypair.public, a_addr)?.await)?;
         Ok::<(), Error>(())
     });
-    let zz = a.next_connection().await?;
+    let zz = a.listen().await?;
 
     Ok(())
 }

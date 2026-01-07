@@ -94,7 +94,7 @@ impl Dht {
     ) -> AnnounceClear {
         self.inner.announce_clear(target, keypair, relay_addresses)
     }
-    pub async fn next_connection(&mut self) -> Result<()> {
+    pub async fn listen(&mut self) -> Result<()> {
         dbg!(self.inner.next().await);
         Ok(())
     }
