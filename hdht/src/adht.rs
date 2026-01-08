@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     future::Future,
     net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
@@ -104,6 +105,7 @@ pub struct DhtInner {
     rpc: Rpc,
     id_maker: StreamIdMaker,
     default_keypair: Keypair,
+    listening_keypairs: HashMap<IdBytes, Keypair>,
 }
 
 impl DhtInner {
@@ -120,7 +122,13 @@ impl DhtInner {
             rpc: Rpc::with_config(config).await?,
             id_maker: StreamIdMaker::new(),
             default_keypair: Default::default(),
+            listening_keypairs: Default::default(),
         })
+    }
+
+    fn add_listening_key(&mut self, keypair: Keypair) {
+        let target = IdBytes(generic_hash(&*keypair.public));
+        self.listening_keypairs.insert(target, keypair);
     }
 
     pub fn on_request(
@@ -145,13 +153,46 @@ impl DhtInner {
     }
 
     pub fn on_peer_handshake(&self, request: RequestMsgData, peer: Peer) -> Result<()> {
-        let Some(value) = request.value else { todo!() };
+        let Some(target) = request.target else {
+            todo!()
+        };
+        let Some(keypair) = self
+            .listening_keypairs
+            .get(&IdBytes(target.clone()))
+            .clone()
+        else {
+            todo!()
+        };
+        let Some(value) = &request.value else { todo!() };
         let (php, rest) = PeerHandshakePayload::decode(&value)?;
         debug_assert!(rest.is_empty());
-        let mut hs = Cipher::resp_from_private(None, &self.default_keypair.secret)?;
+        // libsodium secret is 64 bytes (seed + pubkey), handshake expects 32-byte seed
+        // Must use same prologue as initiator (namespace::PEER_HANDSHAKE)
+        let mut hs = Cipher::resp_from_private_with_prologue(
+            None,
+            &keypair.secret[..32],
+            &namespace::PEER_HANDSHAKE,
+        )?;
         hs.receive_next(php.noise);
-        let msg = hs.get_next_sendable_message()?;
-        dbg!(&msg);
+        let Some(noise) = hs.get_next_sendable_message()? else {
+            todo!()
+        };
+
+        let udx_local_id = self.id_maker.new_id();
+        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
+        let connection = Connection::new(hs, udx_local_id, half_stream);
+        let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
+            .noise(noise)
+            .mode(crate::cenc::HandshakeSteps::Reply)
+            .build()?
+            .to_encoded_bytes()?;
+
+        self.rpc.respond(
+            request,
+            Some(peer_handshake_payload.to_vec()),
+            Some(vec![]),
+            Peer::new(peer.addr),
+        );
 
         todo!()
     }

@@ -386,6 +386,19 @@ impl Rpc {
         // Create a future that polls RpcDht for events and waits for the response
         RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
+    pub fn respond(
+        &self,
+        request: RequestMsgData,
+        value: Option<Vec<u8>>,
+        closer_nodes: Option<Vec<Peer>>,
+        peer: Peer,
+    ) -> crate::Result<()> {
+        self.inner
+            .lock()
+            .unwrap()
+            .io
+            .response(request, value, closer_nodes, peer)
+    }
 
     pub async fn ping(&self, peer: Peer) -> Result<Arc<InResponse>> {
         self.request(

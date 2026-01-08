@@ -32,11 +32,13 @@ async fn rs_connects_to_rs() -> Result<()> {
 
     log();
 
+    let phkp = keypair.clone();
     tokio::spawn(async move {
-        dbg!(b.peer_handshake(keypair.public, a_addr)?.await)?;
+        dbg!(b.peer_handshake(phkp.public, a_addr)?.await)?;
         Ok::<(), Error>(())
     });
-    let zz = a.listen().await?;
+    let x = a.listen(keypair).await?;
+    dbg!(&x);
 
     Ok(())
 }
