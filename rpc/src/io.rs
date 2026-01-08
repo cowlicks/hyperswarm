@@ -19,7 +19,7 @@ use std::{
     sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
-use tracing::{error, instrument, trace};
+use tracing::{error, trace};
 use wasm_timer::Instant;
 
 use super::{
