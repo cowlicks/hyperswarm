@@ -10,6 +10,8 @@ use std::{
     task::{Context, Poll},
 };
 
+use tokio::sync::mpsc;
+
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
     BootstrapFuture, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
@@ -31,6 +33,7 @@ use crate::{
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
     request_announce_or_unannounce_value,
+    server::Server,
 };
 
 #[derive(Debug)]
@@ -95,17 +98,20 @@ impl Dht {
     ) -> AnnounceClear {
         self.inner.announce_clear(target, keypair, relay_addresses)
     }
-    pub async fn listen(&mut self) -> Result<()> {
-        dbg!(self.inner.next().await);
-        Ok(())
+
+    pub fn listen(&mut self, keypair: Keypair) -> Server {
+        let (tx, rx) = mpsc::channel(32);
+        self.inner.add_listening_key(keypair, tx);
+        Server::new(rx)
     }
 }
 
 pub struct DhtInner {
     rpc: Rpc,
     id_maker: StreamIdMaker,
+    #[expect(unused)]
     default_keypair: Keypair,
-    listening_keypairs: HashMap<IdBytes, Keypair>,
+    listening_keypairs: HashMap<IdBytes, (Keypair, mpsc::Sender<Result<Connection>>)>,
 }
 
 impl DhtInner {
@@ -121,14 +127,15 @@ impl DhtInner {
         Ok(Self {
             rpc: Rpc::with_config(config).await?,
             id_maker: StreamIdMaker::new(),
+            //default_keypair: generate_keypair()?,
             default_keypair: Default::default(),
             listening_keypairs: Default::default(),
         })
     }
 
-    fn add_listening_key(&mut self, keypair: Keypair) {
+    fn add_listening_key(&mut self, keypair: Keypair, tx: mpsc::Sender<Result<Connection>>) {
         let target = IdBytes(generic_hash(&*keypair.public));
-        self.listening_keypairs.insert(target, keypair);
+        self.listening_keypairs.insert(target, (keypair, tx));
     }
 
     pub fn on_request(
@@ -156,11 +163,7 @@ impl DhtInner {
         let Some(target) = request.target else {
             todo!()
         };
-        let Some(keypair) = self
-            .listening_keypairs
-            .get(&IdBytes(target.clone()))
-            .clone()
-        else {
+        let Some((keypair, tx)) = self.listening_keypairs.get(&IdBytes(target.clone())) else {
             todo!()
         };
         let Some(value) = &request.value else { todo!() };
@@ -194,7 +197,10 @@ impl DhtInner {
             Peer::new(peer.addr),
         );
 
-        todo!()
+        // Send connection to the Server stream
+        let _ = tx.try_send(Ok(connection));
+
+        Ok(())
     }
 
     pub fn bootstrap(&self) -> BootstrapFuture {
