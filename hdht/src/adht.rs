@@ -4,7 +4,7 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering::Relaxed},
     },
     task::{Context, Poll},
@@ -44,27 +44,26 @@ pub struct QueryResult {
 }
 
 pub struct Dht {
-    inner: DhtInner,
+    inner: Arc<RwLock<DhtInner>>,
 }
 
 impl Dht {
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
-            inner: DhtInner::with_config(config).await?,
+            inner: Arc::new(RwLock::new(DhtInner::with_config(config).await?)),
         })
     }
-    pub async fn bootstrap(&self) -> Result<()> {
-        self.inner.bootstrap().await?;
-        Ok(())
+    pub fn bootstrap(&self) -> BootstrapFuture {
+        self.inner.read().unwrap().bootstrap()
     }
     pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
-        self.inner.connect(pub_key).await
+        self.inner.read().unwrap().connect(pub_key).await
     }
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
-        self.inner.lookup(target, commit)
+        self.inner.read().unwrap().lookup(target, commit)
     }
     pub fn find_peer(&self, pub_key: PublicKey) -> Result<FindPeer> {
-        self.inner.find_peer(pub_key)
+        self.inner.read().unwrap().find_peer(pub_key)
     }
     pub async fn announce(
         &self,
@@ -72,23 +71,30 @@ impl Dht {
         keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> Result<()> {
-        self.inner.announce(target, keypair, relay_addresses).await
+        self.inner
+            .read()
+            .unwrap()
+            .announce(target, keypair, relay_addresses)
+            .await
     }
     pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
-        self.inner.unannounce(target, keypair)
+        self.inner.read().unwrap().unannounce(target, keypair)
     }
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
-        self.inner.request(o)
+        self.inner.read().unwrap().request(o)
     }
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        self.inner.local_addr()
+        self.inner.read().unwrap().local_addr()
     }
     pub fn peer_handshake(
         &self,
         remote_public_key: PublicKey,
         destination: SocketAddr,
     ) -> Result<PeerHandshake> {
-        self.inner.peer_handshake(remote_public_key, destination)
+        self.inner
+            .read()
+            .unwrap()
+            .peer_handshake(remote_public_key, destination)
     }
     pub fn announce_clear(
         &self,
@@ -96,7 +102,10 @@ impl Dht {
         keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> AnnounceClear {
-        self.inner.announce_clear(target, keypair, relay_addresses)
+        self.inner
+            .read()
+            .unwrap()
+            .announce_clear(target, keypair, relay_addresses)
     }
 
     pub fn listen(&mut self, keypair: Keypair) -> Server {
