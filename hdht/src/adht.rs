@@ -43,6 +43,56 @@ pub struct QueryResult {
     pub query_id: QueryId,
 }
 
+pub struct ConnectFuture {
+    dht: Arc<RwLock<DhtInner>>,
+    query: FindPeer,
+    pub_key: PublicKey,
+    pending_handshake: Option<PeerHandshake>,
+}
+
+impl Future for ConnectFuture {
+    type Output = Result<Connection>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            // If we have a pending handshake, poll it first
+            if let Some(ref mut handshake) = self.pending_handshake {
+                match Pin::new(handshake).poll(cx) {
+                    Poll::Ready(Ok(conn)) => return Poll::Ready(Ok(conn)),
+                    Poll::Ready(Err(_)) => {
+                        // Handshake failed, try next peer
+                        self.pending_handshake = None;
+                    }
+                    Poll::Pending => return Poll::Pending,
+                }
+            }
+
+            // Poll the query for more peers
+            match Pin::new(&mut self.query).poll_next(cx) {
+                Poll::Ready(Some(Ok(Some(FindPeerResponse { response, .. })))) => {
+                    // Try to start a handshake with this peer
+                    let dht = self.dht.read().unwrap();
+                    if let Ok(handshake) =
+                        dht.peer_handshake(self.pub_key.clone(), response.request.to.addr)
+                    {
+                        drop(dht); // Release lock before storing
+                        self.pending_handshake = Some(handshake);
+                        // Continue loop to poll the new handshake
+                    }
+                }
+                Poll::Ready(Some(Ok(None))) | Poll::Ready(Some(Err(_))) => {
+                    // No peer info or error, continue to next
+                }
+                Poll::Ready(None) => {
+                    // Query exhausted, no connection made
+                    return Poll::Ready(Err(Error::ConnectionFailed));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
 pub struct Dht {
     inner: Arc<RwLock<DhtInner>>,
 }
@@ -56,8 +106,11 @@ impl Dht {
     pub fn bootstrap(&self) -> BootstrapFuture {
         self.inner.read().unwrap().bootstrap()
     }
-    pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
-        self.inner.read().unwrap().connect(pub_key).await
+    pub fn connect(&self, pub_key: PublicKey) -> Result<ConnectFuture> {
+        self.inner
+            .read()
+            .unwrap()
+            .connect(pub_key, self.inner.clone())
     }
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
         self.inner.read().unwrap().lookup(target, commit)
