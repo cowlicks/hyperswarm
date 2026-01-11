@@ -24,8 +24,13 @@ impl Stream for Server {
     type Item = Result<Connection>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Poll the DHT to drive the event loop
-        let _ = Pin::new(&mut *self.dht.write().unwrap()).poll_next(cx);
+        // Poll the DHT to drive the event loop and flush any pending responses
+        while Pin::new(&mut *self.dht.write().unwrap())
+            .poll_next(cx)
+            .is_ready()
+        {
+            // keep loopin
+        }
 
         // Check for new connections
         Pin::new(&mut self.rx).poll_recv(cx)
