@@ -243,20 +243,6 @@ impl DhtInner {
             &namespace::PEER_HANDSHAKE,
         )?;
 
-        // Receive client's noise message
-        hs.receive_next(php.noise);
-
-        // Decrypt the client's payload to get their UDX info
-        let Some(hypercore_handshake::CipherEvent::HandshakePayload(payload_bytes)) =
-            hs.next_decrypted_message()?
-        else {
-            return Err(Error::PeerHandshakeFailed(
-                "expected handshake payload".into(),
-            ));
-        };
-        let (client_np, _rest) = NoisePayload::decode(&payload_bytes)?;
-        debug_assert!(_rest.is_empty());
-
         // Create our UDX stream
         let udx_local_id = self.id_maker.new_id();
         let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
@@ -277,7 +263,24 @@ impl DhtInner {
             .build()?
             .to_encoded_bytes()?;
 
+        //assert!(NoisePayload::decode(&server_np).is_ok());
+
         hs.queue_msg(server_np.to_vec());
+
+        // Receive client's noise message
+        hs.receive_next(php.noise);
+
+        // Decrypt the client's payload to get their UDX info
+        let Some(hypercore_handshake::CipherEvent::HandshakePayload(payload_bytes)) =
+            hs.next_decrypted_message()?
+        else {
+            return Err(Error::PeerHandshakeFailed(
+                "expected handshake payload".into(),
+            ));
+        };
+        let (client_np, _rest) = NoisePayload::decode(&payload_bytes)?;
+        debug_assert!(_rest.is_empty());
+
         // Set our payload and get the response noise
         let Some(noise) = hs.get_next_sendable_message()? else {
             return Err(Error::PeerHandshakeFailed(
@@ -285,8 +288,8 @@ impl DhtInner {
             ));
         };
 
-        // Create connection and connect to client
-        let connection = Connection::new(hs, udx_local_id, half_stream);
+        // Create connection with RPC so it can poll to flush responses
+        let connection = Connection::new_with_rpc(hs, udx_local_id, half_stream, self.rpc.clone());
         let remote_udx_id = client_np
             .udx
             .as_ref()
