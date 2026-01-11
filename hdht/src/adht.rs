@@ -222,10 +222,15 @@ impl DhtInner {
 
     pub fn on_peer_handshake(&self, request: RequestMsgData, peer: Peer) -> Result<()> {
         let Some(target) = request.target else {
-            todo!()
+            return Err(Error::PeerHandshakeFailed("missing target".into()));
         };
-        let Some((keypair, tx)) = self.listening_keypairs.get(&IdBytes(target.clone())) else {
-            todo!()
+        let Some((keypair, tx)) = self.listening_keypairs.get(&IdBytes(target)) else {
+            return Err(Error::PeerHandshakeFailed(
+                "not listening on this target".into(),
+            ));
+        };
+        let Some(value) = &request.value else {
+            return Err(Error::PeerHandshakeFailed("missing value".into()));
         };
         let Some(value) = &request.value else { todo!() };
         let (php, rest) = PeerHandshakePayload::decode(&value)?;
