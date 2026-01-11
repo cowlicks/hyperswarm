@@ -7,6 +7,7 @@ use std::{
 };
 
 use async_compat::Compat;
+use dht_rpc::Rpc;
 use futures::{Sink, Stream};
 use hypercore_handshake::{Cipher, CipherEvent, CipherIo};
 use udx::HalfOpenStreamHandle;
@@ -36,11 +37,23 @@ pub enum ConnStep {
     Failed,
 }
 
-#[derive(Debug)]
 pub struct ConnectionInner {
     pub handshake: Cipher,
     pub udx_local_id: u32,
     pub step: ConnStep,
+    /// Optional RPC to poll for flushing responses (used by server-side connections)
+    pub rpc: Option<Rpc>,
+}
+
+impl std::fmt::Debug for ConnectionInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionInner")
+            .field("handshake", &self.handshake)
+            .field("udx_local_id", &self.udx_local_id)
+            .field("step", &self.step)
+            .field("rpc", &self.rpc.as_ref().map(|_| "Rpc"))
+            .finish()
+    }
 }
 
 impl ConnectionInner {
@@ -49,6 +62,21 @@ impl ConnectionInner {
             handshake,
             udx_local_id,
             step: ConnStep::Start(half_stream),
+            rpc: None,
+        }
+    }
+
+    pub fn new_with_rpc(
+        handshake: Cipher,
+        udx_local_id: u32,
+        half_stream: HalfOpenStreamHandle,
+        rpc: Rpc,
+    ) -> Self {
+        Self {
+            handshake,
+            udx_local_id,
+            step: ConnStep::Start(half_stream),
+            rpc: Some(rpc),
         }
     }
     pub fn receive_next(&mut self, noise: Vec<u8>) -> Result<CipherEvent, Error> {
@@ -92,6 +120,12 @@ impl ConnectionInner {
 impl Stream for ConnectionInner {
     type Item = CipherEvent;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Poll the RPC to flush any pending responses
+        if let Some(ref mut rpc) = self.rpc {
+            while Pin::new(&mut *rpc).poll_next(cx).is_ready() {
+                // Keep polling to flush responses
+            }
+        }
         Pin::new(&mut self.handshake).poll_next(cx)
     }
 }
@@ -137,6 +171,23 @@ impl Connection {
                 handshake,
                 udx_local_id,
                 step: ConnStep::Start(half_stream),
+                rpc: None,
+            })),
+        }
+    }
+
+    pub fn new_with_rpc(
+        handshake: Cipher,
+        udx_local_id: u32,
+        half_stream: HalfOpenStreamHandle,
+        rpc: Rpc,
+    ) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(ConnectionInner {
+                handshake,
+                udx_local_id,
+                step: ConnStep::Start(half_stream),
+                rpc: Some(rpc),
             })),
         }
     }
@@ -170,7 +221,14 @@ impl Connection {
 impl Stream for Connection {
     type Item = CipherEvent;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.inner.write().unwrap().handshake).poll_next(cx)
+        let mut inner = self.inner.write().unwrap();
+        // Poll the RPC to flush any pending responses
+        if let Some(ref mut rpc) = inner.rpc {
+            while Pin::new(&mut *rpc).poll_next(cx).is_ready() {
+                // Keep polling to flush responses
+            }
+        }
+        Pin::new(&mut inner.handshake).poll_next(cx)
     }
 }
 impl Sink<Vec<u8>> for Connection {
