@@ -268,20 +268,14 @@ impl DhtInner {
         self.rpc.bootstrap()
     }
 
-    pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
-        let mut query = self.find_peer(pub_key.clone())?;
-        while let Some(resp) = query.next().await {
-            let Ok(Some(FindPeerResponse { response, .. })) = resp else {
-                continue;
-            };
-            if let Ok(conn) = self
-                .peer_handshake(pub_key.clone(), response.request.to.addr)?
-                .await
-            {
-                return Ok(conn);
-            }
-        }
-        Err(crate::Error::ConnectionFailed)
+    pub fn connect(&self, pub_key: PublicKey, dht: Arc<RwLock<DhtInner>>) -> Result<ConnectFuture> {
+        let query = self.find_peer(pub_key.clone())?;
+        Ok(ConnectFuture {
+            dht,
+            query,
+            pub_key,
+            pending_handshake: None,
+        })
     }
 
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
@@ -306,25 +300,24 @@ impl DhtInner {
     }
 
     // TODO  return something more useful, maybe indicate if commits failed, etc
-    pub async fn announce(
+    pub fn announce(
         &self,
         target: IdBytes,
         keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
-    ) -> Result<()> {
+    ) -> Announce {
         let query = self
             .rpc
             .query_next(commands::LOOKUP, target, None, Commit::No);
-        let pending_commits = Announce {
+        Announce {
             rpc: self.rpc.clone(),
             query,
             target,
-            keypair: keypair.clone(),
+            keypair,
             relay_addresses,
+            pending_requests: Default::default(),
+            query_done: false.into(),
         }
-        .await?;
-        join_all(pending_commits).await;
-        Ok(())
     }
     pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
         let query = self
