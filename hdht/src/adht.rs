@@ -160,10 +160,10 @@ impl Dht {
             .announce_clear(target, keypair, relay_addresses)
     }
 
-    pub fn listen(&mut self, keypair: Keypair) -> Server {
+    pub fn listen(&self, keypair: Keypair) -> Server {
         let (tx, rx) = mpsc::channel(32);
-        self.inner.add_listening_key(keypair, tx);
-        Server::new(rx)
+        self.inner.write().unwrap().add_listening_key(keypair, tx);
+        Server::new(rx, self.inner.clone())
     }
 }
 
