@@ -232,24 +232,69 @@ impl DhtInner {
         let Some(value) = &request.value else {
             return Err(Error::PeerHandshakeFailed("missing value".into()));
         };
-        let Some(value) = &request.value else { todo!() };
-        let (php, rest) = PeerHandshakePayload::decode(&value)?;
+
+        let (php, rest) = PeerHandshakePayload::decode(value)?;
         debug_assert!(rest.is_empty());
-        // libsodium secret is 64 bytes (seed + pubkey), handshake expects 32-byte seed
-        // Must use same prologue as initiator (namespace::PEER_HANDSHAKE)
+
+        // Create responder cipher with same prologue as initiator
         let mut hs = Cipher::resp_from_private_with_prologue(
             None,
             &keypair.secret[..32],
             &namespace::PEER_HANDSHAKE,
         )?;
-        hs.receive_next(php.noise);
-        let Some(noise) = hs.get_next_sendable_message()? else {
-            todo!()
-        };
 
+        // Receive client's noise message
+        hs.receive_next(php.noise);
+
+        // Decrypt the client's payload to get their UDX info
+        let Some(hypercore_handshake::CipherEvent::HandshakePayload(payload_bytes)) =
+            hs.next_decrypted_message()?
+        else {
+            return Err(Error::PeerHandshakeFailed(
+                "expected handshake payload".into(),
+            ));
+        };
+        let (client_np, _rest) = NoisePayload::decode(&payload_bytes)?;
+        debug_assert!(_rest.is_empty());
+
+        // Create our UDX stream
         let udx_local_id = self.id_maker.new_id();
         let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
+
+        // Build our NoisePayload with our UDX info for the response
+        let SocketAddr::V4(local_addr) = self.rpc.local_addr()? else {
+            return Err(Error::PeerHandshakeFailed("IPv6 not supported yet".into()));
+        };
+        let server_np = NoisePayloadBuilder::default()
+            .firewall(firewall::OPEN)
+            .addresses4(Some(vec![local_addr]))
+            .udx(Some(
+                UdxInfoBuilder::default()
+                    .reusable_socket(false)
+                    .id(udx_local_id as usize)
+                    .build()?,
+            ))
+            .build()?
+            .to_encoded_bytes()?;
+
+        hs.queue_msg(server_np.to_vec());
+        // Set our payload and get the response noise
+        let Some(noise) = hs.get_next_sendable_message()? else {
+            return Err(Error::PeerHandshakeFailed(
+                "failed to generate response noise".into(),
+            ));
+        };
+
+        // Create connection and connect to client
         let connection = Connection::new(hs, udx_local_id, half_stream);
+        let remote_udx_id = client_np
+            .udx
+            .as_ref()
+            .ok_or_else(|| Error::PeerHandshakeFailed("client missing udx info".into()))?
+            .id as u32;
+        connection.connect(peer.addr, remote_udx_id, client_np)?;
+
+        // Build and send the response
         let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
             .noise(noise)
             .mode(crate::cenc::HandshakeSteps::Reply)
@@ -261,7 +306,7 @@ impl DhtInner {
             Some(peer_handshake_payload.to_vec()),
             Some(vec![]),
             Peer::new(peer.addr),
-        );
+        )?;
 
         // Send connection to the Server stream
         let _ = tx.try_send(Ok(connection));
