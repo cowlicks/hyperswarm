@@ -18,7 +18,7 @@ use dht_rpc::{
     OutRequestBuilder, Peer, QueryId, QueryNext, RequestMsgData, Rpc, RpcDhtRequestFuture,
     generic_hash,
 };
-use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
+use futures::{Stream, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
 use tracing::{error, instrument, trace};
 
@@ -118,17 +118,16 @@ impl Dht {
     pub fn find_peer(&self, pub_key: PublicKey) -> Result<FindPeer> {
         self.inner.read().unwrap().find_peer(pub_key)
     }
-    pub async fn announce(
+    pub fn announce(
         &self,
         target: IdBytes,
         keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
-    ) -> Result<()> {
+    ) -> Announce {
         self.inner
             .read()
             .unwrap()
             .announce(target, keypair, relay_addresses)
-            .await
     }
     pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
         self.inner.read().unwrap().unannounce(target, keypair)
@@ -620,43 +619,62 @@ pub struct Announce {
     target: IdBytes,
     keypair: Keypair,
     relay_addresses: Vec<SocketAddr>,
+    pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
+    query_done: AtomicBool,
 }
 
 impl Future for Announce {
-    type Output = Result<Vec<RpcDhtRequestFuture>>;
+    type Output = Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match Pin::new(&mut self.query).poll(cx) {
-            Poll::Ready(Ok(query_result)) => {
-                let mut requests: Vec<RpcDhtRequestFuture> = vec![];
-                for reply in query_result.closest_replies.iter() {
-                    let Some(token) = reply.response.token else {
-                        todo!("could not get token");
-                    };
-                    let value = request_announce_or_unannounce_value(
-                        &self.keypair,
-                        self.target,
-                        &token,
-                        reply.request.to.id.expect("request.to.id TODO").into(),
-                        &self.relay_addresses,
-                        &crate::crypto::namespace::ANNOUNCE,
-                    );
-                    let from_peer = Peer {
-                        id: reply.request.to.id,
-                        addr: reply.request.to.addr,
-                        referrer: None,
-                    };
-                    let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
-                        .target(self.target)
-                        .value(value)
-                        .token(token);
-                    requests.push(self.rpc.request_from_builder(o));
+        // Phase 1: Complete the query and queue commit requests
+        if !self.query_done.load(Relaxed) {
+            match Pin::new(&mut self.query).poll(cx) {
+                Poll::Ready(Ok(query_result)) => {
+                    for reply in query_result.closest_replies.iter() {
+                        let Some(token) = reply.response.token else {
+                            todo!("could not get token");
+                        };
+                        let value = request_announce_or_unannounce_value(
+                            &self.keypair,
+                            self.target,
+                            &token,
+                            reply.request.to.id.expect("request.to.id TODO").into(),
+                            &self.relay_addresses,
+                            &crate::crypto::namespace::ANNOUNCE,
+                        );
+                        let from_peer = Peer {
+                            id: reply.request.to.id,
+                            addr: reply.request.to.addr,
+                            referrer: None,
+                        };
+                        let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
+                            .target(self.target)
+                            .value(value)
+                            .token(token);
+                        self.pending_requests.push(self.rpc.request_from_builder(o));
+                    }
+                    self.query_done.store(true, Relaxed);
                 }
-                Poll::Ready(Ok(requests))
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+                Poll::Pending => return Poll::Pending,
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
-            Poll::Pending => Poll::Pending,
         }
+
+        // Phase 2: Wait for all commit requests to complete
+        match Pin::new(&mut self.pending_requests).poll_next(cx) {
+            Poll::Ready(Some(Ok(res))) => {
+                trace!(tid = res.request.tid, "RX announce commit");
+                cx.waker().wake_by_ref();
+            }
+            Poll::Ready(Some(Err(e))) => error!(error =? e, "Announce commit request error"),
+            Poll::Ready(None) => {
+                // All commits done
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending => {}
+        }
+        Poll::Pending
     }
 }
 
