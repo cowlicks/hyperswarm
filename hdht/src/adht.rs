@@ -10,7 +10,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
@@ -167,12 +167,24 @@ impl Dht {
     }
 }
 
+/// A connection waiting for its response to be flushed before being emitted
+struct PendingConnection {
+    /// Resolves when the response has been flushed
+    response_flushed: oneshot::Receiver<()>,
+    /// The connection to be emitted
+    connection: Connection,
+    /// Channel to send the connection on
+    tx: mpsc::Sender<Result<Connection>>,
+}
+
 pub struct DhtInner {
     rpc: Rpc,
     id_maker: StreamIdMaker,
     #[expect(unused)]
     default_keypair: Keypair,
     listening_keypairs: HashMap<IdBytes, (Keypair, mpsc::Sender<Result<Connection>>)>,
+    /// Connections waiting for their response to be flushed
+    pending_connections: Vec<PendingConnection>,
 }
 
 impl DhtInner {
@@ -191,6 +203,7 @@ impl DhtInner {
             //default_keypair: generate_keypair()?,
             default_keypair: Default::default(),
             listening_keypairs: Default::default(),
+            pending_connections: Default::default(),
         })
     }
 
@@ -200,7 +213,7 @@ impl DhtInner {
     }
 
     pub fn on_request(
-        &self,
+        &mut self,
         CustomCommandRequest {
             request,
             peer,
@@ -220,7 +233,7 @@ impl DhtInner {
         Ok(())
     }
 
-    pub fn on_peer_handshake(&self, request: RequestMsgData, peer: Peer) -> Result<()> {
+    pub fn on_peer_handshake(&mut self, request: RequestMsgData, peer: Peer) -> Result<()> {
         let Some(target) = request.target else {
             return Err(Error::PeerHandshakeFailed("missing target".into()));
         };
@@ -229,6 +242,9 @@ impl DhtInner {
                 "not listening on this target".into(),
             ));
         };
+        let tx = tx.clone();
+        let keypair_secret = keypair.secret.clone();
+
         let Some(value) = &request.value else {
             return Err(Error::PeerHandshakeFailed("missing value".into()));
         };
@@ -239,7 +255,7 @@ impl DhtInner {
         // Create responder cipher with same prologue as initiator
         let mut hs = Cipher::resp_from_private_with_prologue(
             None,
-            &keypair.secret[..32],
+            &keypair_secret[..32],
             &namespace::PEER_HANDSHAKE,
         )?;
 
@@ -304,15 +320,19 @@ impl DhtInner {
             .build()?
             .to_encoded_bytes()?;
 
-        self.rpc.respond(
+        let response_flushed = self.rpc.respond(
             request,
             Some(peer_handshake_payload.to_vec()),
             Some(vec![]),
             Peer::new(peer.addr),
         )?;
 
-        // Send connection to the Server stream
-        let _ = tx.try_send(Ok(connection));
+        // Queue the connection to be sent after the response is flushed
+        self.pending_connections.push(PendingConnection {
+            response_flushed,
+            connection,
+            tx,
+        });
 
         Ok(())
     }
@@ -463,6 +483,17 @@ impl Stream for DhtInner {
     type Item = Result<CustomCommandRequest>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Poll pending connections - send them once their response is flushed
+        self.pending_connections.retain_mut(|pending| {
+            match Pin::new(&mut pending.response_flushed).poll(cx) {
+                Poll::Ready(_) => {
+                    let _ = pending.tx.try_send(Ok(pending.connection.clone()));
+                    false
+                }
+                Poll::Pending => true,
+            }
+        });
+
         match Stream::poll_next(Pin::new(&mut self.rpc), cx) {
             Poll::Ready(x) => match x {
                 Some(y) => match y {
