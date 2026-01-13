@@ -392,7 +392,7 @@ impl Rpc {
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
         peer: Peer,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
         self.inner
             .lock()
             .unwrap()

@@ -11,6 +11,7 @@ use futures::{
     channel::mpsc,
     task::{Context, Poll},
 };
+use tokio::sync::oneshot;
 use rand::Rng;
 use std::{
     collections::VecDeque,
@@ -159,23 +160,23 @@ impl OutRequestBuilder {
 }
 
 /// OutMessage contains outgoing messages data, including local metadata for managing messages
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum OutMessage {
     Request((Option<QueryId>, RequestMsgData)),
-    Reply(ReplyMsgData),
+    Reply((Option<oneshot::Sender<()>>, ReplyMsgData)),
 }
 
 impl OutMessage {
     fn to(&self) -> Peer {
         match self {
             OutMessage::Request((_, x)) => x.to.clone(),
-            OutMessage::Reply(x) => x.to.clone(),
+            OutMessage::Reply((_, x)) => x.to.clone(),
         }
     }
-    fn inner(self) -> MsgData {
+    fn msg_data(&self) -> MsgData {
         match self {
-            OutMessage::Request((_, x)) => MsgData::Request(x),
-            OutMessage::Reply(x) => MsgData::Reply(x),
+            OutMessage::Request((_, x)) => MsgData::Request(x.clone()),
+            OutMessage::Reply((_, x)) => MsgData::Reply(x.clone()),
         }
     }
 }
@@ -298,8 +299,8 @@ impl IoHandler {
         self.tid.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn enqueue_reply(&mut self, msg: ReplyMsgData) {
-        self.pending_send.push_back(OutMessage::Reply(msg));
+    pub fn enqueue_reply(&mut self, msg: ReplyMsgData, tx: Option<oneshot::Sender<()>>) {
+        self.pending_send.push_back(OutMessage::Reply((tx, msg)));
         self.maybe_wake();
     }
 
@@ -373,15 +374,18 @@ impl IoHandler {
         let id = (!self.ephemeral).then(|| self.id().0);
         let token = Some(self.token(peer, 1)?);
 
-        self.enqueue_reply(ReplyMsgData {
-            tid: request.tid,
-            to: peer.clone(),
-            id,
-            token,
-            closer_nodes: closer_nodes.unwrap_or_default(),
-            error,
-            value,
-        });
+        self.enqueue_reply(
+            ReplyMsgData {
+                tid: request.tid,
+                to: peer.clone(),
+                id,
+                token,
+                closer_nodes: closer_nodes.unwrap_or_default(),
+                error,
+                value,
+            },
+            None,
+        );
         Ok(())
     }
 
@@ -389,7 +393,7 @@ impl IoHandler {
         if msg.token.is_none() {
             msg.token = self.token(&msg.to, 1).ok();
         }
-        self.enqueue_reply(msg)
+        self.enqueue_reply(msg, None)
     }
 
     pub fn response(
@@ -398,19 +402,23 @@ impl IoHandler {
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
         peer: Peer,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<oneshot::Receiver<()>> {
         let id = (!self.ephemeral).then(|| self.id().0);
         let token = Some(self.token(&peer, 1)?);
-        self.enqueue_reply(ReplyMsgData {
-            tid: request.tid,
-            to: peer.clone(),
-            id,
-            token,
-            closer_nodes: closer_nodes.unwrap_or_default(),
-            error: 0,
-            value,
-        });
-        Ok(())
+        let (tx, rx) = oneshot::channel();
+        self.enqueue_reply(
+            ReplyMsgData {
+                tid: request.tid,
+                to: peer.clone(),
+                id,
+                token,
+                closer_nodes: closer_nodes.unwrap_or_default(),
+                error: 0,
+                value,
+            },
+            Some(tx),
+        );
+        Ok(rx)
     }
 
     pub fn create_sender(&mut self) -> MessageSender {
@@ -476,7 +484,7 @@ impl IoHandler {
         let tid = self.new_tid();
         let id = self.id().0;
         let full_req = RequestMsgData::from_ids_and_inner_data(tid, Some(id), data);
-        self.inner_send(OutMessage::Request((query_id, full_req.clone())))?;
+        self.inner_send(&OutMessage::Request((query_id, full_req.clone())))?;
         let inflight_req = InflightRequestFuture {
             message: full_req,
             sender,
@@ -491,7 +499,7 @@ impl IoHandler {
         msg: (Option<QueryId>, RequestMsgData),
     ) -> crate::Result<RequestFuture<Arc<InResponse>>> {
         let tid = msg.1.tid;
-        self.inner_send(OutMessage::Request(msg.clone()))?;
+        self.inner_send(&OutMessage::Request(msg.clone()))?;
         let (sender, reciever) = new_request_channel();
         let inflight_req = InflightRequestFuture {
             message: msg.1,
@@ -506,20 +514,20 @@ impl IoHandler {
         if self.pending_flush.is_none()
             && let Some(msg) = self.pending_send.pop_front()
         {
-            self.inner_send(msg.clone())?;
+            self.inner_send(&msg)?;
             self.pending_flush = Some(msg);
             self.maybe_wake();
         }
         Ok(())
     }
 
-    fn inner_send(&mut self, msg: OutMessage) -> crate::Result<()> {
+    fn inner_send(&mut self, msg: &OutMessage) -> crate::Result<()> {
         let addr = SocketAddr::from(&msg.to());
-        match &msg {
+        match msg {
             OutMessage::Request(r) => trace!(tid = r.1.tid, command =% r.1.command, "TX:Request"),
-            OutMessage::Reply(r) => trace!(tid = r.tid, "TX:Reply"),
+            OutMessage::Reply((_, r)) => trace!(tid = r.tid, "TX:Reply"),
         }
-        Sink::start_send(Pin::new(&mut self.message_stream), (msg.inner(), addr))
+        Sink::start_send(Pin::new(&mut self.message_stream), (msg.msg_data(), addr))
     }
     fn maybe_wake(&mut self) {
         if let Some(w) = self.stream_waker.take() {
@@ -571,7 +579,10 @@ impl Stream for IoHandler {
                         let out = IoHandlerEvent::OutRequest { tid };
                         Poll::Ready(Some(out))
                     }
-                    OutMessage::Reply(message) => {
+                    OutMessage::Reply((tx, message)) => {
+                        if let Some(tx) = tx {
+                            let _ = tx.send(());
+                        }
                         let peer = message.to.clone();
                         let out = IoHandlerEvent::OutResponse { message, peer };
                         trace!("{out:#?}");
