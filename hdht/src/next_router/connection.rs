@@ -51,7 +51,7 @@ impl std::fmt::Debug for ConnectionInner {
             .field("handshake", &self.handshake)
             .field("udx_local_id", &self.udx_local_id)
             .field("step", &self.step)
-            .field("rpc", &self.rpc.as_ref().map(|_| "Rpc"))
+            //.field("rpc", &self.rpc)
             .finish()
     }
 }
@@ -120,7 +120,6 @@ impl ConnectionInner {
 impl Stream for ConnectionInner {
     type Item = CipherEvent;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Poll the RPC to flush any pending responses
         if let Some(ref mut rpc) = self.rpc {
             while Pin::new(&mut *rpc).poll_next(cx).is_ready() {
                 // Keep polling to flush responses
