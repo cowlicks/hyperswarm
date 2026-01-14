@@ -134,7 +134,7 @@ pub fn log() {
             .with_target(true)
             .with_line_number(true)
             // print when instrumented funtion enters
-            .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
+            //.with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
             .with_file(true)
             .with_env_filter(EnvFilter::from_default_env()) // Reads `RUST_LOG` environment variable
             .without_time()

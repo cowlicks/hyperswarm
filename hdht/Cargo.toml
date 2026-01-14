@@ -52,7 +52,9 @@ features = [ "serde" , "integration_utils"]
 version = "0.2.2"
 
 [dependencies.hypercore_handshake]
-version = "0.2.0"
+path = "../../handshake"
+#version = "0.2.0"
 
 [dependencies.uint24le_framing]
-version = "0.1.0"
+path = "../../framing"
+#version = "0.1.0"

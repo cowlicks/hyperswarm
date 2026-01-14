@@ -580,6 +580,7 @@ impl Stream for IoHandler {
                         Poll::Ready(Some(out))
                     }
                     OutMessage::Reply((tx, message)) => {
+                        // Signal that the response has been flushed
                         if let Some(tx) = tx {
                             let _ = tx.send(());
                         }
