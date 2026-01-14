@@ -43,6 +43,7 @@ pub mod adht;
 pub use crypto::{
     Keypair, make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce,
 };
+pub use server::Server;
 
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
