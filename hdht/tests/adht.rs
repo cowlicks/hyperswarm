@@ -4,10 +4,9 @@ use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
 use futures::join;
 use futures::{SinkExt, StreamExt};
 use hypercore_handshake::CipherEvent;
-use hyperdht::{Error, Keypair, adht::Dht};
+use hyperdht::{Keypair, adht::Dht};
 
 use common::{Result, setup::Testnet};
-use tokio::time::timeout;
 
 macro_rules! adht_setup {
     () => {{
@@ -16,19 +15,6 @@ macro_rules! adht_setup {
         let dht = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
         (tn, dht)
     }};
-}
-
-macro_rules! wait {
-    ($ms:expr) => {
-        tokio::time::sleep(std::time::Duration::from_millis($ms)).await;
-    };
-}
-
-macro_rules! timeout {
-    ($ms:expr, $fut:expr) => {{ timeout(std::time::Duration::from_millis($ms), $fut).await }};
-    ($fut:expr) => {
-        timeout!(100, $fut)
-    };
 }
 
 #[tokio::test]
