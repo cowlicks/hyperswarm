@@ -11,7 +11,6 @@ use futures::{
     channel::mpsc,
     task::{Context, Poll},
 };
-use tokio::sync::oneshot;
 use rand::Rng;
 use std::{
     collections::VecDeque,
@@ -20,6 +19,7 @@ use std::{
     sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
+use tokio::sync::oneshot;
 use tracing::{error, trace};
 use wasm_timer::Instant;
 

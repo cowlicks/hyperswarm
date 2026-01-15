@@ -243,7 +243,6 @@ impl DhtInner {
             ));
         };
         let tx = tx.clone();
-        let keypair_secret = keypair.secret.clone();
 
         let Some(value) = &request.value else {
             return Err(Error::PeerHandshakeFailed("missing value".into()));
@@ -255,7 +254,7 @@ impl DhtInner {
         // Create responder cipher with same prologue as initiator
         let mut hs = Cipher::resp_from_private_with_prologue(
             None,
-            &keypair_secret[..32],
+            &keypair.secret[..32],
             &namespace::PEER_HANDSHAKE,
         )?;
 
