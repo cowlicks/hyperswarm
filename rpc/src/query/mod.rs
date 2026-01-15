@@ -158,9 +158,7 @@ impl QueryPool {
     }
 
     /// Polls the pool to advance the queries.
-    #[instrument(skip_all)]
     pub fn poll(&mut self, now: Instant, waker: Waker) -> QueryPoolEvent {
-        trace!("poll for QueryPoolEvent");
         let mut finished = None;
         let mut timeout = None;
         let mut waiting = None;

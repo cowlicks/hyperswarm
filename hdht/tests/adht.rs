@@ -1,19 +1,106 @@
 mod common;
 
 use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
+use futures::join;
 use futures::{SinkExt, StreamExt};
 use hypercore_handshake::CipherEvent;
 use hyperdht::{Keypair, adht::Dht};
 
-use common::{Result, log, setup::Testnet};
+use common::{Result, setup::Testnet};
 
 macro_rules! adht_setup {
     () => {{
         let mut tn = Testnet::new().await?;
         let bs_addr = tn.get_node_i_address(1).await?;
-        let rpc = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-        (tn, rpc)
+        let dht = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+        (tn, dht)
     }};
+}
+
+#[tokio::test]
+async fn rsrs_server_tx_first() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.get_node_i_address(1).await?;
+    let a = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let keypair = Keypair::default();
+    let topic = IdBytes::random();
+    let a_addr = a.local_addr()?;
+    let b = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    a.bootstrap().await?;
+    b.bootstrap().await?;
+    a.announce(topic, keypair.clone(), vec![]).await?;
+
+    let mut a_server = a.listen(keypair.clone());
+
+    let client_conn_fut = async move {
+        let Ok(conn) = b.peer_handshake(keypair.public, a_addr).unwrap().await else {
+            todo!()
+        };
+        conn
+    };
+    let server_conn_fut = async move {
+        let Some(Ok(conn)) = a_server.next().await else {
+            todo!()
+        };
+        conn
+    };
+    let (mut client, mut server) = join!(client_conn_fut, server_conn_fut);
+    server.send(b"hi".into()).await?;
+    let CipherEvent::Message(msg) = client.next().await.unwrap() else {
+        todo!()
+    };
+    assert_eq!(msg, b"hi");
+
+    client.send(b"bye".into()).await?;
+    let CipherEvent::Message(msg) = server.next().await.unwrap() else {
+        todo!()
+    };
+    assert_eq!(msg, b"bye");
+    Ok(())
+}
+
+#[tokio::test]
+async fn rsrs_client_tx_first() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.get_node_i_address(1).await?;
+    let a = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let keypair = Keypair::default();
+    let topic = IdBytes::random();
+    let a_addr = a.local_addr()?;
+    let b = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    a.bootstrap().await?;
+    b.bootstrap().await?;
+    a.announce(topic, keypair.clone(), vec![]).await?;
+
+    let mut a_server = a.listen(keypair.clone());
+
+    let client_conn_fut = async move {
+        let Ok(conn) = b.peer_handshake(keypair.public, a_addr).unwrap().await else {
+            todo!()
+        };
+        conn
+    };
+    let server_conn_fut = async move {
+        let Some(Ok(conn)) = a_server.next().await else {
+            todo!()
+        };
+        conn
+    };
+    let (mut client, mut server) = join!(client_conn_fut, server_conn_fut);
+    client.send(b"hi".into()).await?;
+    let CipherEvent::Message(msg) = server.next().await.unwrap() else {
+        todo!()
+    };
+    assert_eq!(msg, b"hi");
+
+    server.send(b"bye".into()).await?;
+    let CipherEvent::Message(msg) = client.next().await.unwrap() else {
+        todo!()
+    };
+    assert_eq!(msg, b"bye");
+    Ok(())
 }
 
 /// Check that Rust's lookup works. The steps:
@@ -132,7 +219,6 @@ outputJson([...pub_key]);
 // assert pub_key is matching
 #[tokio::test]
 async fn js_server_listen_rs_find_peer() -> Result<()> {
-    log();
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
@@ -161,7 +247,7 @@ outputJson([...pub_key]);
         )
         .await?;
 
-    dht.boostrap().await?;
+    dht.bootstrap().await?;
     let mut q = dht.find_peer(pub_key.into())?;
     while let Some(e) = q.next().await {
         if let Ok(Some(resp)) = e {
@@ -204,7 +290,7 @@ outputJson([...pub_key]);
         )
         .await?;
 
-    dht.boostrap().await?;
+    dht.bootstrap().await?;
 
     let port: u16 = tn.repl.get_name("server_addr").await?;
     let dest = format!("127.0.0.1:{port}").parse()?;
@@ -256,8 +342,8 @@ outputJson([...pub_key]);
         )
         .await?;
 
-    dht.boostrap().await?;
-    let mut conn = dht.connect(pub_key.into()).await?;
+    dht.bootstrap().await?;
+    let mut conn = dht.connect(pub_key.into())?.await?;
     conn.send(b"from rust".into()).await?;
     let msg: String = tn.repl.get_name("server_rx_data").await?;
     assert_eq!(msg, "from rust");
@@ -279,10 +365,9 @@ outputJson([...pub_key]);
 /// js does a lookup, check no results found
 #[tokio::test]
 async fn rs_unannounce() -> Result<()> {
-    let (mut tn, mut dht) = adht_setup!();
+    let (mut tn, dht) = adht_setup!();
     let topic = tn.make_topic("hello").await?;
     let keypair = Keypair::default();
-    log();
     // announce our rust node with `topic` and `keypair`
     dht.announce(topic.into(), keypair.clone(), vec![]).await?;
 
@@ -311,7 +396,6 @@ async fn rs_announce_clear() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let topic = tn.make_topic("hello").await?;
     let keypair = Keypair::default();
-    log();
     // announce our rust node with `topic` and `keypair`
     dht.announce(topic.into(), keypair.clone(), vec![]).await?;
 

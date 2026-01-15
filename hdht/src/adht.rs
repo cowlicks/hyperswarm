@@ -1,33 +1,39 @@
 use std::{
+    collections::HashMap,
     future::Future,
     net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering::Relaxed},
     },
     task::{Context, Poll},
 };
 
+use tokio::sync::{mpsc, oneshot};
+
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    AsyncRpcDht, Commit, DhtConfig, IdBytes, InResponse, OutRequestBuilder, Peer, QueryId,
-    QueryNext, RpcDhtRequestFuture, generic_hash,
+    BootstrapFuture, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
+    OutRequestBuilder, Peer, QueryId, QueryNext, RequestMsgData, Rpc, RpcDhtRequestFuture,
+    generic_hash,
 };
-use futures::{Stream, StreamExt, future::join_all, stream::FuturesUnordered};
+use futures::{Stream, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
 use tracing::{error, instrument, trace};
 
 use crate::{
     DEFAULT_BOOTSTRAP, Error, Keypair, Result,
     cenc::{
-        NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
+        NoisePayload, NoisePayloadBuilder, PeerHandshakePayload, PeerHandshakePayloadBuilder,
+        UdxInfoBuilder, firewall,
     },
     commands,
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
     request_announce_or_unannounce_value,
+    server::Server,
 };
 
 #[derive(Debug)]
@@ -37,12 +43,151 @@ pub struct QueryResult {
     pub query_id: QueryId,
 }
 
+pub struct ConnectFuture {
+    dht: Arc<RwLock<DhtInner>>,
+    query: FindPeer,
+    pub_key: PublicKey,
+    pending_handshake: Option<PeerHandshake>,
+}
+
+impl Future for ConnectFuture {
+    type Output = Result<Connection>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            // If we have a pending handshake, poll it first
+            if let Some(ref mut handshake) = self.pending_handshake {
+                match Pin::new(handshake).poll(cx) {
+                    Poll::Ready(Ok(conn)) => return Poll::Ready(Ok(conn)),
+                    Poll::Ready(Err(_)) => {
+                        // Handshake failed, try next peer
+                        self.pending_handshake = None;
+                    }
+                    Poll::Pending => return Poll::Pending,
+                }
+            }
+
+            // Poll the query for more peers
+            match Pin::new(&mut self.query).poll_next(cx) {
+                Poll::Ready(Some(Ok(Some(FindPeerResponse { response, .. })))) => {
+                    // Try to start a handshake with this peer
+                    let dht = self.dht.read().unwrap();
+                    if let Ok(handshake) =
+                        dht.peer_handshake(self.pub_key.clone(), response.request.to.addr)
+                    {
+                        drop(dht); // Release lock before storing
+                        self.pending_handshake = Some(handshake);
+                        // Continue loop to poll the new handshake
+                    }
+                }
+                Poll::Ready(Some(Ok(None))) | Poll::Ready(Some(Err(_))) => {
+                    // No peer info or error, continue to next
+                }
+                Poll::Ready(None) => {
+                    // Query exhausted, no connection made
+                    return Poll::Ready(Err(Error::ConnectionFailed));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
 pub struct Dht {
-    rpc: AsyncRpcDht,
-    id_maker: StreamIdMaker,
+    inner: Arc<RwLock<DhtInner>>,
 }
 
 impl Dht {
+    pub async fn with_config(config: DhtConfig) -> Result<Self> {
+        Ok(Self {
+            inner: Arc::new(RwLock::new(DhtInner::with_config(config).await?)),
+        })
+    }
+    pub fn bootstrap(&self) -> BootstrapFuture {
+        self.inner.read().unwrap().bootstrap()
+    }
+    pub fn connect(&self, pub_key: PublicKey) -> Result<ConnectFuture> {
+        self.inner
+            .read()
+            .unwrap()
+            .connect(pub_key, self.inner.clone())
+    }
+    pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
+        self.inner.read().unwrap().lookup(target, commit)
+    }
+    pub fn find_peer(&self, pub_key: PublicKey) -> Result<FindPeer> {
+        self.inner.read().unwrap().find_peer(pub_key)
+    }
+    pub fn announce(
+        &self,
+        target: IdBytes,
+        keypair: Keypair,
+        relay_addresses: Vec<SocketAddr>,
+    ) -> Announce {
+        self.inner
+            .read()
+            .unwrap()
+            .announce(target, keypair, relay_addresses)
+    }
+    pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
+        self.inner.read().unwrap().unannounce(target, keypair)
+    }
+    pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
+        self.inner.read().unwrap().request(o)
+    }
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        self.inner.read().unwrap().local_addr()
+    }
+    pub fn peer_handshake(
+        &self,
+        remote_public_key: PublicKey,
+        destination: SocketAddr,
+    ) -> Result<PeerHandshake> {
+        self.inner
+            .read()
+            .unwrap()
+            .peer_handshake(remote_public_key, destination)
+    }
+    pub fn announce_clear(
+        &self,
+        target: IdBytes,
+        keypair: Keypair,
+        relay_addresses: Vec<SocketAddr>,
+    ) -> AnnounceClear {
+        self.inner
+            .read()
+            .unwrap()
+            .announce_clear(target, keypair, relay_addresses)
+    }
+
+    pub fn listen(&self, keypair: Keypair) -> Server {
+        let (tx, rx) = mpsc::channel(32);
+        self.inner.write().unwrap().add_listening_key(keypair, tx);
+        Server::new(rx, self.inner.clone())
+    }
+}
+
+/// A connection waiting for its response to be flushed before being emitted
+struct PendingConnection {
+    /// Resolves when the response has been flushed
+    response_flushed: oneshot::Receiver<()>,
+    /// The connection to be emitted
+    connection: Connection,
+    /// Channel to send the connection on
+    tx: mpsc::Sender<Result<Connection>>,
+}
+
+pub struct DhtInner {
+    rpc: Rpc,
+    id_maker: StreamIdMaker,
+    #[expect(unused)]
+    default_keypair: Keypair,
+    listening_keypairs: HashMap<IdBytes, (Keypair, mpsc::Sender<Result<Connection>>)>,
+    /// Connections waiting for their response to be flushed
+    pending_connections: Vec<PendingConnection>,
+}
+
+impl DhtInner {
     pub async fn with_config(mut config: DhtConfig) -> Result<Self> {
         if config.bootstrap_nodes.is_empty() {
             for addr_str in DEFAULT_BOOTSTRAP.iter() {
@@ -53,14 +198,156 @@ impl Dht {
         }
 
         Ok(Self {
-            rpc: AsyncRpcDht::with_config(config).await?,
+            rpc: Rpc::with_config(config).await?,
             id_maker: StreamIdMaker::new(),
+            //default_keypair: generate_keypair()?,
+            default_keypair: Default::default(),
+            listening_keypairs: Default::default(),
+            pending_connections: Default::default(),
         })
     }
 
-    pub async fn boostrap(&self) -> Result<()> {
-        self.rpc.bootstrap().await?;
+    fn add_listening_key(&mut self, keypair: Keypair, tx: mpsc::Sender<Result<Connection>>) {
+        let target = IdBytes(generic_hash(&*keypair.public));
+        self.listening_keypairs.insert(target, (keypair, tx));
+    }
+
+    pub fn on_request(
+        &mut self,
+        CustomCommandRequest {
+            request,
+            peer,
+            command: ExternalCommand(command),
+        }: CustomCommandRequest,
+    ) -> Result<()> {
+        use crate::commands::values;
+        match command {
+            values::PEER_HANDSHAKE => self.on_peer_handshake(*request, peer)?,
+            values::PEER_HOLEPUNCH => todo!(),
+            values::FIND_PEER => todo!(),
+            values::LOOKUP => todo!(),
+            values::ANNOUNCE => todo!(),
+            values::UNANNOUNCE => todo!(),
+            x => todo!("{x}"),
+        }
         Ok(())
+    }
+
+    pub fn on_peer_handshake(&mut self, request: RequestMsgData, peer: Peer) -> Result<()> {
+        let Some(target) = request.target else {
+            return Err(Error::PeerHandshakeFailed("missing target".into()));
+        };
+        let Some((keypair, tx)) = self.listening_keypairs.get(&IdBytes(target)) else {
+            return Err(Error::PeerHandshakeFailed(
+                "not listening on this target".into(),
+            ));
+        };
+        let tx = tx.clone();
+
+        let Some(value) = &request.value else {
+            return Err(Error::PeerHandshakeFailed("missing value".into()));
+        };
+
+        let (php, rest) = PeerHandshakePayload::decode(value)?;
+        debug_assert!(rest.is_empty());
+
+        // Create responder cipher with same prologue as initiator
+        let mut hs = Cipher::resp_from_private_with_prologue(
+            None,
+            &keypair.secret[..32],
+            &namespace::PEER_HANDSHAKE,
+        )?;
+
+        // Create our UDX stream
+        let udx_local_id = self.id_maker.new_id();
+        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
+
+        // Build our NoisePayload with our UDX info for the response
+        let SocketAddr::V4(local_addr) = self.rpc.local_addr()? else {
+            return Err(Error::PeerHandshakeFailed("IPv6 not supported yet".into()));
+        };
+        let server_np = NoisePayloadBuilder::default()
+            .firewall(firewall::OPEN)
+            .addresses4(Some(vec![local_addr]))
+            .udx(Some(
+                UdxInfoBuilder::default()
+                    .reusable_socket(false)
+                    .id(udx_local_id as usize)
+                    .build()?,
+            ))
+            .build()?
+            .to_encoded_bytes()?;
+
+        //assert!(NoisePayload::decode(&server_np).is_ok());
+
+        hs.queue_msg(server_np.to_vec());
+
+        // Receive client's noise message
+        hs.receive_next(php.noise);
+
+        // Decrypt the client's payload to get their UDX info
+        let Some(hypercore_handshake::CipherEvent::HandshakePayload(payload_bytes)) =
+            hs.next_decrypted_message()?
+        else {
+            return Err(Error::PeerHandshakeFailed(
+                "expected handshake payload".into(),
+            ));
+        };
+        let (client_np, _rest) = NoisePayload::decode(&payload_bytes)?;
+        debug_assert!(_rest.is_empty());
+
+        // Set our payload and get the response noise
+        let Some(noise) = hs.get_next_sendable_message()? else {
+            return Err(Error::PeerHandshakeFailed(
+                "failed to generate response noise".into(),
+            ));
+        };
+
+        // Create connection with RPC so it can poll to flush responses
+        let connection = Connection::new_with_rpc(hs, udx_local_id, half_stream, self.rpc.clone());
+        let remote_udx_id = client_np
+            .udx
+            .as_ref()
+            .ok_or_else(|| Error::PeerHandshakeFailed("client missing udx info".into()))?
+            .id as u32;
+        connection.connect(peer.addr, remote_udx_id, client_np)?;
+
+        // Build and send the response
+        let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
+            .noise(noise)
+            .mode(crate::cenc::HandshakeSteps::Reply)
+            .build()?
+            .to_encoded_bytes()?;
+
+        let response_flushed = self.rpc.respond(
+            request,
+            Some(peer_handshake_payload.to_vec()),
+            Some(vec![]),
+            Peer::new(peer.addr),
+        )?;
+
+        // Queue the connection to be sent after the response is flushed
+        self.pending_connections.push(PendingConnection {
+            response_flushed,
+            connection,
+            tx,
+        });
+
+        Ok(())
+    }
+
+    pub fn bootstrap(&self) -> BootstrapFuture {
+        self.rpc.bootstrap()
+    }
+
+    pub fn connect(&self, pub_key: PublicKey, dht: Arc<RwLock<DhtInner>>) -> Result<ConnectFuture> {
+        let query = self.find_peer(pub_key.clone())?;
+        Ok(ConnectFuture {
+            dht,
+            query,
+            pub_key,
+            pending_handshake: None,
+        })
     }
 
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
@@ -85,27 +372,26 @@ impl Dht {
     }
 
     // TODO  return something more useful, maybe indicate if commits failed, etc
-    pub async fn announce(
+    pub fn announce(
         &self,
         target: IdBytes,
-        key_pair: Keypair,
+        keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
-    ) -> Result<()> {
+    ) -> Announce {
         let query = self
             .rpc
             .query_next(commands::LOOKUP, target, None, Commit::No);
-        let pending_commits = Announce {
+        Announce {
             rpc: self.rpc.clone(),
             query,
             target,
-            key_pair: key_pair.clone(),
+            keypair,
             relay_addresses,
+            pending_requests: Default::default(),
+            query_done: false.into(),
         }
-        .await?;
-        join_all(pending_commits).await;
-        Ok(())
     }
-    pub fn unannounce(&mut self, target: IdBytes, key_pair: Keypair) -> Unannounce {
+    pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
         let query = self
             .rpc
             .query_next(commands::LOOKUP, target, None, Commit::No);
@@ -113,30 +399,17 @@ impl Dht {
             rpc: self.rpc.clone(),
             query,
             target,
-            key_pair: key_pair.clone(),
+            keypair: keypair.clone(),
             done: false.into(),
             pending_requests: Default::default(),
         }
     }
 
-    pub async fn connect(&self, pub_key: PublicKey) -> Result<Connection> {
-        let mut query = self.find_peer(pub_key.clone())?;
-        while let Some(resp) = query.next().await {
-            let Ok(Some(FindPeerResponse { response, .. })) = resp else {
-                continue;
-            };
-            if let Ok(conn) = self
-                .peer_handshake(pub_key.clone(), response.request.to.addr)?
-                .await
-            {
-                return Ok(conn);
-            }
-        }
-        todo!()
-    }
-
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         self.rpc.request_from_builder(o)
+    }
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.rpc.local_addr()?)
     }
 
     pub fn peer_handshake(
@@ -186,7 +459,7 @@ impl Dht {
     pub fn announce_clear(
         &self,
         target: IdBytes,
-        key_pair: Keypair,
+        keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> AnnounceClear {
         let query = self
@@ -196,12 +469,54 @@ impl Dht {
             rpc: self.rpc.clone(),
             query,
             target,
-            key_pair,
+            keypair,
             pending_requests: Default::default(),
             relay_addresses,
             query_done: false.into(),
             commits_done: false.into(),
         }
+    }
+}
+
+impl Stream for DhtInner {
+    type Item = Result<CustomCommandRequest>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Poll pending connections - send them once their response is flushed
+        self.pending_connections.retain_mut(|pending| {
+            match Pin::new(&mut pending.response_flushed).poll(cx) {
+                Poll::Ready(_) => {
+                    let _ = pending.tx.try_send(Ok(pending.connection.clone()));
+                    false
+                }
+                Poll::Pending => true,
+            }
+        });
+
+        match Stream::poll_next(Pin::new(&mut self.rpc), cx) {
+            Poll::Ready(x) => match x {
+                Some(y) => match y {
+                    dht_rpc::RpcEvent::CustomRequest(request) => {
+                        self.on_request(request)?;
+                    }
+                    dht_rpc::RpcEvent::ResponseResult(_response_ok) => {
+                        return Poll::Pending;
+                    }
+                    dht_rpc::RpcEvent::RoutingUpdated { .. } => todo!(),
+                    dht_rpc::RpcEvent::Bootstrapped(_bootstrapped) => todo!(),
+                    dht_rpc::RpcEvent::ReadyToCommit { .. } => todo!(),
+                    dht_rpc::RpcEvent::QueryResult(_query_result) => {
+                        return Poll::Pending;
+                    }
+                    dht_rpc::RpcEvent::QueryResponse(_in_response) => {
+                        return Poll::Pending;
+                    }
+                },
+                None => return Poll::Ready(None),
+            },
+            Poll::Pending => return Poll::Pending,
+        }
+        Poll::Pending
     }
 }
 
@@ -375,56 +690,75 @@ impl Future for FindPeer {
 }
 
 pub struct Announce {
-    rpc: AsyncRpcDht,
+    rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
-    key_pair: Keypair,
+    keypair: Keypair,
     relay_addresses: Vec<SocketAddr>,
+    pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
+    query_done: AtomicBool,
 }
 
 impl Future for Announce {
-    type Output = Result<Vec<RpcDhtRequestFuture>>;
+    type Output = Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match Pin::new(&mut self.query).poll(cx) {
-            Poll::Ready(Ok(query_result)) => {
-                let mut requests: Vec<RpcDhtRequestFuture> = vec![];
-                for reply in query_result.closest_replies.iter() {
-                    let Some(token) = reply.response.token else {
-                        todo!("could not get token");
-                    };
-                    let value = request_announce_or_unannounce_value(
-                        &self.key_pair,
-                        self.target,
-                        &token,
-                        reply.request.to.id.expect("request.to.id TODO").into(),
-                        &self.relay_addresses,
-                        &crate::crypto::namespace::ANNOUNCE,
-                    );
-                    let from_peer = Peer {
-                        id: reply.request.to.id,
-                        addr: reply.request.to.addr,
-                        referrer: None,
-                    };
-                    let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
-                        .target(self.target)
-                        .value(value)
-                        .token(token);
-                    requests.push(self.rpc.request_from_builder(o));
+        // Phase 1: Complete the query and queue commit requests
+        if !self.query_done.load(Relaxed) {
+            match Pin::new(&mut self.query).poll(cx) {
+                Poll::Ready(Ok(query_result)) => {
+                    for reply in query_result.closest_replies.iter() {
+                        let Some(token) = reply.response.token else {
+                            todo!("could not get token");
+                        };
+                        let value = request_announce_or_unannounce_value(
+                            &self.keypair,
+                            self.target,
+                            &token,
+                            reply.request.to.id.expect("request.to.id TODO").into(),
+                            &self.relay_addresses,
+                            &crate::crypto::namespace::ANNOUNCE,
+                        );
+                        let from_peer = Peer {
+                            id: reply.request.to.id,
+                            addr: reply.request.to.addr,
+                            referrer: None,
+                        };
+                        let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
+                            .target(self.target)
+                            .value(value)
+                            .token(token);
+                        self.pending_requests.push(self.rpc.request_from_builder(o));
+                    }
+                    self.query_done.store(true, Relaxed);
                 }
-                Poll::Ready(Ok(requests))
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+                Poll::Pending => return Poll::Pending,
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
-            Poll::Pending => Poll::Pending,
         }
+
+        // Phase 2: Wait for all commit requests to complete
+        match Pin::new(&mut self.pending_requests).poll_next(cx) {
+            Poll::Ready(Some(Ok(res))) => {
+                trace!(tid = res.request.tid, "RX announce commit");
+                cx.waker().wake_by_ref();
+            }
+            Poll::Ready(Some(Err(e))) => error!(error =? e, "Announce commit request error"),
+            Poll::Ready(None) => {
+                // All commits done
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending => {}
+        }
+        Poll::Pending
     }
 }
 
 pub struct Unannounce {
-    rpc: AsyncRpcDht,
+    rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
-    key_pair: Keypair,
+    keypair: Keypair,
     pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
     done: AtomicBool,
 }
@@ -449,7 +783,7 @@ impl Future for Unannounce {
                         referrer: None,
                     };
                     let value = request_announce_or_unannounce_value(
-                        &self.key_pair,
+                        &self.keypair,
                         self.target,
                         token,
                         *id,
@@ -489,10 +823,10 @@ impl Future for Unannounce {
 }
 
 pub struct AnnounceClear {
-    rpc: AsyncRpcDht,
+    rpc: Rpc,
     query: QueryNext,
     target: IdBytes,
-    key_pair: Keypair,
+    keypair: Keypair,
     pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
     relay_addresses: Vec<SocketAddr>,
     query_done: AtomicBool,
@@ -517,7 +851,7 @@ impl AnnounceClear {
                     referrer: None,
                 };
                 let value = request_announce_or_unannounce_value(
-                    &self.key_pair,
+                    &self.keypair,
                     self.target,
                     token,
                     *id,
@@ -551,7 +885,7 @@ impl AnnounceClear {
                         todo!("could not get token");
                     };
                     let value = request_announce_or_unannounce_value(
-                        &self.key_pair,
+                        &self.keypair,
                         self.target,
                         &token,
                         reply.request.to.id.expect("request.to.id TODO").into(),

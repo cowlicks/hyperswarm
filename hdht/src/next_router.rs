@@ -1,4 +1,5 @@
 pub mod connection;
+use rand::Rng;
 use std::{
     collections::BTreeMap,
     net::SocketAddrV4,
@@ -34,7 +35,7 @@ impl StreamIdMaker {
     // TODO use RNG to pick id
     pub fn new() -> Self {
         Self {
-            counter: AtomicU32::new(1u32),
+            counter: AtomicU32::new(rand::thread_rng().r#gen()),
         }
     }
     pub fn new_id(&self) -> u32 {

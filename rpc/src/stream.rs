@@ -7,7 +7,6 @@ use std::{
 
 use compact_encoding::CompactEncoding;
 use futures::{Future, Sink, Stream};
-use tracing::trace;
 use udx::{RecvFuture, UdxSocket};
 
 use crate::Result;
@@ -67,11 +66,6 @@ impl Stream for MessageDataStream {
                 // Try to decode the received message
                 match MsgData::decode(&buff) {
                     Ok((msg, _rest)) => {
-                        trace!(
-                            msg.tid = msg.tid(),
-                            to =?addr,
-                            "RX"
-                        );
                         debug_assert!(_rest.is_empty());
 
                         self.recv_queue.push_back((msg, addr));
@@ -83,6 +77,9 @@ impl Stream for MessageDataStream {
             }
             Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e.into()))),
             Poll::Pending => {
+                // TODO RMME this is a sad busy loop :/ seems like the inner tokio
+                // AsyncFd::poll_read_ready() is not waking as we would expect
+                cx.waker().wake_by_ref();
                 _ = self.next_message.insert(fut);
                 Poll::Pending
             }
@@ -99,11 +96,6 @@ impl Sink<(MsgData, SocketAddr)> for MessageDataStream {
 
     fn start_send(self: Pin<&mut Self>, item: (MsgData, SocketAddr)) -> Result<()> {
         let (message, addr) = item;
-        trace!(
-            msg.tid = message.tid(),
-            to =?addr,
-            "TX"
-        );
         let buff = message.to_encoded_bytes()?;
         self.socket.send(addr, &buff);
         Ok(())

@@ -2,9 +2,9 @@ use std::{net::ToSocketAddrs, sync::OnceLock};
 
 use futures::StreamExt;
 
-use crate::{DEFAULT_BOOTSTRAP, DhtConfig, Peer, RpcDht};
+use crate::{DEFAULT_BOOTSTRAP, DhtConfig, Peer, RpcInner};
 
-use super::RpcDhtEvent;
+use super::RpcEvent;
 
 #[allow(unused)]
 pub fn log() {
@@ -25,12 +25,12 @@ async fn bootstrap() -> crate::Result<()> {
     let conf = DhtConfig::default()
         .add_bootstrap_node(DEFAULT_BOOTSTRAP[0].to_socket_addrs()?.last().unwrap());
 
-    let mut rpc = RpcDht::with_config(conf).await?;
+    let mut rpc = RpcInner::with_config(conf).await?;
 
     rpc.bootstrap();
     let mut i = 0;
     loop {
-        if let Some(RpcDhtEvent::QueryResult { .. }) = rpc.next().await {
+        if let Some(RpcEvent::QueryResult { .. }) = rpc.next().await {
             break;
         };
         dbg!(i);
@@ -47,12 +47,12 @@ async fn ping() -> crate::Result<()> {
     let conf = DhtConfig::default()
         .add_bootstrap_node(DEFAULT_BOOTSTRAP[0].to_socket_addrs()?.last().unwrap());
 
-    let mut rpc = RpcDht::with_config(conf).await?;
+    let mut rpc = RpcInner::with_config(conf).await?;
 
     rpc.bootstrap();
     let mut i = 0;
     loop {
-        if let Some(RpcDhtEvent::QueryResult { .. }) = rpc.next().await {
+        if let Some(RpcEvent::QueryResult { .. }) = rpc.next().await {
             break;
         };
         i += 1;

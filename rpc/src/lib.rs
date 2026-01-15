@@ -113,7 +113,7 @@ pub enum Error {
     #[error("Error in libsodium's genric_hash function. Return value: {0}")]
     LibSodiumGenericHashError(i32),
     #[error("RpcDhtBuilderError: {0}")]
-    RpcDhtBuilderError(#[from] RpcDhtBuilderError),
+    RpcDhtBuilderError(#[from] RpcInnerBuilderError),
     #[error("RecvError: {0}")]
     RecvError(#[from] RecvError),
     #[error("AddrParseError: {0}")]
@@ -264,7 +264,7 @@ pub(crate) type QueryAndTid = (Option<QueryId>, Tid);
 
 #[derive(Debug, derive_builder::Builder)]
 #[builder(pattern = "owned")]
-pub struct RpcDht {
+pub struct RpcInner {
     // TODO use message passing to update id's in IoHandler
     #[builder(default = "State::new(IdBytes::from(thirty_two_random_bytes()))")]
     pub id: State<IdBytes>,
@@ -280,7 +280,7 @@ pub struct RpcDht {
     #[expect(unused)]
     commands: HashSet<usize>,
     /// Queued events to return when being polled.
-    queued_events: VecDeque<RpcDhtEvent>,
+    queued_events: VecDeque<RpcEvent>,
     #[builder(field(ty = "Vec<SocketAddr>"))]
     bootstrap_nodes: Vec<SocketAddr>,
     bootstrapped: bool,
@@ -293,14 +293,14 @@ pub struct RpcDht {
 }
 
 #[derive(Clone)]
-pub struct AsyncRpcDht {
-    inner: Arc<Mutex<RpcDht>>,
+pub struct Rpc {
+    inner: Arc<Mutex<RpcInner>>,
 }
 
-impl AsyncRpcDht {
+impl Rpc {
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
-            inner: Arc::new(Mutex::new(RpcDht::with_config(config).await?)),
+            inner: Arc::new(Mutex::new(RpcInner::with_config(config).await?)),
         })
     }
 
@@ -330,7 +330,7 @@ impl AsyncRpcDht {
     }
 
     // TODO Error on timeout
-    pub async fn bootstrap(&self) -> Result<Arc<Bootstrapped>> {
+    pub fn bootstrap(&self) -> BootstrapFuture {
         let (tx, rx) = oneshot::channel();
         {
             let mut inner = self.inner.lock().unwrap();
@@ -341,7 +341,6 @@ impl AsyncRpcDht {
             inner: self.inner.clone(),
             rx,
         }
-        .await
     }
 
     pub fn request(
@@ -387,6 +386,19 @@ impl AsyncRpcDht {
         // Create a future that polls RpcDht for events and waits for the response
         RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
+    pub fn respond(
+        &self,
+        request: RequestMsgData,
+        value: Option<Vec<u8>>,
+        closer_nodes: Option<Vec<Peer>>,
+        peer: Peer,
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
+        self.inner
+            .lock()
+            .unwrap()
+            .io
+            .response(request, value, closer_nodes, peer)
+    }
 
     pub async fn ping(&self, peer: Peer) -> Result<Arc<InResponse>> {
         self.request(
@@ -425,9 +437,18 @@ impl AsyncRpcDht {
     }
 }
 
+impl Stream for Rpc {
+    type Item = RpcEvent;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut inner = self.inner.lock().unwrap();
+        Stream::poll_next(Pin::new(&mut *inner), cx)
+    }
+}
+
 #[derive(Debug)]
 pub struct QueryNext {
-    inner: Arc<Mutex<RpcDht>>,
+    inner: Arc<Mutex<RpcInner>>,
     parts_rx: mpsc::Receiver<Arc<InResponse>>,
     result_rx: Receiver<Arc<QueryResult>>,
 }
@@ -468,8 +489,8 @@ macro_rules! future_poller {
     }};
 }
 
-struct BootstrapFuture {
-    inner: Arc<Mutex<RpcDht>>,
+pub struct BootstrapFuture {
+    inner: Arc<Mutex<RpcInner>>,
     rx: Receiver<Arc<Bootstrapped>>,
 }
 
@@ -484,7 +505,7 @@ impl Future for BootstrapFuture {
 /// A future that polls RpcDht for events while waiting for a specific response.
 #[derive(Debug)]
 pub struct RpcDhtRequestFuture {
-    inner: Arc<Mutex<RpcDht>>,
+    inner: Arc<Mutex<RpcInner>>,
     tid: Tid,
     rx: Receiver<Arc<InResponse>>,
     started_at: Instant,
@@ -522,7 +543,7 @@ impl Future for RpcDhtRequestFuture {
 }
 
 impl RpcDhtRequestFuture {
-    pub fn new(inner: Arc<Mutex<RpcDht>>, tid: Tid, rx: Receiver<Arc<InResponse>>) -> Self {
+    pub fn new(inner: Arc<Mutex<RpcInner>>, tid: Tid, rx: Receiver<Arc<InResponse>>) -> Self {
         Self {
             inner,
             tid,
@@ -624,7 +645,7 @@ impl DhtConfig {
     }
 }
 
-impl RpcDht {
+impl RpcInner {
     fn store_tid_sender(&mut self, tid: Tid, tx: Sender<Arc<InResponse>>) {
         self.pending_requests.insert(tid, tx);
     }
@@ -635,7 +656,7 @@ impl RpcDht {
         self.pending_query_streams.insert(qid, tx);
     }
 
-    fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcDhtEvent>> {
+    fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcEvent>> {
         let pin = self.get_mut();
         let now = Instant::now();
         _ = pin.stream_waker.insert(cx.waker().clone());
@@ -662,7 +683,10 @@ impl RpcDht {
             loop {
                 if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
                     debug!("RpcDht got IoHandlerEvent::{event}");
-                    pin.inject_event(event);
+                    if let Ok(Some(e)) = pin.inject_event(event) {
+                        cx.waker().wake_by_ref();
+                        return Poll::Ready(Some(e));
+                    }
                     if let Some(event) = pin.queued_events.pop_front() {
                         trace!("emit queue event: {event:?}");
                         return Poll::Ready(Some(event));
@@ -679,7 +703,7 @@ impl RpcDht {
                                         C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
                                 }
                                 E::CustomStart((tx_commit_messages, _)) => {
-                                    return Poll::Ready(Some(RpcDhtEvent::ReadyToCommit {
+                                    return Poll::Ready(Some(RpcEvent::ReadyToCommit {
                                         query,
                                         tx_commit_messages,
                                     }));
@@ -764,7 +788,7 @@ impl RpcDht {
         }
     }
 
-    fn enque_stream_event(&mut self, event: RpcDhtEvent) {
+    fn enque_stream_event(&mut self, event: RpcEvent) {
         self.queued_events.push_back(event);
         if let Some(w) = self.stream_waker.take() {
             w.wake()
@@ -837,7 +861,7 @@ impl RpcDht {
                 _ = tx.send(e.clone());
             }
 
-            self.enque_stream_event(RpcDhtEvent::Bootstrapped(e));
+            self.enque_stream_event(RpcEvent::Bootstrapped(e));
             self.bootstrapped = true;
         }
     }
@@ -905,12 +929,12 @@ impl RpcDht {
     }
 
     /// Handle the event generated from the underlying IO
-    fn inject_event(&mut self, event: IoHandlerEvent) {
+    fn inject_event(&mut self, event: IoHandlerEvent) -> Result<Option<RpcEvent>> {
         match event {
             IoHandlerEvent::OutResponse { .. } => {}
             IoHandlerEvent::OutSocketErr { .. } => {}
             IoHandlerEvent::InRequest { message, peer } => {
-                self.on_request(message, peer);
+                return self.on_request(message, peer);
             }
             IoHandlerEvent::InMessageErr { .. } => {}
             IoHandlerEvent::InSocketErr { .. } => {}
@@ -932,6 +956,7 @@ impl RpcDht {
                 trace!(msg.id = tid, "Passed io response through channel")
             }
         }
+        Ok(None)
     }
 
     /// Process a response.
@@ -956,10 +981,10 @@ impl RpcDht {
                     if let Some(resp) = query.write().unwrap().inject_response(resp_data) {
                         // TODO remove ResponoseResult here and relpace downstream with
                         // QueryResponse
-                        self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(
+                        self.enque_stream_event(RpcEvent::ResponseResult(Ok(
                             ResponseOk::Response(resp.clone()),
                         )));
-                        self.enque_stream_event(RpcDhtEvent::QueryResponse(resp.clone()));
+                        self.enque_stream_event(RpcEvent::QueryResponse(resp.clone()));
                         if let Some(tx) = self.pending_query_streams.get(&query_id) {
                             let _ = tx.clone().try_send(resp.clone()).inspect_err(|e| {
                                 error!("Failed to send response to query stream: {e:?}")
@@ -978,7 +1003,7 @@ impl RpcDht {
                     self.on_pong(&resp_data.response, resp_data.peer.clone());
                 }
                 Command::External(_) => {
-                    self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Response(
+                    self.enque_stream_event(RpcEvent::ResponseResult(Ok(ResponseOk::Response(
                         resp_data,
                     ))));
                 }
@@ -992,20 +1017,27 @@ impl RpcDht {
     /// Handle an incoming request.
     ///
     /// Eventually send a response.
-    fn on_request(&mut self, msg: RequestMsgData, peer: Peer) {
-        if let Some(id) = validate_id(&msg.id, &peer) {
-            self.add_node(id, peer.clone(), None, Some(SocketAddr::from(&msg.to)));
+    fn on_request(&mut self, request: RequestMsgData, peer: Peer) -> Result<Option<RpcEvent>> {
+        if let Some(id) = validate_id(&request.id, &peer) {
+            self.add_node(id, peer.clone(), None, Some(SocketAddr::from(&request.to)));
         }
 
-        match msg.command {
+        match request.command {
             Command::Internal(cmd) => match cmd {
-                InternalCommand::Ping => self.on_ping(msg, &peer),
-                InternalCommand::FindNode => self.on_find_node(msg, peer),
-                InternalCommand::PingNat => self.on_ping_nat(msg, peer),
-                InternalCommand::DownHint => self.on_down_hint(msg, peer),
+                InternalCommand::Ping => self.on_ping(request, &peer),
+                InternalCommand::FindNode => self.on_find_node(request, peer),
+                InternalCommand::PingNat => self.on_ping_nat(request, peer),
+                InternalCommand::DownHint => self.on_down_hint(request, peer),
             },
-            Command::External(_cmd) => todo!(),
+            Command::External(command) => {
+                return Ok(Some(RpcEvent::CustomRequest(CustomCommandRequest {
+                    request: Box::new(request),
+                    peer,
+                    command,
+                })));
+            }
         }
+        Ok(None)
     }
 
     fn add_node(
@@ -1038,7 +1070,7 @@ impl RpcDht {
                 use InsertResult as Ir;
                 match entry.insert(node, NodeStatus::Connected) {
                     Ir::Inserted => {
-                        self.enque_stream_event(RpcDhtEvent::RoutingUpdated {
+                        self.enque_stream_event(RpcEvent::RoutingUpdated {
                             peer,
                             old_peer: None,
                         });
@@ -1261,7 +1293,7 @@ impl RpcDht {
             }
         }
 
-        self.enque_stream_event(RpcDhtEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
+        self.enque_stream_event(RpcEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
     }
 
     fn default_commit(&mut self, query: Arc<RwLock<Query>>) -> Vec<Tid> {
@@ -1349,7 +1381,7 @@ impl RpcDht {
 
     /// Handles a finished query.
     #[instrument(skip_all)]
-    fn query_finished(&mut self, query: Arc<RwLock<Query>>) -> RpcDhtEvent {
+    fn query_finished(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
         let is_find_node = matches!(
             query.read().unwrap().command(),
             Command::Internal(InternalCommand::FindNode)
@@ -1393,7 +1425,7 @@ impl RpcDht {
                 _ = tx.send(e.clone());
             }
 
-            RpcDhtEvent::Bootstrapped(e)
+            RpcEvent::Bootstrapped(e)
         } else {
             let result = Arc::new(result);
             if let Some(tx) = self.pending_queries.remove(&result.query_id) {
@@ -1409,11 +1441,11 @@ impl RpcDht {
                 cmd = tracing::field::display(result.cmd),
                 "Query result ready"
             );
-            RpcDhtEvent::QueryResult(result)
+            RpcEvent::QueryResult(result)
         }
     }
     /// Handles a query that timed out.
-    fn query_timeout(&mut self, query: Arc<RwLock<Query>>) -> RpcDhtEvent {
+    fn query_timeout(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
         self.query_finished(query)
     }
 
@@ -1427,10 +1459,10 @@ impl RpcDht {
 }
 
 #[derive(Debug)]
-pub enum RpcDhtEvent {
+pub enum RpcEvent {
     /// Result wrapping an incomming Request
-    /// Only emits Ok on custom commands. Errs on any request error (custom or non-custom)
-    RequestResult(RequestResult),
+    /// Only emits Ok on custom/external commands. Errs on any request error (custom or non-custom)
+    CustomRequest(CustomCommandRequest),
     /// Result wrapping an incomming Response
     /// Emits for any valid response
     ResponseResult(ResponseResult),
@@ -1459,28 +1491,25 @@ pub enum RpcDhtEvent {
     QueryResponse(Arc<InResponse>),
 }
 
-pub type RequestResult = std::result::Result<RequestOk, RequestError>;
-
 #[derive(Debug)]
 pub struct Bootstrapped {
     /// Execution statistics from the bootstrap query.
     pub stats: QueryStats,
 }
 
+/// Custom incoming request to a registered command
+///
+/// # Note
+///
+/// Custom commands are not automatically replied to and need to be answered
+/// manually
+/// The query we received and need to respond to
 #[derive(Debug)]
-pub enum RequestOk {
-    /// Custom incoming request to a registered command
-    ///
-    /// # Note
-    ///
-    /// Custom commands are not automatically replied to and need to be answered
-    /// manually
-    CustomCommandRequest {
-        /// The query we received and need to respond to
-        query: CommandQuery,
-        request: Box<RequestMsgData>,
-        peer: Peer, // maybe peerid? or SocketAddr
-    },
+pub struct CustomCommandRequest {
+    pub request: Box<RequestMsgData>,
+    /// Peer that sent th erequest
+    pub peer: Peer, // maybe peerid? or SocketAddr
+    pub command: ExternalCommand,
 }
 
 #[derive(Debug)]
@@ -1524,10 +1553,9 @@ pub enum ResponseError {
     InvalidPong(Peer),
 }
 
-impl Stream for RpcDht {
-    type Item = RpcDhtEvent;
+impl Stream for RpcInner {
+    type Item = RpcEvent;
 
-    #[instrument(skip_all)]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.poll_next_inner(cx)
     }

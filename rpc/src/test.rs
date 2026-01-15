@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use std::{net::TcpListener, time::Duration};
 
-use crate::{DhtConfig, Peer, Result, RpcDht, RpcDhtEvent, cenc::validate_id};
+use crate::{DhtConfig, Peer, Result, RpcEvent, RpcInner, cenc::validate_id};
 pub fn free_port() -> Option<u16> {
     match TcpListener::bind(("127.0.0.1", 0)) {
         Ok(listener) => {
@@ -21,7 +21,7 @@ async fn wip_bootstrap() -> Result<()> {
     let confa = confa
         .bind(("127.0.0.1", dbg!(free_port().unwrap())))
         .unwrap();
-    let mut a_node = RpcDht::with_config(confa).await?;
+    let mut a_node = RpcInner::with_config(confa).await?;
 
     a_node.bootstrap();
     let a_addr = a_node.local_addr()?;
@@ -31,13 +31,13 @@ async fn wip_bootstrap() -> Result<()> {
             if let Some(a_evt) = a_node.next().await {
                 println!("A = {a_evt:?}");
                 match a_evt {
-                    RpcDhtEvent::ReadyToCommit { .. } => println!("ready to commit"),
-                    RpcDhtEvent::RequestResult(_res) => println!("request result"),
-                    RpcDhtEvent::ResponseResult(_) => println!("response result"),
-                    RpcDhtEvent::RoutingUpdated { .. } => println!("routing updated"),
-                    RpcDhtEvent::QueryResult { .. } => println!("query result"),
-                    RpcDhtEvent::Bootstrapped { .. } => {}
-                    RpcDhtEvent::QueryResponse(_res) => println!("query response"),
+                    RpcEvent::ReadyToCommit { .. } => println!("ready to commit"),
+                    RpcEvent::CustomRequest(_res) => println!("request result"),
+                    RpcEvent::ResponseResult(_) => println!("response result"),
+                    RpcEvent::RoutingUpdated { .. } => println!("routing updated"),
+                    RpcEvent::QueryResult { .. } => println!("query result"),
+                    RpcEvent::Bootstrapped { .. } => {}
+                    RpcEvent::QueryResponse(_res) => println!("query response"),
                 }
             }
         }
@@ -51,7 +51,7 @@ async fn wip_bootstrap() -> Result<()> {
         .unwrap();
 
     let confb = confb.set_bootstrap_nodes(&[a_addr]);
-    let mut b_node = RpcDht::with_config(confb).await?;
+    let mut b_node = RpcInner::with_config(confb).await?;
     b_node.bootstrap();
     loop {
         if let Ok(Some(b_evt)) =
@@ -59,16 +59,16 @@ async fn wip_bootstrap() -> Result<()> {
         {
             println!("B = {b_evt:?}");
             match b_evt {
-                RpcDhtEvent::RequestResult(_res) => println!("request result"),
-                RpcDhtEvent::ResponseResult(_) => println!("response result"),
-                RpcDhtEvent::RoutingUpdated { .. } => println!("routing updated"),
-                RpcDhtEvent::ReadyToCommit { .. } => println!("ready to commit"),
-                RpcDhtEvent::QueryResult { .. } => {
+                RpcEvent::CustomRequest(_res) => println!("request result"),
+                RpcEvent::ResponseResult(_) => println!("response result"),
+                RpcEvent::RoutingUpdated { .. } => println!("routing updated"),
+                RpcEvent::ReadyToCommit { .. } => println!("ready to commit"),
+                RpcEvent::QueryResult { .. } => {
                     println!("query result");
                     break;
                 }
-                RpcDhtEvent::Bootstrapped { .. } => {}
-                RpcDhtEvent::QueryResponse(_res) => println!("query response"),
+                RpcEvent::Bootstrapped { .. } => {}
+                RpcEvent::QueryResponse(_res) => println!("query response"),
             }
         }
     }
