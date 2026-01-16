@@ -6,7 +6,7 @@ use common::{Result, Testnet};
 use dht_rpc::IdBytes;
 use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
-use hyperswarm::{DhtConfig, JoinOpts, Swarm};
+use hyperswarm::{DhtConfig, JoinOpts, Swarm, SwarmConfig};
 
 /// Server announces and client discovers via lookup
 #[tokio::test]
@@ -123,6 +123,45 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
         panic!("Expected message from client");
     };
     assert_eq!(msg.as_slice(), b"hello from client");
+
+    Ok(())
+}
+
+/// Test that discovery finds peers and enqueues them for connection
+/// Note: actual auto-connect requires relay support in hyperdht (not yet implemented)
+#[tokio::test]
+async fn discovery_enqueues_peers_for_connection() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.bootstrap_addr().await?;
+
+    let topic = IdBytes::random();
+
+    // Swarm A: server - listens and announces on topic
+    let config_a = SwarmConfig::new(DhtConfig::default().add_bootstrap_node(bs_addr));
+    let swarm_a = Swarm::with_config(config_a).await?;
+    swarm_a.bootstrap().await?;
+    let _server_a = swarm_a.listen()?;
+    swarm_a.join(topic, JoinOpts::server())?;
+
+    // Wait for announce to propagate
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Swarm B: client with auto-connect enabled (default)
+    let config_b = SwarmConfig::new(DhtConfig::default().add_bootstrap_node(bs_addr));
+    let swarm_b = Swarm::with_config(config_b).await?;
+    swarm_b.bootstrap().await?;
+
+    // Join as client - should auto-discover peers
+    swarm_b.join(topic, JoinOpts::client())?;
+
+    // Wait for discovery
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Should have discovered the server peer
+    assert!(
+        swarm_b.peers_count() > 0,
+        "client should have discovered at least one peer"
+    );
 
     Ok(())
 }

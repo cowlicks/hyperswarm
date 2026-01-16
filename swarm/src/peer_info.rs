@@ -69,6 +69,9 @@ pub struct PeerInfo {
     /// Whether waiting in retry timer
     pub waiting: bool,
 
+    /// Whether currently attempting to connect
+    pub connecting: bool,
+
     /// Topics this peer is associated with
     pub topics: HashSet<IdBytes>,
 
@@ -94,6 +97,7 @@ impl PeerInfo {
             client: false,
             explicit: false,
             waiting: false,
+            connecting: false,
             topics: HashSet::new(),
             connected_time: None,
             last_attempt: None,
