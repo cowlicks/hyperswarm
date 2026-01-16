@@ -178,7 +178,7 @@ impl PeerInfo {
 
             // Unproven peers start lower
             (false, 0) => Priority::Normal,
-            (false, 1) => Priority::High,     // Give one retry at high priority
+            (false, 1) => Priority::High, // Give one retry at high priority
             (false, 2) => Priority::Normal,
             (false, 3) => Priority::Low,
             (false, _) => Priority::VeryLow,

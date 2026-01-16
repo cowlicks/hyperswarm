@@ -6,8 +6,7 @@
 //! - Common utilities for running commands and managing temp files
 
 // Re-export rusty_nodejs_repl for use by test code
-pub use rusty_nodejs_repl;
-pub use rusty_nodejs_repl::Repl;
+pub use rusty_nodejs_repl::{self, Repl};
 
 use std::{
     collections::BTreeSet,

@@ -1,9 +1,6 @@
 //! Connection set for tracking active connections by public key
 
-use std::{
-    collections::HashMap,
-    time::Instant,
-};
+use std::{collections::HashMap, time::Instant};
 
 use dht_rpc::IdBytes;
 
@@ -107,11 +104,13 @@ impl ConnectionSet {
             }
 
             // Replace existing
-            self.connections.insert(public_key, ConnectionInfo::new(client));
+            self.connections
+                .insert(public_key, ConnectionInfo::new(client));
             AddResult::Replaced
         } else {
             // No existing connection
-            self.connections.insert(public_key, ConnectionInfo::new(client));
+            self.connections
+                .insert(public_key, ConnectionInfo::new(client));
             AddResult::Added
         }
     }
@@ -218,8 +217,8 @@ mod tests {
     fn test_counts() {
         let mut set = ConnectionSet::new();
 
-        set.add(IdBytes::random(), true);  // client
-        set.add(IdBytes::random(), true);  // client
+        set.add(IdBytes::random(), true); // client
+        set.add(IdBytes::random(), true); // client
         set.add(IdBytes::random(), false); // server
 
         assert_eq!(set.len(), 3);

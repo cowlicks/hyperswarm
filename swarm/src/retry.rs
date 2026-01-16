@@ -6,10 +6,10 @@ use dht_rpc::IdBytes;
 
 /// Backoff intervals matching JS hyperswarm RetryTimer
 pub const BACKOFF_INTERVALS: [Duration; 4] = [
-    Duration::from_secs(1),    // S: first retry
-    Duration::from_secs(5),    // M: second retry
-    Duration::from_secs(15),   // L: third retry
-    Duration::from_secs(600),  // X: exhausted (10 minutes)
+    Duration::from_secs(1),   // S: first retry
+    Duration::from_secs(5),   // M: second retry
+    Duration::from_secs(15),  // L: third retry
+    Duration::from_secs(600), // X: exhausted (10 minutes)
 ];
 
 /// A scheduled retry for a peer
@@ -23,10 +23,14 @@ pub struct RetryEntry {
 impl RetryEntry {
     /// Create a new retry entry with backoff based on attempt count
     pub fn new(public_key: IdBytes, attempt: u32) -> Self {
-        let backoff_index = (attempt as usize).saturating_sub(1).min(BACKOFF_INTERVALS.len() - 1);
+        let backoff_index = (attempt as usize)
+            .saturating_sub(1)
+            .min(BACKOFF_INTERVALS.len() - 1);
         let backoff = BACKOFF_INTERVALS[backoff_index];
         // Add some jitter (up to 10% of backoff)
-        let jitter = Duration::from_millis((rand::random::<u64>() % (backoff.as_millis() as u64 / 10)).max(100));
+        let jitter = Duration::from_millis(
+            (rand::random::<u64>() % (backoff.as_millis() as u64 / 10)).max(100),
+        );
         let retry_at = Instant::now() + backoff + jitter;
 
         Self {
@@ -86,7 +90,8 @@ impl RetryTimer {
 
     /// Duration until next retry (for tokio::time::sleep)
     pub fn duration_until_next(&self) -> Option<Duration> {
-        self.next_retry_time().map(|t| t.saturating_duration_since(Instant::now()))
+        self.next_retry_time()
+            .map(|t| t.saturating_duration_since(Instant::now()))
     }
 
     pub fn len(&self) -> usize {

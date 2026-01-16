@@ -1,6 +1,5 @@
 use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
-use futures::join;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
 use hyperdht::{Keypair, adht::Dht};
 

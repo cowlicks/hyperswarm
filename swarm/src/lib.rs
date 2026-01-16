@@ -37,8 +37,7 @@ pub use retry::{RetryEntry, RetryTimer};
 
 // Re-export from dependencies
 pub use dht_rpc::{DhtConfig, IdBytes as Topic};
-pub use hyperdht::adht::ConnectFuture;
-pub use hyperdht::{Connection, Keypair, PublicKey};
+pub use hyperdht::{Connection, Keypair, PublicKey, adht::ConnectFuture};
 
 /// Options for joining a topic
 #[derive(Debug, Clone, Copy, Default)]

@@ -1,8 +1,10 @@
 //! Priority queue for scheduling peer connections
 
-use std::collections::{BinaryHeap, HashSet};
-use std::cmp::Ordering;
-use std::time::Instant;
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, HashSet},
+    time::Instant,
+};
 
 use dht_rpc::IdBytes;
 
@@ -32,7 +34,8 @@ impl PartialEq for QueuedPeer {
 /// Ordering: higher priority first, then earlier queued_at, then shuffle_key
 impl Ord for QueuedPeer {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.priority.cmp(&other.priority)
+        self.priority
+            .cmp(&other.priority)
             .then_with(|| other.queued_at.cmp(&self.queued_at)) // Earlier = higher priority
             .then_with(|| self.shuffle_key.cmp(&other.shuffle_key))
     }

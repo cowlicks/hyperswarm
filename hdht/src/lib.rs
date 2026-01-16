@@ -41,7 +41,8 @@ mod store;
 pub mod adht;
 
 pub use crypto::{
-    Keypair, PublicKey, make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce,
+    Keypair, PublicKey, make_signable_announce_or_unannounce, namespace,
+    sign_announce_or_unannounce,
 };
 pub use next_router::connection::Connection;
 pub use server::Server;
