@@ -27,7 +27,8 @@ pub use peer_info::{PeerInfo, Priority};
 
 // Re-export from dependencies
 pub use dht_rpc::{DhtConfig, IdBytes as Topic};
-pub use hyperdht::Keypair;
+pub use hyperdht::{Connection, Keypair, PublicKey};
+pub use hyperdht::adht::ConnectFuture;
 
 /// Options for joining a topic
 #[derive(Debug, Clone, Copy, Default)]
@@ -252,6 +253,38 @@ impl Swarm {
         let mut inner = self.inner.write().unwrap();
         inner.destroyed = true;
         inner.discoveries.clear();
+    }
+
+    /// Connect to a peer by their public key
+    pub fn connect(&self, pub_key: PublicKey) -> Result<ConnectFuture> {
+        let inner = self.inner.read().unwrap();
+        if inner.destroyed {
+            return Err(Error::Destroyed);
+        }
+        Ok(inner.dht.connect(pub_key)?)
+    }
+
+    /// Bootstrap the DHT connection
+    pub fn bootstrap(&self) -> dht_rpc::BootstrapFuture {
+        self.inner.read().unwrap().dht.bootstrap()
+    }
+
+    /// Get the local socket address
+    pub fn local_addr(&self) -> Result<std::net::SocketAddr> {
+        Ok(self.inner.read().unwrap().dht.local_addr()?)
+    }
+
+    /// Connect to a peer at a specific address (lower level API)
+    pub fn peer_handshake(
+        &self,
+        remote_public_key: PublicKey,
+        destination: std::net::SocketAddr,
+    ) -> Result<hyperdht::adht::PeerHandshake> {
+        let inner = self.inner.read().unwrap();
+        if inner.destroyed {
+            return Err(Error::Destroyed);
+        }
+        Ok(inner.dht.peer_handshake(remote_public_key, destination)?)
     }
 }
 
