@@ -37,8 +37,8 @@ pub use retry::{RetryEntry, RetryTimer};
 
 // Re-export from dependencies
 pub use dht_rpc::{DhtConfig, IdBytes as Topic};
-pub use hyperdht::{Connection, Keypair, PublicKey};
 pub use hyperdht::adht::ConnectFuture;
+pub use hyperdht::{Connection, Keypair, PublicKey};
 
 /// Options for joining a topic
 #[derive(Debug, Clone, Copy, Default)]
@@ -259,11 +259,8 @@ impl Swarm {
                             for peer in response.peers {
                                 let pk = IdBytes(*peer.public_key);
                                 // Convert relay addresses to SocketAddr
-                                let relay_addrs: Vec<std::net::SocketAddr> = peer
-                                    .relay_addresses
-                                    .iter()
-                                    .map(|a| (*a).into())
-                                    .collect();
+                                let relay_addrs: Vec<std::net::SocketAddr> =
+                                    peer.relay_addresses.iter().map(|a| (*a).into()).collect();
                                 debug!(?pk, ?relay_addrs, "discovered peer");
 
                                 // Check if already connected before getting mutable peer borrow
@@ -510,7 +507,12 @@ impl Swarm {
                 let pub_key_bytes = queued.public_key.0;
                 let connection_tx = guard.connection_tx.clone();
 
-                Some((queued.public_key, pub_key_bytes, relay_addresses, connection_tx))
+                Some((
+                    queued.public_key,
+                    pub_key_bytes,
+                    relay_addresses,
+                    connection_tx,
+                ))
             };
 
             let Some((pk, pub_key_bytes, relay_addresses, connection_tx)) = connect_info else {
@@ -580,11 +582,13 @@ impl Swarm {
 
                         if should_emit {
                             // Emit connection event (guard is dropped, safe to await)
-                            let _ = connection_tx.send(ConnectionEvent {
-                                connection,
-                                client: true,
-                                remote_public_key: pk,
-                            }).await;
+                            let _ = connection_tx
+                                .send(ConnectionEvent {
+                                    connection,
+                                    client: true,
+                                    remote_public_key: pk,
+                                })
+                                .await;
                         }
                     }
                     Some(Err(e)) => {

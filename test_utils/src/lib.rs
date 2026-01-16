@@ -24,13 +24,12 @@ use rusty_nodejs_repl::Config;
 use tempfile::TempDir;
 use tracing_subscriber::EnvFilter;
 
-mod js;
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Relative path from git root to the JS test directory
-pub static REL_PATH_TO_JS_DIR: &str = "./hdht/tests/common/js";
+pub static REL_PATH_TO_JS_DIR: &str = "./test_utils/js";
 /// Relative path from git root to node_modules
-pub static REL_PATH_TO_NODE_MODULES: &str = "./hdht/tests/common/js/node_modules";
+pub static REL_PATH_TO_NODE_MODULES: &str = "./test_utils/js/node_modules";
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -155,6 +154,22 @@ pub fn init_logging() {
             .with_line_number(true)
             .with_file(true)
             .with_env_filter(EnvFilter::from_default_env())
+            .without_time()
+            .init();
+    });
+}
+#[allow(unused)]
+pub fn log() {
+    use tracing_subscriber::fmt::format::FmtSpan;
+    static START_LOGS: OnceLock<()> = OnceLock::new();
+    START_LOGS.get_or_init(|| {
+        tracing_subscriber::fmt()
+            .with_target(true)
+            .with_line_number(true)
+            // print when instrumented funtion enters
+            //.with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
+            .with_file(true)
+            .with_env_filter(EnvFilter::from_default_env()) // Reads `RUST_LOG` environment variable
             .without_time()
             .init();
     });

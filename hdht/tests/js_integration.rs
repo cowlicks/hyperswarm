@@ -1,4 +1,3 @@
-mod common;
 use std::net::SocketAddr;
 
 use compact_encoding::CompactEncoding;
@@ -8,11 +7,8 @@ use hyperdht::{
     sign_announce_or_unannounce,
 };
 
-use common::{
-    Result,
-    js::{KEYPAIR_JS, make_repl},
-};
 use rusty_nodejs_repl::Repl;
+use test_utils::{KEYPAIR_JS, Result, make_repl};
 
 const DEFAULT_SEED: [u8; 32] = [
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

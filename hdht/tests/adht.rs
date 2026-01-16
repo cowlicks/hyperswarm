@@ -1,12 +1,10 @@
-mod common;
-
 use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
 use futures::join;
 use futures::{SinkExt, StreamExt};
 use hypercore_handshake::CipherEvent;
 use hyperdht::{Keypair, adht::Dht};
 
-use common::{Result, setup::Testnet};
+use test_utils::{Result, Testnet};
 
 macro_rules! adht_setup {
     () => {{

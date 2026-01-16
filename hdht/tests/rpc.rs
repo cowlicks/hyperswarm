@@ -1,9 +1,5 @@
-mod common;
-
-use common::{Result, setup::Testnet};
 use dht_rpc::{Commit, DhtConfig, Peer, commands};
-
-use crate::common::log;
+use test_utils::{Result, Testnet, log};
 
 macro_rules! rpc_setup {
     () => {{
