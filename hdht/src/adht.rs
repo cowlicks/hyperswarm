@@ -242,8 +242,6 @@ impl DhtInner {
                 "not listening on this target".into(),
             ));
         };
-        let tx = tx.clone();
-
         let Some(value) = &request.value else {
             return Err(Error::PeerHandshakeFailed("missing value".into()));
         };
@@ -310,7 +308,10 @@ impl DhtInner {
             .as_ref()
             .ok_or_else(|| Error::PeerHandshakeFailed("client missing udx info".into()))?
             .id as u32;
-        connection.connect(peer.addr, remote_udx_id, client_np)?;
+        // Create connection with RPC so it can poll to flush responses
+        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
+        let connection = Connection::new_with_rpc(hs, udx_local_id, half_stream, self.rpc.clone());
+        connection.connect(from_peer.addr, remote_udx_id)?;
 
         // Build and send the response
         let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
@@ -556,7 +557,6 @@ impl Future for PeerHandshake {
                 .as_ref()
                 .expect("TODO response SHOULD have udx_info")
                 .id as u32,
-            np,
         )?;
         Poll::Ready(Ok(self.connection.clone()))
     }

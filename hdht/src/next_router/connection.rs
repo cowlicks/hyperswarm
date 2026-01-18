@@ -13,26 +13,14 @@ use hypercore_handshake::{Cipher, CipherEvent, CipherIo};
 use udx::HalfOpenStreamHandle;
 use uint24le_framing::Uint24LELengthPrefixedFraming;
 
-use crate::{Error, cenc::NoisePayload};
-
-#[derive(Debug)]
-pub struct ReadyData {
-    #[expect(unused, reason = "I think this will be used when we implement server")]
-    noise_payload: NoisePayload,
-}
-
-impl ReadyData {
-    pub fn new(noise_payload: NoisePayload) -> Self {
-        Self { noise_payload }
-    }
-}
+use crate::Error;
 
 #[derive(Debug)]
 pub enum ConnStep {
     /// Initial State
     Start(HalfOpenStreamHandle),
     /// Handshake Ready
-    Ready(Box<ReadyData>),
+    Ready,
     // Handshake failed
     Failed,
 }
@@ -99,12 +87,7 @@ impl ConnectionInner {
         self.step = step;
     }
 
-    fn connect(
-        &mut self,
-        addr: SocketAddr,
-        remote_id: u32,
-        noise_payload: NoisePayload,
-    ) -> Result<(), Error> {
+    fn connect(&mut self, addr: SocketAddr, remote_id: u32) -> Result<(), Error> {
         let ConnStep::Start(half_stream) = replace(&mut self.step, ConnStep::Failed) else {
             todo!()
         };
@@ -112,7 +95,7 @@ impl ConnectionInner {
 
         let framed_udx_stream = Uint24LELengthPrefixedFraming::new(Compat::new(stream.clone()));
         self.handshake_set_io(Box::new(framed_udx_stream));
-        self.step = ConnStep::Ready(Box::new(ReadyData { noise_payload }));
+        self.step = ConnStep::Ready;
         Ok(())
     }
 }
@@ -198,7 +181,7 @@ impl Connection {
             .expect("recieved msg above"))
     }
     pub fn step_ready(&self) -> bool {
-        matches!(r!(self).step, ConnStep::Ready(_))
+        matches!(r!(self).step, ConnStep::Ready)
     }
     pub fn handshake_ready(&self) -> bool {
         r!(self).handshake.ready()
@@ -212,8 +195,8 @@ impl Connection {
     pub fn set_step(&self, step: ConnStep) {
         w!(self).step = step;
     }
-    pub fn connect(&self, addr: SocketAddr, remote_id: u32, np: NoisePayload) -> Result<(), Error> {
-        w!(self).connect(addr, remote_id, np)
+    pub fn connect(&self, addr: SocketAddr, remote_id: u32) -> Result<(), Error> {
+        w!(self).connect(addr, remote_id)
     }
 }
 
