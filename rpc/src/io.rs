@@ -1,14 +1,9 @@
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, task::Waker};
 
-use crate::{
-    IdBytes, RequestMsgDataInner, Result,
-    cenc::validate_id,
-    futreqs::{RequestFuture, RequestSender, new_request_channel},
-};
+use crate::{IdBytes, Result, cenc::validate_id, futreqs::RequestSender};
 use fnv::FnvHashMap;
 use futures::{
     Sink, Stream,
-    channel::mpsc,
     task::{Context, Poll},
 };
 use rand::Rng;
@@ -19,7 +14,7 @@ use std::{
     sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
-use tokio::sync::oneshot;
+use tokio::sync::oneshot::{self, Receiver, Sender};
 use tracing::{error, trace};
 use wasm_timer::Instant;
 
@@ -34,8 +29,6 @@ use super::{
 };
 
 const ROTATE_INTERVAL: u64 = 300_000;
-
-const IO_TX_RX_CHANNEL_DEFAULT_SIZE: usize = 1024;
 
 pub type Tid = u16;
 
@@ -200,11 +193,6 @@ struct InflightRequestFuture {
     // Identifier for the query this request is used with
     query_id: Option<QueryId>,
 }
-
-type MessageChannelItem = (
-    RequestSender<Arc<InResponse>>,
-    (Option<QueryId>, RequestMsgDataInner),
-);
 
 #[derive(Debug)]
 pub struct IoHandler {
@@ -427,23 +415,6 @@ impl IoHandler {
                 self.on_response(rep, peer)
             }
         }
-    }
-
-    pub fn start_send_next_fut_no_id_with_tx(
-        &mut self,
-        (sender, (query_id, data)): MessageChannelItem,
-    ) -> crate::Result<()> {
-        let tid = self.new_tid();
-        let id = self.id().0;
-        let full_req = RequestMsgData::from_ids_and_inner_data(tid, Some(id), data);
-        self.inner_send(&OutMessage::Request((query_id, full_req.clone())))?;
-        let inflight_req = InflightRequestFuture {
-            message: full_req,
-            sender,
-            query_id,
-        };
-        self.inflight.insert(tid, inflight_req);
-        Ok(())
     }
 
     fn start_send_next(&mut self) -> crate::Result<()> {
