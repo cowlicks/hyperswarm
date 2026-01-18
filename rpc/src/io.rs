@@ -466,17 +466,6 @@ impl IoHandler {
         }
     }
 
-    pub fn start_send_next_fut_no_id(
-        &mut self,
-        query_id: Option<QueryId>,
-        data: RequestMsgDataInner,
-    ) -> crate::Result<RequestFuture<Arc<InResponse>>> {
-        let tid = self.new_tid();
-        let id = self.id().0;
-        let msg = RequestMsgData::from_ids_and_inner_data(tid, Some(id), data);
-        self.start_send_next_fut((query_id, msg))
-    }
-
     pub fn start_send_next_fut_no_id_with_tx(
         &mut self,
         (sender, (query_id, data)): MessageChannelItem,
@@ -492,22 +481,6 @@ impl IoHandler {
         };
         self.inflight.insert(tid, inflight_req);
         Ok(())
-    }
-
-    pub fn start_send_next_fut(
-        &mut self,
-        msg: (Option<QueryId>, RequestMsgData),
-    ) -> crate::Result<RequestFuture<Arc<InResponse>>> {
-        let tid = msg.1.tid;
-        self.inner_send(&OutMessage::Request(msg.clone()))?;
-        let (sender, reciever) = new_request_channel();
-        let inflight_req = InflightRequestFuture {
-            message: msg.1,
-            sender,
-            query_id: msg.0,
-        };
-        self.inflight.insert(tid, inflight_req);
-        Ok(reciever)
     }
 
     fn start_send_next(&mut self) -> crate::Result<()> {
