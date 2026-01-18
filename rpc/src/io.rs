@@ -155,21 +155,21 @@ impl OutRequestBuilder {
 /// OutMessage contains outgoing messages data, including local metadata for managing messages
 #[derive(Debug)]
 pub enum OutMessage {
-    Request((Option<QueryId>, RequestMsgData)),
-    Reply((Option<oneshot::Sender<()>>, ReplyMsgData)),
+    Request((Option<QueryId>, RequestMsgData, Option<Sender<()>>)),
+    Reply((Option<Sender<()>>, ReplyMsgData)),
 }
 
 impl OutMessage {
-    fn to(&self) -> Peer {
+    fn to_sendable(self) -> (MsgData, SocketAddr, Option<Sender<()>>) {
         match self {
-            OutMessage::Request((_, x)) => x.to.clone(),
-            OutMessage::Reply((_, x)) => x.to.clone(),
-        }
-    }
-    fn msg_data(&self) -> MsgData {
-        match self {
-            OutMessage::Request((_, x)) => MsgData::Request(x.clone()),
-            OutMessage::Reply((_, x)) => MsgData::Reply(x.clone()),
+            OutMessage::Request((_query_id, msg, tx)) => {
+                let dest = SocketAddr::from(&msg.to);
+                (MsgData::Request(msg), dest, tx)
+            }
+            OutMessage::Reply((tx, msg)) => {
+                let dest = SocketAddr::from(&msg.to);
+                (MsgData::Reply(msg), dest, tx)
+            }
         }
     }
 }
@@ -255,7 +255,7 @@ impl IoHandler {
         self.tid.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn enqueue_reply(&mut self, msg: ReplyMsgData, tx: Option<oneshot::Sender<()>>) {
+    pub fn enqueue_reply(&mut self, msg: ReplyMsgData, tx: Option<Sender<()>>) {
         self.pending_send.push_back(OutMessage::Reply((tx, msg)));
         self.maybe_wake();
     }
@@ -285,6 +285,7 @@ impl IoHandler {
                 target: target.map(|x| x.into()),
                 value,
             },
+            None,
         ));
         (query_id, tid)
     }
@@ -311,11 +312,12 @@ impl IoHandler {
                 target: target.map(|x| x.0),
                 value,
             },
+            None,
         ));
         (query_id, tid)
     }
 
-    pub fn enqueue_request(&mut self, msg: (Option<QueryId>, RequestMsgData)) {
+    pub fn enqueue_request(&mut self, msg: (Option<QueryId>, RequestMsgData, Option<Sender<()>>)) {
         self.pending_send.push_back(OutMessage::Request(msg));
         self.maybe_wake();
     }
@@ -358,7 +360,7 @@ impl IoHandler {
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
         peer: Peer,
-    ) -> crate::Result<oneshot::Receiver<()>> {
+    ) -> crate::Result<Receiver<()>> {
         let id = (!self.ephemeral).then(|| self.id().0);
         let token = Some(self.token(&peer, 1)?);
         let (tx, rx) = oneshot::channel();
@@ -417,25 +419,64 @@ impl IoHandler {
         }
     }
 
-    fn start_send_next(&mut self) -> crate::Result<()> {
-        if self.pending_flush.is_none()
-            && let Some(msg) = self.pending_send.pop_front()
-        {
-            self.inner_send(&msg)?;
+    fn poll_send(&mut self, cx: &mut Context<'_>) -> Option<IoHandlerEvent> {
+        let msg = match self.pending_flush.take() {
+            Some(m) => m,
+            None => match self.pending_send.pop_front() {
+                Some(m) => m,
+                None => {
+                    return match Sink::poll_flush(Pin::new(&mut self.message_stream), cx) {
+                        Poll::Ready(_e) => None,
+                        Poll::Pending => {
+                            cx.waker().wake_by_ref();
+                            None
+                        }
+                    };
+                }
+            },
+        };
+        if !Sink::poll_ready(Pin::new(&mut self.message_stream), cx).is_ready() {
             self.pending_flush = Some(msg);
-            self.maybe_wake();
+            return None;
         }
-        Ok(())
+        let out = match &msg {
+            OutMessage::Request((query_id, message, _tx)) => {
+                let tid = message.tid;
+                self.pending_recv.insert(
+                    message.tid,
+                    InflightRequest {
+                        message: message.clone(),
+                        timestamp: Instant::now(),
+                        query_id: *query_id,
+                    },
+                );
+                IoHandlerEvent::OutRequest { tid }
+            }
+            OutMessage::Reply((_tx, message)) => {
+                let peer = message.to.clone();
+                IoHandlerEvent::OutResponse {
+                    message: message.clone(),
+                    peer,
+                }
+            }
+        };
+
+        let (msg, socket, tx) = msg.to_sendable();
+        if let Err(e) = Sink::start_send(Pin::new(&mut self.message_stream), (msg, socket)) {
+            error!(error =? e, "start_send error");
+            todo!()
+        }
+        _ = Sink::poll_flush(Pin::new(&mut self.message_stream), cx);
+        if let Some(tx) = tx {
+            _ = tx.send(());
+        }
+
+        if !self.pending_send.is_empty() {
+            cx.waker().wake_by_ref();
+        }
+        Some(out)
     }
 
-    fn inner_send(&mut self, msg: &OutMessage) -> crate::Result<()> {
-        let addr = SocketAddr::from(&msg.to());
-        match msg {
-            OutMessage::Request(r) => trace!(tid = r.1.tid, command =% r.1.command, "TX:Request"),
-            OutMessage::Reply((_, r)) => trace!(tid = r.tid, "TX:Reply"),
-        }
-        Sink::start_send(Pin::new(&mut self.message_stream), (msg.msg_data(), addr))
-    }
     fn maybe_wake(&mut self) {
         if let Some(w) = self.stream_waker.take() {
             w.wake()
@@ -455,46 +496,8 @@ impl Stream for IoHandler {
         let pin = self.get_mut();
         _ = pin.stream_waker.insert(cx.waker().clone());
 
-        // queue in the next message if not currently flushing
-        // moves msg pending_flush = pending_send[0]
-        // and sends it
-        if let Err(err) = pin.start_send_next() {
-            let out = IoHandlerEvent::OutSocketErr { err };
-            trace!("{out:#?}");
+        if let Some(out) = pin.poll_send(cx) {
             return Poll::Ready(Some(out));
-        }
-
-        // flush the message
-        if let Some(ev) = pin.pending_flush.take() {
-            if Sink::poll_ready(Pin::new(&mut pin.message_stream), cx).is_ready() {
-                return match ev {
-                    OutMessage::Request((query_id, message)) => {
-                        let tid = message.tid;
-                        pin.pending_recv.insert(
-                            message.tid,
-                            InflightRequest {
-                                message,
-                                timestamp: Instant::now(),
-                                query_id,
-                            },
-                        );
-                        let out = IoHandlerEvent::OutRequest { tid };
-                        Poll::Ready(Some(out))
-                    }
-                    OutMessage::Reply((tx, message)) => {
-                        // Signal that the response has been flushed
-                        if let Some(tx) = tx {
-                            let _ = tx.send(());
-                        }
-                        let peer = message.to.clone();
-                        let out = IoHandlerEvent::OutResponse { message, peer };
-                        trace!("{out:#?}");
-                        Poll::Ready(Some(out))
-                    }
-                };
-            } else {
-                pin.pending_flush = Some(ev);
-            }
         }
 
         // read from socket
@@ -614,7 +617,7 @@ mod test {
             value: None,
         };
         let query_id = Some(QueryId(42));
-        a.enqueue_request((query_id, msg.clone()));
+        a.enqueue_request((query_id, msg.clone(), None));
         a.next().await;
         let IoHandlerEvent::InRequest { message: res, .. } = b.next().await.unwrap() else {
             panic!()
