@@ -24,7 +24,7 @@ use cenc::{
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
 use compact_encoding::{CompactEncoding, EncodingError};
-use dht_rpc::{IdBytes, InResponse, RequestFutureError, RpcInnerBuilderError};
+use dht_rpc::{IdBytes, InResponse, RpcInnerBuilderError};
 use tokio::sync::oneshot::error::RecvError;
 
 use crate::cenc::HandshakeSteps;
@@ -110,8 +110,6 @@ pub enum Error {
     Ipv6NotSupported,
     #[error("Invalid Signature")]
     InvalidSignature(i32),
-    #[error("Future Request error")]
-    FutureRequestFailed(#[from] RequestFutureError),
     #[error("Error building PeerHandshakePayload: {0}")]
     PeerHandshakePayloadBuilder(#[from] PeerHandshakePayloadBuilderError),
     #[error("Error building UdxInfo: {0}")]

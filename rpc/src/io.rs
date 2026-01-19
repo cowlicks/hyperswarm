@@ -1,6 +1,6 @@
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, task::Waker};
+use std::{net::SocketAddr, sync::Arc, task::Waker};
 
-use crate::{IdBytes, Result, cenc::validate_id, futreqs::RequestSender};
+use crate::{IdBytes, Result, cenc::validate_id};
 use fnv::FnvHashMap;
 use futures::{
     Sink, Stream,
@@ -186,15 +186,6 @@ struct InflightRequest {
 }
 
 #[derive(Debug)]
-struct InflightRequestFuture {
-    /// The message send
-    message: RequestMsgData,
-    sender: RequestSender<Arc<InResponse>>,
-    // Identifier for the query this request is used with
-    query_id: Option<QueryId>,
-}
-
-#[derive(Debug)]
 pub struct IoHandler {
     id: Observer<IdBytes>,
     ephemeral: bool,
@@ -205,8 +196,6 @@ pub struct IoHandler {
     pending_flush: Option<OutMessage>,
     /// Sent requests we currently wait for a response
     pending_recv: FnvHashMap<Tid, InflightRequest>,
-    // inflight futures
-    inflight: BTreeMap<Tid, InflightRequestFuture>,
     secrets: Secrets,
     tid: AtomicU16,
     stream_waker: Option<Waker>,
@@ -225,7 +214,6 @@ impl IoHandler {
             pending_send: Default::default(),
             pending_flush: None,
             pending_recv: Default::default(),
-            inflight: Default::default(),
             secrets: Default::default(),
             tid: AtomicU16::new(rand::thread_rng().r#gen()),
             stream_waker: Default::default(),
@@ -411,17 +399,6 @@ impl IoHandler {
     }
 
     fn on_response(&mut self, recv: ReplyMsgData, peer: Peer) -> IoHandlerEvent {
-        if let Some(InflightRequestFuture {
-            message: request,
-            sender,
-            query_id,
-        }) = self.inflight.remove(&recv.tid)
-        {
-            let tid = request.tid;
-            let msg = Arc::new(InResponse::new(Box::new(request), recv, peer, query_id));
-            let _ = sender.send(msg);
-            return IoHandlerEvent::ChanneledResponse(tid);
-        }
         if let Some(req) = self.pending_recv.remove(&recv.tid) {
             return IoHandlerEvent::InResponse(Arc::new(InResponse::new(
                 Box::new(req.message),

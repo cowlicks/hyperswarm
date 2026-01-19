@@ -14,7 +14,6 @@
 mod cenc;
 mod commit;
 mod constants;
-mod futreqs;
 mod io;
 mod jobs;
 mod kbucket;
@@ -27,7 +26,6 @@ mod util;
 pub use crate::{
     cenc::generic_hash,
     commit::Commit,
-    futreqs::Error as RequestFutureError,
     io::{InResponse, OutRequestBuilder},
     message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
     query::{CommandQuery, CommandQueryResponse, QueryId, QueryResult},
@@ -122,8 +120,6 @@ pub enum Error {
     RequestRequiresToField,
     #[error("Ipv6 not supported")]
     Ipv6NotSupported,
-    #[error("Request failed with: {0}")]
-    RequestFailed(#[from] RequestFutureError),
     #[error("Error trying to send message to IoHandler")]
     RequestChannelSendError(),
     #[error("Error building request. Missing field: {0}")]
