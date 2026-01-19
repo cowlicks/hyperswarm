@@ -386,6 +386,12 @@ impl Rpc {
         // Create a future that polls RpcDht for events and waits for the response
         RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
+    pub fn request2(
+        &self,
+        o: OutRequestBuilder,
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
+        self.inner.lock().unwrap().io.request2(o)
+    }
     pub fn respond(
         &self,
         request: RequestMsgData,

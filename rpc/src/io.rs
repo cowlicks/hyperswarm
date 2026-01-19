@@ -354,6 +354,37 @@ impl IoHandler {
         self.enqueue_reply(msg, None)
     }
 
+    pub fn request2(
+        &mut self,
+        OutRequestBuilder {
+            tid,
+            query_id,
+            peer,
+            command,
+            token,
+            target,
+            value,
+        }: OutRequestBuilder,
+    ) -> crate::Result<Receiver<()>> {
+        let (tx, rx) = oneshot::channel();
+        let id = (!self.ephemeral).then(|| self.id().0);
+        let tid = tid.unwrap_or_else(|| self.new_tid());
+        self.enqueue_request((
+            query_id,
+            RequestMsgData {
+                tid,
+                command,
+                id,
+                token,
+                target: target.map(|t| t.into()),
+                value,
+                to: peer,
+            },
+            Some(tx),
+        ));
+        Ok(rx)
+    }
+
     pub fn response(
         &mut self,
         request: RequestMsgData,

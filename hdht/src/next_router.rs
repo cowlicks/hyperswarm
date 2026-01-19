@@ -90,7 +90,7 @@ impl Router {
                 .expect("TODO response SHOULD have udx_info")
                 .id as u32;
 
-            conn.connect(resp.request.to.addr, udx_remote_id, np)?;
+            conn.connect(resp.request.to.addr, udx_remote_id)?;
             Ok(conn)
         } else {
             Err(Error::PeerHandshakeFailed(

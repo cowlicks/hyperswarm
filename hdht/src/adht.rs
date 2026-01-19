@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     future::Future,
-    net::{SocketAddr, ToSocketAddrs},
+    net::{SocketAddr, SocketAddrV4, ToSocketAddrs},
     pin::Pin,
     sync::{
         Arc, RwLock,
@@ -10,7 +10,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{
+    mpsc,
+    oneshot::{self},
+};
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
@@ -25,10 +28,10 @@ use tracing::{error, instrument, trace};
 use crate::{
     DEFAULT_BOOTSTRAP, Error, Keypair, Result,
     cenc::{
-        NoisePayload, NoisePayloadBuilder, PeerHandshakePayload, PeerHandshakePayloadBuilder,
-        UdxInfoBuilder, firewall,
+        HandshakeSteps, NoisePayload, NoisePayloadBuilder, PeerHandshakePayload,
+        PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
     },
-    commands,
+    commands::{self, PEER_HANDSHAKE},
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
@@ -170,7 +173,7 @@ impl Dht {
 /// A connection waiting for its response to be flushed before being emitted
 struct PendingConnection {
     /// Resolves when the response has been flushed
-    response_flushed: oneshot::Receiver<()>,
+    flushed: oneshot::Receiver<()>,
     /// The connection to be emitted
     connection: Connection,
     /// Channel to send the connection on
@@ -233,7 +236,7 @@ impl DhtInner {
         Ok(())
     }
 
-    pub fn on_peer_handshake(&mut self, request: RequestMsgData, peer: Peer) -> Result<()> {
+    pub fn on_peer_handshake(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
         let Some(target) = request.target else {
             return Err(Error::PeerHandshakeFailed("missing target".into()));
         };
@@ -246,19 +249,13 @@ impl DhtInner {
             return Err(Error::PeerHandshakeFailed("missing value".into()));
         };
 
+        let tx = tx.clone();
+
         let (php, rest) = PeerHandshakePayload::decode(value)?;
         debug_assert!(rest.is_empty());
 
-        // Create responder cipher with same prologue as initiator
-        let mut hs = Cipher::resp_from_private_with_prologue(
-            None,
-            &keypair.secret[..32],
-            &namespace::PEER_HANDSHAKE,
-        )?;
-
         // Create our UDX stream
         let udx_local_id = self.id_maker.new_id();
-        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
 
         // Build our NoisePayload with our UDX info for the response
         let SocketAddr::V4(local_addr) = self.rpc.local_addr()? else {
@@ -276,7 +273,12 @@ impl DhtInner {
             .build()?
             .to_encoded_bytes()?;
 
-        //assert!(NoisePayload::decode(&server_np).is_ok());
+        // Create responder cipher with same prologue as initiator
+        let mut hs = Cipher::resp_from_private_with_prologue(
+            None,
+            &keypair.secret[..32],
+            &namespace::PEER_HANDSHAKE,
+        )?;
 
         hs.queue_msg(server_np.to_vec());
 
@@ -291,7 +293,7 @@ impl DhtInner {
                 "expected handshake payload".into(),
             ));
         };
-        let (client_np, _rest) = NoisePayload::decode(&payload_bytes)?;
+        let (remote_payload, _rest) = NoisePayload::decode(&payload_bytes)?;
         debug_assert!(_rest.is_empty());
 
         // Set our payload and get the response noise
@@ -301,39 +303,110 @@ impl DhtInner {
             ));
         };
 
-        // Create connection with RPC so it can poll to flush responses
-        let connection = Connection::new_with_rpc(hs, udx_local_id, half_stream, self.rpc.clone());
-        let remote_udx_id = client_np
+        let udx_remote_id = remote_payload
             .udx
             .as_ref()
             .ok_or_else(|| Error::PeerHandshakeFailed("client missing udx info".into()))?
             .id as u32;
-        // Create connection with RPC so it can poll to flush responses
-        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
-        let connection = Connection::new_with_rpc(hs, udx_local_id, half_stream, self.rpc.clone());
-        connection.connect(from_peer.addr, remote_udx_id)?;
 
         // Build and send the response
+        match php.mode {
+            crate::cenc::HandshakeSteps::FromClient => {
+                let connection =
+                    self.new_connection(from_peer.addr, hs, udx_local_id, udx_remote_id)?;
+                self.on_peer_handshake_from_client(request, noise, from_peer, connection, tx)
+            }
+            crate::cenc::HandshakeSteps::FromServer => todo!(),
+            crate::cenc::HandshakeSteps::FromRelay => {
+                let Some(peer_address) = php.peer_address else {
+                    todo!()
+                };
+
+                let connection =
+                    self.new_connection(peer_address.into(), hs, udx_local_id, udx_remote_id)?;
+
+                self.on_peer_handshake_from_relay(
+                    &request,
+                    &from_peer,
+                    noise,
+                    php.peer_address,
+                    connection,
+                    tx,
+                )?;
+                Ok(())
+            }
+            crate::cenc::HandshakeSteps::FromSecondRelay => todo!(),
+            crate::cenc::HandshakeSteps::Reply => todo!(),
+        }
+    }
+
+    fn new_connection(
+        &self,
+        destination: SocketAddr,
+        cipher: Cipher,
+        udx_local_id: u32,
+        udx_remote_id: u32,
+    ) -> Result<Connection> {
+        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
+        let connection =
+            Connection::new_with_rpc(cipher, udx_local_id, half_stream, self.rpc.clone());
+        connection.connect(destination, udx_remote_id)?;
+        Ok(connection)
+    }
+    fn on_peer_handshake_from_client(
+        &mut self,
+        request: RequestMsgData,
+        noise: Vec<u8>,
+        from_peer: Peer,
+        connection: Connection,
+        tx: mpsc::Sender<Result<Connection>>,
+    ) -> Result<()> {
         let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
-            .noise(noise)
             .mode(crate::cenc::HandshakeSteps::Reply)
-            .build()?
-            .to_encoded_bytes()?;
+            .noise(noise)
+            .build()?;
 
         let response_flushed = self.rpc.respond(
             request,
-            Some(peer_handshake_payload.to_vec()),
+            Some(peer_handshake_payload.to_encoded_bytes()?.into()),
             Some(vec![]),
-            Peer::new(peer.addr),
+            Peer::new(from_peer.addr),
         )?;
-
         // Queue the connection to be sent after the response is flushed
         self.pending_connections.push(PendingConnection {
-            response_flushed,
+            flushed: response_flushed,
             connection,
             tx,
         });
 
+        Ok(())
+    }
+
+    fn on_peer_handshake_from_relay(
+        &mut self,
+        request: &RequestMsgData,
+        peer: &Peer,
+        noise: Vec<u8>,
+        peer_address: Option<SocketAddrV4>,
+        connection: Connection,
+        tx: mpsc::Sender<Result<Connection>>,
+    ) -> Result<()> {
+        let value = PeerHandshakePayloadBuilder::default()
+            .mode(HandshakeSteps::FromServer)
+            .peer_address(peer_address)
+            .noise(noise)
+            .build()?
+            .to_encoded_bytes()?;
+        let mut o = OutRequestBuilder::new(peer.clone(), PEER_HANDSHAKE).value(value.into());
+        if let Some(target) = request.target {
+            o = o.target(target.into());
+        }
+        let flush = self.rpc.request2(o)?;
+        self.pending_connections.push(PendingConnection {
+            connection,
+            tx,
+            flushed: flush,
+        });
         Ok(())
     }
 
@@ -485,7 +558,7 @@ impl Stream for DhtInner {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Poll pending connections - send them once their response is flushed
         self.pending_connections.retain_mut(|pending| {
-            match Pin::new(&mut pending.response_flushed).poll(cx) {
+            match Pin::new(&mut pending.flushed).poll(cx) {
                 Poll::Ready(_) => {
                     let _ = pending.tx.try_send(Ok(pending.connection.clone()));
                     false
