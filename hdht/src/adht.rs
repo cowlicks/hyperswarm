@@ -151,6 +151,19 @@ impl Dht {
             .unwrap()
             .peer_handshake(remote_public_key, destination)
     }
+
+    /// Initiate peer handshake with relay address hint (for testing relay flow)
+    pub fn peer_handshake_with_relay(
+        &self,
+        remote_public_key: PublicKey,
+        relay_address: SocketAddr,
+    ) -> Result<PeerHandshake> {
+        self.inner
+            .read()
+            .unwrap()
+            .peer_handshake_with_relay(remote_public_key, relay_address)
+    }
+
     pub fn announce_clear(
         &self,
         target: IdBytes,
@@ -236,30 +249,165 @@ impl DhtInner {
         Ok(())
     }
 
+    /// Handle PeerHandshake when we are a relay.
+    /// Relay doesn't create a UDX connection. Just pass message around to the server.
+    pub fn on_peer_handshake_as_relay(
+        &mut self,
+        request: RequestMsgData,
+        from_peer: Peer,
+        php: PeerHandshakePayload,
+    ) -> Result<()> {
+        match php.mode {
+            HandshakeSteps::FromClient => {
+                // TODO: Forward as FROM_RELAY to relay address
+                // (Implement later - not in this PR)
+                self.on_peer_handshake_as_relay_from_client(request, from_peer, php)
+            }
+            HandshakeSteps::FromRelay => {
+                // TODO: Forward as FROM_SECOND_RELAY
+                // (Implement later - not in this PR)
+                todo!("relay FROM_RELAY")
+            }
+            HandshakeSteps::FromServer => {
+                // IMPLEMENT THIS: Forward REPLY to the original client
+                self.on_peer_handshake_as_relay_from_server(request, from_peer, php)
+            }
+            HandshakeSteps::FromSecondRelay => {
+                // (Implement later - not in this PR)
+                todo!("relay FROM_SECOND_RELAY")
+            }
+            HandshakeSteps::Reply => {
+                // Relay should never receive Reply mode
+                Err(Error::PeerHandshakeFailed(
+                    "TODO relay received unexpected Reply".into(),
+                ))
+            }
+        }
+    }
+
+    /// Handle PeerHandshake with mode = FromClient when we are a relay.
+    fn on_peer_handshake_as_relay_from_client(
+        &self,
+        request: RequestMsgData,
+        from_peer: Peer,
+        php: PeerHandshakePayload,
+    ) -> Result<()> {
+        // If no relay address is known, respond with closer nodes to help routing
+        // TODO expose getting closer nodes later
+        let Some(relay_address) = php.relay_address else {
+            /*
+            // TODO: Check if we have a relay registered in state for this target
+            // For now, return closer nodes to help DHT routing
+            let target = request
+                .target
+                .ok_or_else(|| Error::PeerHandshakeFailed("FROM_CLIENT missing target".into()))?;
+
+            let closer_nodes = self
+                .rpc
+                .inner
+                .lock()
+                .unwrap()
+                .closer_nodes(IdBytes::from(target), K_VALUE as usize);
+
+            // Respond with no value but with closer nodes
+            self.rpc.respond(
+                request,
+                None,               // No value
+                Some(closer_nodes), // Help client route
+                from_peer,
+            )?;
+
+            return Ok(());
+            */
+            todo!()
+        };
+
+        // TODO this should be cleaned up  when SocketAddr/SocketAddrV4 is handled
+        // 3. Convert from_peer.addr (client's address) to SocketAddrV4
+        let SocketAddr::V4(client_addr) = from_peer.addr else {
+            return Err(Error::Ipv6NotSupported);
+        };
+
+        // 4. Build FROM_RELAY payload with client's address
+        let relay_payload = PeerHandshakePayloadBuilder::default()
+            .mode(HandshakeSteps::FromRelay)
+            .noise(php.noise)
+            .peer_address(Some(client_addr)) // Client's address for server
+            .relay_address(None) // Clear relay_address after first hop
+            .build()?
+            .to_encoded_bytes()?;
+
+        // 5. Forward to relay address as a new request
+        let mut builder = OutRequestBuilder::new(Peer::new(relay_address.into()), PEER_HANDSHAKE)
+            .value(relay_payload.into());
+
+        // Preserve the target
+        if let Some(target) = request.target {
+            builder = builder.target(target.into());
+        }
+
+        // Send the forwarded request
+        self.rpc.request2(builder)?;
+
+        Ok(())
+    }
+    fn on_peer_handshake_as_relay_from_server(
+        &self,
+        request: RequestMsgData,
+        from_peer: Peer,
+        php: PeerHandshakePayload,
+    ) -> Result<()> {
+        // 1. Validate required fields
+        let peer_address = php
+            .peer_address
+            .ok_or_else(|| Error::PeerHandshakeFailed("FROM_SERVER missing peer_address".into()))?;
+
+        // 2. Convert from_peer.addr to SocketAddrV4 for the reply payload
+        let SocketAddr::V4(server_addr) = from_peer.addr else {
+            return Err(Error::Ipv6NotSupported);
+        };
+
+        // 3. Build REPLY payload with server's address
+        let reply_payload = PeerHandshakePayloadBuilder::default()
+            .mode(HandshakeSteps::Reply)
+            .noise(php.noise)
+            .peer_address(Some(server_addr)) // Server's address for client
+            .build()?
+            .to_encoded_bytes()?;
+
+        // 4. Send reply to peer_address (the original client), not from_peer
+        self.rpc.respond(
+            request,
+            Some(reply_payload.into()),
+            Some(vec![]),                   // No closer nodes
+            Peer::new(peer_address.into()), // Client's address
+        )?;
+
+        Ok(())
+    }
+
     pub fn on_peer_handshake(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
         let Some(target) = request.target else {
             return Err(Error::PeerHandshakeFailed("missing target".into()));
-        };
-        let Some((keypair, tx)) = self.listening_keypairs.get(&IdBytes(target)) else {
-            return Err(Error::PeerHandshakeFailed(
-                "not listening on this target".into(),
-            ));
         };
         let Some(value) = &request.value else {
             return Err(Error::PeerHandshakeFailed("missing value".into()));
         };
 
-        let tx = tx.clone();
-
         let (php, rest) = PeerHandshakePayload::decode(value)?;
         debug_assert!(rest.is_empty());
+
+        let Some((keypair, tx)) = self.listening_keypairs.get(&IdBytes(target)) else {
+            return self.on_peer_handshake_as_relay(request, from_peer, php);
+        };
+        let tx = tx.clone();
 
         // Create our UDX stream
         let udx_local_id = self.id_maker.new_id();
 
         // Build our NoisePayload with our UDX info for the response
         let SocketAddr::V4(local_addr) = self.rpc.local_addr()? else {
-            return Err(Error::PeerHandshakeFailed("IPv6 not supported yet".into()));
+            return Err(Error::Ipv6NotSupported);
         };
         let server_np = NoisePayloadBuilder::default()
             .firewall(firewall::OPEN)
@@ -325,7 +473,7 @@ impl DhtInner {
                 let connection =
                     self.new_connection(peer_address.into(), hs, udx_local_id, udx_remote_id)?;
 
-                self.on_peer_handshake_from_relay(
+                self.on_peer_handshake_as_server_from_relay(
                     &request,
                     &from_peer,
                     noise,
@@ -382,7 +530,7 @@ impl DhtInner {
         Ok(())
     }
 
-    fn on_peer_handshake_from_relay(
+    fn on_peer_handshake_as_server_from_relay(
         &mut self,
         request: &RequestMsgData,
         peer: &Peer,
@@ -521,6 +669,61 @@ impl DhtInner {
         let connection = Connection::new(hs, udx_local_id, half_stream);
 
         let o = OutRequestBuilder::new(Peer::new(destination), commands::PEER_HANDSHAKE)
+            .value(peer_handshake_payload.into())
+            .target(generic_hash(&*remote_public_key).into());
+
+        Ok(PeerHandshake {
+            request: self.request(o),
+            connection,
+        })
+    }
+
+    /// Initiate peer handshake with relay address hint
+    /// This sends the handshake to the relay, which forwards it to the server
+    pub fn peer_handshake_with_relay(
+        &self,
+        remote_public_key: PublicKey,
+        relay_address: SocketAddr,
+    ) -> Result<PeerHandshake> {
+        let SocketAddr::V4(addr) = self.rpc.local_addr()? else {
+            todo!()
+        };
+        let SocketAddr::V4(relay_v4) = relay_address else {
+            return Err(Error::Ipv6NotSupported);
+        };
+
+        let mut hs =
+            Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
+        let udx_local_id = self.id_maker.new_id();
+        let np = NoisePayloadBuilder::default()
+            .firewall(firewall::OPEN)
+            .addresses4(Some(vec![addr]))
+            .udx(Some(
+                UdxInfoBuilder::default()
+                    .reusable_socket(false)
+                    .id(udx_local_id as usize)
+                    .build()?,
+            ))
+            .build()?
+            .to_encoded_bytes()?;
+        hs.handshake_start(&np)?;
+        let noise = hs
+            .get_next_sendable_message()?
+            .expect("we just set payload above. See `.handshake_start(np)`");
+
+        // Include relay_address in the payload
+        let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
+            .noise(noise)
+            .mode(crate::cenc::HandshakeSteps::FromClient)
+            .relay_address(Some(relay_v4))
+            .build()?
+            .to_encoded_bytes()?;
+
+        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
+        let connection = Connection::new(hs, udx_local_id, half_stream);
+
+        // Send to relay, not directly to server
+        let o = OutRequestBuilder::new(Peer::new(relay_address), commands::PEER_HANDSHAKE)
             .value(peer_handshake_payload.into())
             .target(generic_hash(&*remote_public_key).into());
 
