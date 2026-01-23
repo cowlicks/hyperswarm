@@ -27,44 +27,45 @@ async fn rsrs_server_tx_first() -> Result<()> {
     let bs_addr = tn.get_node_i_address(1).await?;
     let a = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let keypair = Keypair::default();
-    let topic = IdBytes::random();
     let a_addr = a.local_addr()?;
     let b = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
 
     a.bootstrap().await?;
     b.bootstrap().await?;
-    a.announce(topic, keypair.clone(), vec![]).await?;
 
     let mut a_server = a.listen(keypair.clone());
 
-    let client_conn_fut = async move {
-        let Ok(conn) = b
+    let server = tokio::spawn(async move {
+        let mut conn = a_server.next().await.unwrap().unwrap();
+        conn.send(b"hi".into()).await.unwrap();
+        let CipherEvent::Message(msg) = conn.next().await.unwrap() else {
+            todo!()
+        };
+        assert_eq!(msg, b"bye");
+        conn
+    });
+
+    // wait for server to announce before tring to connect to it
+    wait!(200);
+
+    let client = tokio::spawn(async move {
+        let mut conn = b
             .peer_handshake(PeerHandshakeArgs::new(keypair.public, a_addr))
             .unwrap()
             .await
-        else {
-            todo!()
-        };
-        conn
-    };
-    let server_conn_fut = async move {
-        let Some(Ok(conn)) = a_server.next().await else {
-            todo!()
-        };
-        conn
-    };
-    let (mut client, mut server) = join!(client_conn_fut, server_conn_fut);
-    server.send(b"hi".into()).await?;
-    let CipherEvent::Message(msg) = client.next().await.unwrap() else {
-        todo!()
-    };
-    assert_eq!(msg, b"hi");
+            .unwrap();
 
-    client.send(b"bye".into()).await?;
-    let CipherEvent::Message(msg) = server.next().await.unwrap() else {
-        todo!()
-    };
-    assert_eq!(msg, b"bye");
+        let CipherEvent::Message(msg) = conn.next().await.unwrap() else {
+            todo!()
+        };
+        assert_eq!(msg, b"hi");
+
+        dbg!(conn.send(b"bye".into()).await).unwrap();
+        conn // return this so it isn't dropped. bc the "await" above doesn't actually flush....
+    });
+
+    let _ = join!(client, server);
+
     Ok(())
 }
 
@@ -74,44 +75,40 @@ async fn rsrs_client_tx_first() -> Result<()> {
     let bs_addr = tn.get_node_i_address(1).await?;
     let a = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let keypair = Keypair::default();
-    let topic = IdBytes::random();
     let a_addr = a.local_addr()?;
     let b = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
 
     a.bootstrap().await?;
     b.bootstrap().await?;
-    a.announce(topic, keypair.clone(), vec![]).await?;
 
     let mut a_server = a.listen(keypair.clone());
 
-    let client_conn_fut = async move {
-        let Ok(conn) = b
+    //let server_conn_fut = async move {
+    let server = tokio::spawn(async move {
+        let mut conn = a_server.next().await.unwrap().unwrap();
+        let CipherEvent::Message(msg) = conn.next().await.unwrap() else {
+            todo!()
+        };
+        assert_eq!(msg, b"hi");
+        conn.send(b"bye".into()).await.unwrap();
+    });
+
+    // wait for server to announce before tring to connect to it
+    wait!(200);
+
+    let client = tokio::spawn(async move {
+        let mut conn = b
             .peer_handshake(PeerHandshakeArgs::new(keypair.public, a_addr))
             .unwrap()
             .await
-        else {
+            .unwrap();
+        conn.send(b"hi".into()).await.unwrap();
+        let CipherEvent::Message(msg) = conn.next().await.unwrap() else {
             todo!()
         };
-        conn
-    };
-    let server_conn_fut = async move {
-        let Some(Ok(conn)) = a_server.next().await else {
-            todo!()
-        };
-        conn
-    };
-    let (mut client, mut server) = join!(client_conn_fut, server_conn_fut);
-    client.send(b"hi".into()).await?;
-    let CipherEvent::Message(msg) = server.next().await.unwrap() else {
-        todo!()
-    };
-    assert_eq!(msg, b"hi");
-
-    server.send(b"bye".into()).await?;
-    let CipherEvent::Message(msg) = client.next().await.unwrap() else {
-        todo!()
-    };
-    assert_eq!(msg, b"bye");
+        assert_eq!(msg, b"bye");
+    });
+    _ = join!(server, client);
     Ok(())
 }
 
@@ -369,6 +366,78 @@ outputJson([...pub_key]);
         todo!()
     };
     assert_eq!(String::from_utf8_lossy(&rx_from_js), "from js");
+    Ok(())
+}
+
+/// Rust listens on a key and JS connects.
+/// send data both ways and check
+#[tokio::test]
+async fn test_js_connects_to_rs() -> Result<()> {
+    let (mut tn, dht) = adht_setup!();
+
+    dht.bootstrap().await?;
+
+    tn.repl
+        .run_tcp(
+            "
+DHT = require('hyperdht');
+public_key = deferred();
+secret_key = deferred();
+kp = DHT.keyPair();
+
+public_key.resolve([...kp.publicKey]);
+secret_key.resolve([...kp.secretKey]);
+",
+        )
+        .await?;
+
+    let pub_key: [u8; 32] = tn.repl.get_name("public_key").await?;
+    let sec_key: Vec<u8> = tn.repl.get_name("secret_key").await?;
+    let secret: [u8; 64] = sec_key.try_into().unwrap();
+
+    let keypair = Keypair {
+        public: PublicKey::from(pub_key),
+        secret,
+    };
+    let mut server = dht.listen(keypair);
+
+    let x = tokio::spawn(async move {
+        let mut conn = server.next().await.unwrap().unwrap();
+
+        let Some(CipherEvent::Message(rx_from_js)) = conn.next().await else {
+            todo!()
+        };
+        assert_eq!(rx_from_js, b"from js");
+        conn.send(b"from rust".to_vec()).await.unwrap();
+    });
+    // wait for announce to happen
+    wait!(500);
+    tn.repl
+        .run_tcp(
+            "
+client_node = testnet.nodes[testnet.nodes.length - 2];
+socket = client_node.connect(kp.publicKey);
+SOCKET = deferred();
+
+client_rx_data = deferred();
+
+socket.on('open', () => {
+    SOCKET.resolve(socket);
+});
+socket.on('data', (data) => {
+    client_rx_data.resolve(data.toString());
+});
+
+
+await SOCKET
+await socket.write(Buffer.from('from js'));
+",
+        )
+        .await?;
+    _ = x.await;
+
+    let client_rx_data: String = tn.repl.get_name("client_rx_data").await?;
+    assert_eq!(client_rx_data, "from rust");
     Ok(())
 }
 

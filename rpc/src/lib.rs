@@ -692,7 +692,6 @@ impl RpcInner {
                         return Poll::Ready(Some(e));
                     }
                     if let Some(event) = pin.queued_events.pop_front() {
-                        trace!("emit queue event: {event:?}");
                         return Poll::Ready(Some(event));
                     }
                 } else {

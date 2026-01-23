@@ -162,8 +162,11 @@ impl Dht {
 
     pub fn listen(&self, keypair: Keypair) -> Server {
         let (tx, rx) = mpsc::channel(32);
+        let target = IdBytes(generic_hash(&*keypair.public));
+        let announcer = self.announce(target, keypair.clone(), vec![]);
         self.inner.write().unwrap().add_listening_key(keypair, tx);
-        Server::new(rx, self.inner.clone())
+
+        Server::new(rx, self.inner.clone(), announcer)
     }
 }
 
@@ -236,7 +239,7 @@ impl DhtInner {
         match command {
             values::PEER_HANDSHAKE => self.on_peer_handshake(*request, peer)?,
             values::PEER_HOLEPUNCH => todo!(),
-            values::FIND_PEER => todo!(),
+            values::FIND_PEER => { /* TODO */ }
             values::LOOKUP => todo!(),
             values::ANNOUNCE => todo!(),
             values::UNANNOUNCE => todo!(),

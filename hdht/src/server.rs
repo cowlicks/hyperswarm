@@ -6,17 +6,31 @@ use std::{
 
 use futures::Stream;
 use tokio::sync::mpsc;
+use tracing::{debug, error};
 
-use crate::{Result, adht::DhtInner, next_router::connection::Connection};
+use crate::{
+    Result,
+    adht::{Announce, DhtInner},
+    next_router::connection::Connection,
+};
 
 pub struct Server {
     rx: mpsc::Receiver<Result<Connection>>,
     dht: Arc<RwLock<DhtInner>>,
+    announcer: Option<Announce>,
 }
 
 impl Server {
-    pub fn new(rx: mpsc::Receiver<Result<Connection>>, dht: Arc<RwLock<DhtInner>>) -> Self {
-        Self { rx, dht }
+    pub fn new(
+        rx: mpsc::Receiver<Result<Connection>>,
+        dht: Arc<RwLock<DhtInner>>,
+        announcer: Announce,
+    ) -> Self {
+        Self {
+            rx,
+            dht,
+            announcer: Some(announcer),
+        }
     }
 }
 
@@ -30,6 +44,25 @@ impl Stream for Server {
             .is_ready()
         {
             // keep loopin
+            // TODO we should probably just do cx.waker().wakey_by_ref();
+        }
+
+        let finished = self
+            .announcer
+            .as_mut()
+            .map(|mut a| {
+                if let Poll::Ready(_res) = Pin::new(&mut a).poll(cx) {
+                    debug!("Done announing on keypair");
+                    _ = _res
+                        .inspect_err(|e| error!(error =? e, "error announcing keypair for server"));
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        if finished {
+            self.announcer = None;
         }
 
         // Check for new connections

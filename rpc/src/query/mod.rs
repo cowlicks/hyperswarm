@@ -404,7 +404,6 @@ impl Query {
     #[instrument(skip_all)]
     fn poll(&mut self, now: Instant) -> Poll<Option<QueryEvent>> {
         let pis = self.peer_iter.next(now);
-        info!("next peer iter state: {pis:?}");
         match pis {
             PeersIterState::Waiting(peer) => {
                 return if let Some(peer) = peer {
