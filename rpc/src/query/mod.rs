@@ -12,7 +12,7 @@ use futures::{
     channel::mpsc::{self},
     task::Poll,
 };
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 use wasm_timer::Instant;
 
 use crate::{

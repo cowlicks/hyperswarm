@@ -9,7 +9,7 @@ use hyperdht::{
 };
 
 use rusty_nodejs_repl::wait;
-use test_utils::{Result, Testnet, log};
+use test_utils::{Result, Testnet};
 use tokio::select;
 
 macro_rules! adht_setup {
