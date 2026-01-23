@@ -1,8 +1,10 @@
+use std::net::SocketAddr;
+
 use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
 use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
 use hyperdht::{
-    Keypair,
+    Keypair, PublicKey,
     adht::{Dht, PeerHandshakeArgs},
 };
 
@@ -325,7 +327,7 @@ outputJson([...pub_key]);
 /// rs dht.connect() to js server pub key
 /// send data both ways and check
 #[tokio::test]
-async fn test_dht_connect() -> Result<()> {
+async fn test_rs_connects_to_js() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
@@ -428,10 +430,9 @@ async fn rs_announce_clear() -> Result<()> {
     Ok(())
 }
 
-/// Test relay connection flow: client -> relay -> server
-/// Three nodes: client connects to server through relay node
+/// Test relay connection flow: client -> relay -> server all in rust
 #[tokio::test]
-async fn relay_connection_flow() -> Result<()> {
+async fn rsrsrs_relay_connection_flow() -> Result<()> {
     let mut tn = Testnet::new().await?;
     let bs_addr = tn.get_node_i_address(1).await?;
 
@@ -466,8 +467,6 @@ async fn relay_connection_flow() -> Result<()> {
         }
     });
 
-    wait!(1000);
-    log();
     let mut client_conn = client
         .peer_handshake(
             PeerHandshakeArgs::new(server_keypair.public, relay_addr).relay_address(server_addr),
@@ -546,5 +545,169 @@ async fn relay_handlers_basic() -> Result<()> {
     }
 
     // Test passes as long as we don't panic
+    Ok(())
+}
+
+/// Test relay connection flow: rust client -> rust relay -> javascript server
+/// Three nodes: client connects to server through relay node
+#[tokio::test]
+async fn rsrsjs_relay_connection_flow() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.get_node_i_address(1).await?;
+
+    let mut relay = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let client = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    let pub_key: [u8; 32] = tn
+        .repl
+        .json_run_tcp(
+            "
+server_port = deferred();
+server_rx_data = deferred();
+
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+server.on('listening', () => {
+    server_port.resolve(server.address().port)
+});
+
+pub_key  = server_node.defaultKeyPair.publicKey;;
+await server.listen(server_node.defaultKeyPair);
+server.on('connection', socket => {
+    socket.on('data', (data) => {
+        server_rx_data.resolve(data.toString());
+        SOCKET = socket;
+    });
+});
+outputJson([...pub_key]);
+",
+        )
+        .await?;
+
+    relay.bootstrap().await?;
+    client.bootstrap().await?;
+
+    let server_port: usize = tn.repl.get_name("server_port").await?;
+    let server_addr: SocketAddr = format!("127.0.0.1:{server_port}").parse().unwrap();
+    let relay_addr = relay.local_addr()?;
+    let client_addr = client.local_addr()?;
+
+    println!("SERVER\taddr={server_addr:?}");
+    println!("RELAY\tname={},\taddr={relay_addr:?}", relay.name());
+    println!("CLIENT\tname={},\taddr={client_addr:?}", client.name());
+
+    // Setup relay node - intermediary (doesn't have server's keypair)
+    tokio::spawn(async move {
+        loop {
+            dbg!(select! {
+                x = relay.next() => {x}
+            });
+        }
+    });
+
+    let mut client_conn = client
+        .peer_handshake(
+            PeerHandshakeArgs::new(PublicKey::from(pub_key), relay_addr).relay_address(server_addr),
+        )?
+        .await?;
+
+    // Server should receive connection through relay
+    //let mut server_conn = server_listener.next().await.unwrap()?;
+
+    // Test bidirectional communication
+    client_conn.send(b"hello from client".into()).await?;
+    let server_rx_data: String = tn.repl.get_name("server_rx_data").await?;
+    assert_eq!(server_rx_data.as_bytes(), b"hello from client");
+    tn.repl
+        .run_tcp("await SOCKET.write(Buffer.from('from js'))")
+        .await?;
+
+    let CipherEvent::Message(msg) = client_conn.next().await.unwrap() else {
+        panic!("Expected message from server");
+    };
+    assert_eq!(msg.as_slice(), b"from js");
+
+    Ok(())
+}
+/// Test relay connection flow: rust client -> javascript relay -> javascript server
+/// Three nodes: client connects to server through relay node
+#[tokio::test]
+async fn rsjsjs_relay_connection_flow() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.get_node_i_address(1).await?;
+
+    let client = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    let pub_key: [u8; 32] = tn
+        .repl
+        .json_run_tcp(
+            "
+server_port = deferred();
+relay_addr = deferred();
+server_rx_data = deferred();
+
+server_node = testnet.nodes[testnet.nodes.length - 1];
+server = server_node.createServer();
+server.on('listening', () => {
+    server_port.resolve(server.address().port)
+});
+
+relay_node = testnet.nodes[testnet.nodes.length - 2];
+let { host, port } = relay_node.remoteAddress();
+relay_addr.resolve(`${host}:${port}`);
+
+server.on('listening', () => {
+    server_port.resolve(server.address().port)
+});
+
+pub_key  = server_node.defaultKeyPair.publicKey;;
+await server.listen(server_node.defaultKeyPair);
+server.on('connection', socket => {
+    socket.on('data', (data) => {
+        server_rx_data.resolve(data.toString());
+        SOCKET = socket;
+    });
+});
+outputJson([...pub_key]);
+",
+        )
+        .await?;
+
+    client.bootstrap().await?;
+
+    let server_port: usize = tn.repl.get_name("server_port").await?;
+    let server_addr: SocketAddr = format!("127.0.0.1:{server_port}").parse().unwrap();
+    let relay_addr: String = tn.repl.get_name("relay_addr").await?;
+    let relay_addr: SocketAddr = relay_addr.parse()?;
+
+    let client_addr = client.local_addr()?;
+
+    println!("SERVER\taddr={server_addr:?}");
+    println!("RELAY\taddr={relay_addr:?}");
+    println!("CLIENT\tname={},\taddr={client_addr:?}", client.name());
+
+    // Setup relay node - intermediary (doesn't have server's keypair)
+    let mut client_conn = client
+        .peer_handshake(
+            PeerHandshakeArgs::new(PublicKey::from(pub_key), relay_addr).relay_address(server_addr),
+        )?
+        .await?;
+
+    // Server should receive connection through relay
+    //let mut server_conn = server_listener.next().await.unwrap()?;
+
+    // Test bidirectional communication
+    client_conn.send(b"hello from client".into()).await?;
+    let server_rx_data: String = tn.repl.get_name("server_rx_data").await?;
+    assert_eq!(server_rx_data.as_bytes(), b"hello from client");
+    tn.repl
+        .run_tcp("await SOCKET.write(Buffer.from('from js'))")
+        .await?;
+
+    let CipherEvent::Message(msg) = client_conn.next().await.unwrap() else {
+        panic!("Expected message from server");
+    };
+    assert_eq!(msg.as_slice(), b"from js");
+
     Ok(())
 }
