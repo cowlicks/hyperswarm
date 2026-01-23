@@ -12,7 +12,7 @@ use dht_rpc::IdBytes;
 const MIN_CONNECTION_TIME: Duration = Duration::from_secs(15);
 
 /// Priority levels for peer connection attempts
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
 pub enum Priority {
     /// Lowest priority - many failed attempts or stale peer
@@ -20,17 +20,12 @@ pub enum Priority {
     /// Low priority - several failed attempts
     Low = 1,
     /// Normal priority - default for new peers
+    #[default]
     Normal = 2,
     /// High priority - few failed attempts
     High = 3,
     /// Highest priority - proven peer with recent success
     VeryHigh = 4,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Information about a discovered peer

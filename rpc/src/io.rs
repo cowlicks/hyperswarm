@@ -178,7 +178,7 @@ pub enum OutMessage {
 }
 
 impl OutMessage {
-    fn to_sendable(self) -> (MsgData, SocketAddr, Option<Sender<()>>) {
+    fn into_sendable(self) -> (MsgData, SocketAddr, Option<Sender<()>>) {
         match self {
             OutMessage::Request((_query_id, msg, tx)) => {
                 let dest = SocketAddr::from(&msg.to);
@@ -494,7 +494,7 @@ impl IoHandler {
             }
         };
 
-        let (msg, socket, tx) = msg.to_sendable();
+        let (msg, socket, tx) = msg.into_sendable();
         match &msg {
             MsgData::Request(m) => {
                 trace!(name=self.name(), tid = m.tid, cmd =% m.command, to=?socket, "TX:Request")

@@ -31,7 +31,7 @@ use crate::{
         HandshakeSteps, NoisePayload, NoisePayloadBuilder, PeerHandshakePayload,
         PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
     },
-    commands::{self, PEER_HANDSHAKE},
+    commands,
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
@@ -265,7 +265,6 @@ impl DhtInner {
                 todo!("relay FROM_RELAY")
             }
             HandshakeSteps::FromServer => {
-                // IMPLEMENT THIS: Forward REPLY to the original client
                 self.on_peer_handshake_as_relay_from_server(request, from_peer, php)
             }
             HandshakeSteps::FromSecondRelay => {
@@ -380,8 +379,10 @@ impl DhtInner {
         debug_assert!(rest.is_empty());
 
         let Some((keypair, tx)) = self.listening_keypairs.get(&IdBytes(target)) else {
+            info!("Relay RX PEER_HANDSHAKE mode = {:?}", php.mode);
             return self.on_peer_handshake_as_relay(request, from_peer, php);
         };
+        info!("Server RX PEER_HANDSHAKE mode = {:?}", php.mode);
         let tx = tx.clone();
 
         // Create our UDX stream
@@ -784,14 +785,8 @@ impl Future for PeerHandshake {
         };
         let (np, rest) = NoisePayload::decode(&payload)?;
         debug_assert!(rest.is_empty());
-        if phs.relayed {
-            return Poll::Ready(Err(Error::PeerHandshakeFailed(
-                "relay not implemented yet".into(),
-            )));
-        }
-
         self.connection.connect(
-            resp.request.to.addr,
+            phs.server_address.into(),
             np.udx
                 .as_ref()
                 .expect("TODO response SHOULD have udx_info")

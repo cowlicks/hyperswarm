@@ -142,7 +142,6 @@ impl From<EncodingError> for Error {
 pub struct PeerHandshakeResponse {
     noise: Vec<u8>,
     relayed: bool,
-    #[expect(unused)]
     server_address: SocketAddrV4,
     #[expect(unused)]
     client_address: SocketAddrV4,
