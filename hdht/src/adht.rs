@@ -75,9 +75,10 @@ impl Future for ConnectFuture {
                 Poll::Ready(Some(Ok(Some(FindPeerResponse { response, .. })))) => {
                     // Try to start a handshake with this peer
                     let dht = self.dht.read().unwrap();
-                    if let Ok(handshake) =
-                        dht.peer_handshake(self.pub_key.clone(), response.request.to.addr)
-                    {
+                    if let Ok(handshake) = dht.peer_handshake(PeerHandshakeArgs::new(
+                        self.pub_key.clone(),
+                        response.request.to.addr,
+                    )) {
                         drop(dht); // Release lock before storing
                         self.pending_handshake = Some(handshake);
                         // Continue loop to poll the new handshake
@@ -144,20 +145,9 @@ impl Dht {
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.inner.read().unwrap().local_addr()
     }
-    pub fn peer_handshake2(&self, args: PeerHandshakeArgs) -> Result<PeerHandshake> {
-        self.inner.read().unwrap().peer_handshake2(args)
+    pub fn peer_handshake(&self, args: PeerHandshakeArgs) -> Result<PeerHandshake> {
+        self.inner.read().unwrap().peer_handshake(args)
     }
-    pub fn peer_handshake(
-        &self,
-        remote_public_key: PublicKey,
-        destination: SocketAddr,
-    ) -> Result<PeerHandshake> {
-        self.inner
-            .read()
-            .unwrap()
-            .peer_handshake(remote_public_key, destination)
-    }
-
     pub fn announce_clear(
         &self,
         target: IdBytes,
@@ -626,7 +616,7 @@ impl DhtInner {
         Ok(self.rpc.local_addr()?)
     }
 
-    pub fn peer_handshake2(
+    pub fn peer_handshake(
         &self,
         PeerHandshakeArgs {
             remote_public_key,
@@ -637,6 +627,7 @@ impl DhtInner {
         let SocketAddr::V4(addr) = self.rpc.local_addr()? else {
             todo!()
         };
+
         let relay_address = relay_address
             .map(|x| match x {
                 SocketAddr::V4(o) => Ok(o),
@@ -667,54 +658,6 @@ impl DhtInner {
             .noise(noise)
             .mode(crate::cenc::HandshakeSteps::FromClient)
             .relay_address(relay_address)
-            .build()?
-            .to_encoded_bytes()?;
-
-        let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
-        let connection = Connection::new(hs, udx_local_id, half_stream);
-
-        let o = OutRequestBuilder::new(Peer::new(destination), commands::PEER_HANDSHAKE)
-            .value(peer_handshake_payload.into())
-            .target(generic_hash(&*remote_public_key).into());
-
-        Ok(PeerHandshake {
-            request: self.request(o),
-            connection,
-        })
-    }
-
-    pub fn peer_handshake(
-        &self,
-        remote_public_key: PublicKey,
-        destination: SocketAddr,
-    ) -> Result<PeerHandshake> {
-        let SocketAddr::V4(addr) = self.rpc.local_addr()? else {
-            todo!()
-        };
-
-        let mut hs =
-            Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
-        let udx_local_id = self.id_maker.new_id();
-        let np = NoisePayloadBuilder::default()
-            .firewall(firewall::OPEN)
-            .addresses4(Some(vec![addr]))
-            .udx(Some(
-                UdxInfoBuilder::default()
-                    .reusable_socket(false)
-                    .id(udx_local_id as usize)
-                    .build()?,
-            ))
-            .build()?
-            .to_encoded_bytes()?;
-        hs.handshake_start(&np)?;
-        let noise = hs
-            .get_next_sendable_message()?
-            .expect("we just set payload above. See `.handshake_start(np)`");
-
-        let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
-            .noise(noise)
-            .mode(crate::cenc::HandshakeSteps::FromClient)
-            .relay_address(Some(relay_v4))
             .build()?
             .to_encoded_bytes()?;
 
@@ -795,11 +738,26 @@ impl Stream for DhtInner {
     }
 }
 
-#[derive(Debug, derive_builder::Builder)]
+#[derive(Debug)]
 pub struct PeerHandshakeArgs {
     remote_public_key: PublicKey,
     relay_address: Option<SocketAddr>,
     destination: SocketAddr,
+}
+
+impl PeerHandshakeArgs {
+    pub fn new(remote_public_key: PublicKey, destination: SocketAddr) -> Self {
+        Self {
+            remote_public_key,
+            relay_address: None,
+            destination,
+        }
+    }
+
+    pub fn relay_address(mut self, relay_address: SocketAddr) -> Self {
+        self.relay_address = Some(relay_address);
+        self
+    }
 }
 
 #[derive(Debug)]

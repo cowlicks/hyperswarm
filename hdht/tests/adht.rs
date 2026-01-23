@@ -1,7 +1,10 @@
 use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
 use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
-use hyperdht::{Keypair, adht::Dht};
+use hyperdht::{
+    Keypair,
+    adht::{Dht, PeerHandshakeArgs},
+};
 
 use test_utils::{Result, Testnet};
 
@@ -31,7 +34,11 @@ async fn rsrs_server_tx_first() -> Result<()> {
     let mut a_server = a.listen(keypair.clone());
 
     let client_conn_fut = async move {
-        let Ok(conn) = b.peer_handshake(keypair.public, a_addr).unwrap().await else {
+        let Ok(conn) = b
+            .peer_handshake(PeerHandshakeArgs::new(keypair.public, a_addr))
+            .unwrap()
+            .await
+        else {
             todo!()
         };
         conn
@@ -74,7 +81,11 @@ async fn rsrs_client_tx_first() -> Result<()> {
     let mut a_server = a.listen(keypair.clone());
 
     let client_conn_fut = async move {
-        let Ok(conn) = b.peer_handshake(keypair.public, a_addr).unwrap().await else {
+        let Ok(conn) = b
+            .peer_handshake(PeerHandshakeArgs::new(keypair.public, a_addr))
+            .unwrap()
+            .await
+        else {
             todo!()
         };
         conn
@@ -291,7 +302,9 @@ outputJson([...pub_key]);
 
     let port: u16 = tn.repl.get_name("server_addr").await?;
     let dest = format!("127.0.0.1:{port}").parse()?;
-    let mut conn = dht.peer_handshake(pub_key.into(), dest)?.await?;
+    let mut conn = dht
+        .peer_handshake(PeerHandshakeArgs::new(pub_key.into(), dest))?
+        .await?;
     conn.send(b"from rust".into()).await?;
     let msg: String = tn.repl.get_name("server_rx_data").await?;
     assert_eq!(msg, "from rust");

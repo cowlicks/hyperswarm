@@ -17,7 +17,7 @@ use std::{
 
 use dht_rpc::{Commit, IdBytes};
 use futures::{Stream, StreamExt};
-use hyperdht::adht::Dht;
+use hyperdht::adht::{Dht, PeerHandshakeArgs};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -385,7 +385,9 @@ impl Swarm {
         if inner.destroyed {
             return Err(Error::Destroyed);
         }
-        Ok(inner.dht.peer_handshake(remote_public_key, destination)?)
+        Ok(inner
+            .dht
+            .peer_handshake(PeerHandshakeArgs::new(remote_public_key, destination))?)
     }
 
     /// Get a stream of connection events (both client and server)
@@ -533,7 +535,9 @@ impl Swarm {
                         debug!(?pk, ?addr, "trying relay address");
                         let handshake = {
                             let guard = inner_clone.read().unwrap();
-                            guard.dht.peer_handshake(pub_key.clone(), *addr)
+                            guard
+                                .dht
+                                .peer_handshake(PeerHandshakeArgs::new(pub_key.clone(), *addr))
                         };
                         if let Ok(h) = handshake {
                             match h.await {
