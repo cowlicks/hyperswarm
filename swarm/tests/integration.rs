@@ -4,7 +4,7 @@ use dht_rpc::IdBytes;
 use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
 use hyperswarm::{DhtConfig, JoinOpts, Swarm, SwarmConfig};
-use test_utils::{Result, Testnet, log};
+use test_utils::{Result, Testnet};
 
 /// Server announces and client discovers via lookup
 #[tokio::test]
