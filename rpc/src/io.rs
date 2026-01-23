@@ -654,7 +654,7 @@ mod test {
         IoHandler::new(view, message_stream, Default::default())
     }
     #[tokio::test]
-    async fn foo() -> crate::Result<()> {
+    async fn test_iohandler_to_iohandler_messaging() -> crate::Result<()> {
         let mut a = new_io();
         let mut b = new_io();
 

@@ -380,7 +380,6 @@ impl ClosestPeersIter {
                 PeerState::Succeeded => {
                     if let Some(ref mut cnt) = result_counter {
                         *cnt += 1;
-                        trace!(peer_id = ? peer.id, result_count = cnt, "Succeded peer. Increment result counter");
                         // If `num_results` successful results have been delivered for the
                         // closest peers, the iterator is done.
                         if *cnt >= self.config.num_results.get() {
