@@ -119,6 +119,7 @@ pub struct OutRequestBuilder {
     peer: Peer,
     command: Command,
     tid: Option<u16>,
+    id: Option<[u8; 32]>,
     query_id: Option<QueryId>,
     token: Option<[u8; 32]>,
     target: Option<IdBytes>,
@@ -134,6 +135,18 @@ macro_rules! setter {
     };
 }
 impl OutRequestBuilder {
+    pub fn from_request(req: RequestMsgData) -> Self {
+        Self {
+            peer: req.to.clone(),
+            command: req.command,
+            tid: Some(req.tid),
+            id: req.id,
+            query_id: None,
+            token: req.token,
+            target: req.target.map(IdBytes::from),
+            value: req.value,
+        }
+    }
     pub fn new(peer: Peer, command: Command) -> Self {
         Self {
             peer,
@@ -143,7 +156,12 @@ impl OutRequestBuilder {
             token: None,
             target: None,
             value: None,
+            id: None,
         }
+    }
+    pub fn peer(mut self, peer: Peer) -> Self {
+        self.peer = peer;
+        self
     }
     setter!(tid, u16);
     setter!(query_id, QueryId);
@@ -199,6 +217,7 @@ pub struct IoHandler {
     secrets: Secrets,
     tid: AtomicU16,
     stream_waker: Option<Waker>,
+    name: String,
 }
 
 impl IoHandler {
@@ -217,7 +236,11 @@ impl IoHandler {
             secrets: Default::default(),
             tid: AtomicU16::new(rand::thread_rng().r#gen()),
             stream_waker: Default::default(),
+            name: random_name(),
         }
+    }
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn is_ephemeral(&self) -> bool {
@@ -258,9 +281,10 @@ impl IoHandler {
             token,
             target,
             value,
+            id,
         }: OutRequestBuilder,
     ) -> QueryAndTid {
-        let id = (!self.ephemeral).then(|| self.id().0);
+        let id = id.or_else(|| (!self.ephemeral).then(|| self.id().0));
         let tid = tid.unwrap_or_else(|| self.new_tid());
         self.enqueue_request((
             query_id,
@@ -345,17 +369,18 @@ impl IoHandler {
     pub fn request2(
         &mut self,
         OutRequestBuilder {
-            tid,
             query_id,
+            tid,
             peer,
             command,
             token,
             target,
             value,
+            id,
         }: OutRequestBuilder,
     ) -> crate::Result<Receiver<()>> {
         let (tx, rx) = oneshot::channel();
-        let id = (!self.ephemeral).then(|| self.id().0);
+        let id = id.or_else(|| (!self.ephemeral).then(|| self.id().0));
         let tid = tid.unwrap_or_else(|| self.new_tid());
         self.enqueue_request((
             query_id,
@@ -417,11 +442,11 @@ impl IoHandler {
         let peer = Peer::from(&rinfo);
         match msg {
             MsgData::Request(req) => {
-                trace!(tid = req.tid, command =% req.command, "RX:Request");
+                trace!(name=self.name(), tid = req.tid, command =% req.command, "RX:Request");
                 IoHandlerEvent::InRequest { message: req, peer }
             }
             MsgData::Reply(rep) => {
-                trace!(tid = rep.tid, "RX:Reply");
+                trace!(name = self.name(), tid = rep.tid, "RX:Reply");
                 self.on_response(rep, peer)
             }
         }
@@ -470,6 +495,12 @@ impl IoHandler {
         };
 
         let (msg, socket, tx) = msg.to_sendable();
+        match &msg {
+            MsgData::Request(m) => {
+                trace!(name=self.name(), tid = m.tid, cmd =% m.command, "TX:Request")
+            }
+            MsgData::Reply(m) => trace!(name = self.name(), tid = m.tid, "TX:Reply"),
+        }
         if let Err(e) = Sink::start_send(Pin::new(&mut self.message_stream), (msg, socket)) {
             error!(error =? e, "start_send error");
             todo!()
@@ -491,6 +522,7 @@ impl IoHandler {
         }
     }
 }
+
 #[derive(Debug, Clone, Default)]
 pub struct IoConfig {
     pub rotation: Option<Duration>,
@@ -594,6 +626,19 @@ impl std::fmt::Display for IoHandlerEvent {
             _ => write!(f, "{}()", self.kind()),
         }
     }
+}
+
+/// return a Random String, 5 letters long containing only the letters a-zA-Z.
+pub fn random_name() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut rng = rand::thread_rng();
+    (0..5)
+        .map(|_| {
+            let idx = rng.gen_range(0, CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 #[cfg(test)]

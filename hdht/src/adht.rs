@@ -23,7 +23,7 @@ use dht_rpc::{
 };
 use futures::{Stream, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
-use tracing::{error, instrument, trace};
+use tracing::{error, info, instrument, trace};
 
 use crate::{
     DEFAULT_BOOTSTRAP, Error, Keypair, Result,
@@ -105,6 +105,9 @@ impl Dht {
         Ok(Self {
             inner: Arc::new(RwLock::new(DhtInner::with_config(config).await?)),
         })
+    }
+    pub fn name(&self) -> String {
+        self.inner.read().unwrap().name()
     }
     pub fn bootstrap(&self) -> BootstrapFuture {
         self.inner.read().unwrap().bootstrap()
@@ -222,6 +225,9 @@ impl DhtInner {
             pending_connections: Default::default(),
         })
     }
+    pub fn name(&self) -> String {
+        self.rpc.name()
+    }
 
     fn add_listening_key(&mut self, keypair: Keypair, tx: mpsc::Sender<Result<Connection>>) {
         let target = IdBytes(generic_hash(&*keypair.public));
@@ -323,12 +329,10 @@ impl DhtInner {
         };
 
         // TODO this should be cleaned up  when SocketAddr/SocketAddrV4 is handled
-        // 3. Convert from_peer.addr (client's address) to SocketAddrV4
         let SocketAddr::V4(client_addr) = from_peer.addr else {
             return Err(Error::Ipv6NotSupported);
         };
 
-        // 4. Build FROM_RELAY payload with client's address
         let relay_payload = PeerHandshakePayloadBuilder::default()
             .mode(HandshakeSteps::FromRelay)
             .noise(php.noise)
@@ -357,17 +361,14 @@ impl DhtInner {
         from_peer: Peer,
         php: PeerHandshakePayload,
     ) -> Result<()> {
-        // 1. Validate required fields
         let peer_address = php
             .peer_address
             .ok_or_else(|| Error::PeerHandshakeFailed("FROM_SERVER missing peer_address".into()))?;
 
-        // 2. Convert from_peer.addr to SocketAddrV4 for the reply payload
         let SocketAddr::V4(server_addr) = from_peer.addr else {
             return Err(Error::Ipv6NotSupported);
         };
 
-        // 3. Build REPLY payload with server's address
         let reply_payload = PeerHandshakePayloadBuilder::default()
             .mode(HandshakeSteps::Reply)
             .noise(php.noise)
@@ -375,7 +376,6 @@ impl DhtInner {
             .build()?
             .to_encoded_bytes()?;
 
-        // 4. Send reply to peer_address (the original client), not from_peer
         self.rpc.respond(
             request,
             Some(reply_payload.into()),
@@ -711,7 +711,6 @@ impl DhtInner {
             .get_next_sendable_message()?
             .expect("we just set payload above. See `.handshake_start(np)`");
 
-        // Include relay_address in the payload
         let peer_handshake_payload = PeerHandshakePayloadBuilder::default()
             .noise(noise)
             .mode(crate::cenc::HandshakeSteps::FromClient)
@@ -722,7 +721,6 @@ impl DhtInner {
         let half_stream = self.rpc.socket().create_stream(udx_local_id)?;
         let connection = Connection::new(hs, udx_local_id, half_stream);
 
-        // Send to relay, not directly to server
         let o = OutRequestBuilder::new(Peer::new(relay_address), commands::PEER_HANDSHAKE)
             .value(peer_handshake_payload.into())
             .target(generic_hash(&*remote_public_key).into());

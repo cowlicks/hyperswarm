@@ -294,6 +294,10 @@ pub struct Rpc {
 }
 
 impl Rpc {
+    pub fn name(&self) -> String {
+        self.inner.lock().unwrap().io.name().to_string()
+    }
+
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
             inner: Arc::new(Mutex::new(RpcInner::with_config(config).await?)),
@@ -676,7 +680,6 @@ impl RpcInner {
         loop {
             // Drain queued events first.
             if let Some(event) = pin.queued_events.pop_front() {
-                trace!("{event:#?}");
                 cx.waker().wake_by_ref();
                 return Poll::Ready(Some(event));
             }
@@ -940,7 +943,8 @@ impl RpcInner {
             }
             IoHandlerEvent::InMessageErr { .. } => {}
             IoHandlerEvent::InSocketErr { .. } => {}
-            IoHandlerEvent::InResponseBadRequestId { .. } => {
+            IoHandlerEvent::InResponseBadRequestId { message, peer } => {
+                warn!(msg =? message, peer =? peer, "Bad Response ID");
                 // received a response that did not match any issued requests
                 //self.remove_node(&peer);
                 todo!()
@@ -955,7 +959,7 @@ impl RpcInner {
                 todo!()
             }
             IoHandlerEvent::ChanneledResponse(tid) => {
-                trace!(msg.id = tid, "Passed io response through channel")
+                trace!(tid = tid, "Passed io response through channel")
             }
         }
         Ok(None)
