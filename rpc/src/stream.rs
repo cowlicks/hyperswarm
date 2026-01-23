@@ -72,6 +72,8 @@ impl Stream for MessageDataStream {
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     }
+                    // TODO we should pass through the address that we got this error from
+                    // but to do that we need to add a new: enum MsgDataStreamError and use it here
                     Err(e) => Poll::Ready(Some(Err(e.into()))),
                 }
             }

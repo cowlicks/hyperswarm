@@ -442,11 +442,11 @@ impl IoHandler {
         let peer = Peer::from(&rinfo);
         match msg {
             MsgData::Request(req) => {
-                trace!(name=self.name(), tid = req.tid, command =% req.command, "RX:Request");
+                trace!(name=self.name(), tid = req.tid, command =% req.command, from =? peer.addr, "RX:Request");
                 IoHandlerEvent::InRequest { message: req, peer }
             }
             MsgData::Reply(rep) => {
-                trace!(name = self.name(), tid = rep.tid, "RX:Reply");
+                trace!(name = self.name(), tid = rep.tid, from =? peer.addr, "RX:Reply");
                 self.on_response(rep, peer)
             }
         }
@@ -497,9 +497,9 @@ impl IoHandler {
         let (msg, socket, tx) = msg.to_sendable();
         match &msg {
             MsgData::Request(m) => {
-                trace!(name=self.name(), tid = m.tid, cmd =% m.command, "TX:Request")
+                trace!(name=self.name(), tid = m.tid, cmd =% m.command, to=?socket, "TX:Request")
             }
-            MsgData::Reply(m) => trace!(name = self.name(), tid = m.tid, "TX:Reply"),
+            MsgData::Reply(m) => trace!(name = self.name(), tid = m.tid, to=?socket, "TX:Reply"),
         }
         if let Err(e) = Sink::start_send(Pin::new(&mut self.message_stream), (msg, socket)) {
             error!(error =? e, "start_send error");
@@ -549,7 +549,7 @@ impl Stream for IoHandler {
             }
             Poll::Ready(Some(Err(err))) => {
                 let out = IoHandlerEvent::InSocketErr { err };
-                error!("{out:#?}");
+                error!(name = pin.name(), "{out:#?}");
                 return Poll::Ready(Some(out));
             }
             _ => {}

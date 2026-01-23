@@ -687,7 +687,6 @@ impl RpcInner {
             // Look for a sent/received message
             loop {
                 if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
-                    debug!("RpcDht got IoHandlerEvent::{event}");
                     if let Ok(Some(e)) = pin.inject_event(event) {
                         cx.waker().wake_by_ref();
                         return Poll::Ready(Some(e));

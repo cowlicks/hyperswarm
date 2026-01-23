@@ -1,7 +1,6 @@
-use futures::StreamExt;
-use std::{net::TcpListener, time::Duration};
+use std::net::TcpListener;
 
-use crate::{DhtConfig, Peer, Result, RpcEvent, RpcInner, cenc::validate_id};
+use crate::{Peer, Result, cenc::validate_id};
 pub fn free_port() -> Option<u16> {
     match TcpListener::bind(("127.0.0.1", 0)) {
         Ok(listener) => {
