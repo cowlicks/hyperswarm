@@ -45,7 +45,7 @@ pub use crypto::{
     sign_announce_or_unannounce,
 };
 pub use next_router::connection::Connection;
-pub use server::Server;
+pub use server::{Server, ServerFuture};
 
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [

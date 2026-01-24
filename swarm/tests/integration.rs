@@ -4,8 +4,19 @@ use dht_rpc::IdBytes;
 use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
 use hyperswarm::{DhtConfig, JoinOpts, Swarm, SwarmConfig};
-use test_utils::{Result, Testnet};
+use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
 
+macro_rules! timeout {
+    ($fut:expr, $ms:expr) => {{
+        let connection_result =
+            tokio::time::timeout(std::time::Duration::from_millis($ms), $fut).await;
+        connection_result
+    }};
+    ($fut:expr) => {{
+        let out = timeout!($fut, 300);
+        out
+    }};
+}
 /// Server announces and client discovers via lookup
 #[tokio::test]
 async fn server_announces_client_discovers_foo() -> Result<()> {
@@ -20,14 +31,14 @@ async fn server_announces_client_discovers_foo() -> Result<()> {
     swarm_a.join(topic, JoinOpts::server())?;
 
     // Wait for announce to propagate
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    wait!(300);
 
     // Swarm B: client - discovers peers on topic
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     swarm_b.join(topic, JoinOpts::client())?;
 
     // Wait for lookup to complete
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    wait!(300);
 
     // B should have discovered A
     assert!(
@@ -56,14 +67,14 @@ async fn multiple_servers_discovered() -> Result<()> {
     swarm_b.join(topic, JoinOpts::server())?;
 
     // Wait for announces
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    wait!(300);
 
     // Client discovers
     let swarm_c = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     swarm_c.join(topic, JoinOpts::client())?;
 
     // Wait for lookup
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    wait!(300);
 
     // C should have found both A and B
     let peers = swarm_c.peers_count();
@@ -87,7 +98,7 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
     // Swarm A: server - listens and announces on topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     swarm_a.bootstrap().await?;
-    let mut server_a = swarm_a.listen()?;
+    let mut server_a = swarm_a.listen()?.await?;
     let server_addr = swarm_a.local_addr()?;
     swarm_a.join(topic, JoinOpts::server())?;
 
@@ -126,7 +137,6 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
 }
 
 /// Test that discovery finds peers and enqueues them for connection
-/// Note: actual auto-connect requires relay support in hyperdht (not yet implemented)
 #[tokio::test]
 async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     let mut tn = Testnet::new().await?;
@@ -142,7 +152,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     swarm_a.join(topic, JoinOpts::server())?;
 
     // Wait for announce to propagate
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    wait!(300);
 
     // Swarm B: client with auto-connect enabled (default)
     let config_b = SwarmConfig::new(DhtConfig::default().add_bootstrap_node(bs_addr));
@@ -153,7 +163,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     swarm_b.join(topic, JoinOpts::client())?;
 
     // Wait for discovery
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    wait!(300);
 
     // Should have discovered the server peer
     assert!(
@@ -161,5 +171,55 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
         "client should have discovered at least one peer"
     );
 
+    Ok(())
+}
+
+/// Test that auto-connect actually establishes connections to discovered peers
+#[tokio::test]
+async fn auto_connect_establishes_connection() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.bootstrap_addr().await?;
+
+    let topic = IdBytes::random();
+
+    let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    swarm_a.bootstrap().await?;
+    swarm_b.bootstrap().await?;
+
+    let mut server = swarm_a.listen()?.await?;
+    swarm_a.join(topic, JoinOpts::server())?;
+
+    // Wait for announce to propagate
+    wait!(300);
+
+    // Get connection stream to receive auto-connect events
+    let mut connections = swarm_b.connections();
+
+    // Join as client - should auto-discover and auto-connect
+    swarm_b.join(topic, JoinOpts::client())?;
+
+    let Some(Ok(mut server_conn)) = timeout!(server.next())? else {
+        todo!()
+    };
+    let Some(Ok(client_event)) = timeout!(connections.next())? else {
+        todo!()
+    };
+
+    let mut client_conn = client_event.connection;
+
+    // Test bidirectional communication
+    server_conn.send(b"from server".into()).await?;
+    let Some(CipherEvent::Message(msg)) = client_conn.next().await else {
+        todo!()
+    };
+    assert_eq!(msg, b"from server");
+    client_conn.send(b"from client".into()).await?;
+
+    let Some(CipherEvent::Message(msg)) = server_conn.next().await else {
+        todo!()
+    };
+    assert_eq!(msg, b"from client");
     Ok(())
 }

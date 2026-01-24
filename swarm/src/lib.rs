@@ -191,7 +191,7 @@ impl Swarm {
 
     /// Start listening for incoming connections
     /// Returns a Server stream that yields connections
-    pub fn listen(&self) -> Result<hyperdht::Server> {
+    pub fn listen(&self) -> Result<hyperdht::ServerFuture> {
         let mut inner = self.inner.write().unwrap();
         if inner.destroyed {
             return Err(Error::Destroyed);
@@ -400,12 +400,12 @@ impl Swarm {
     }
 
     /// Start listening and get unified connection stream
-    pub fn listen_all(&self) -> Result<ConnectionStream> {
+    pub async fn listen_all(&self) -> Result<ConnectionStream> {
         let server = self.listen()?;
         Ok(ConnectionStream {
             inner: self.inner.clone(),
             connection_rx: self.connection_rx.clone(),
-            server: Some(server),
+            server: Some(server.await?),
         })
     }
 

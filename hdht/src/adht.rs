@@ -36,7 +36,7 @@ use crate::{
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
     request_announce_or_unannounce_value,
-    server::Server,
+    server::ServerFuture,
 };
 
 #[derive(Debug)]
@@ -160,13 +160,13 @@ impl Dht {
             .announce_clear(target, keypair, relay_addresses)
     }
 
-    pub fn listen(&self, keypair: Keypair) -> Server {
+    pub fn listen(&self, keypair: Keypair) -> ServerFuture {
         let (tx, rx) = mpsc::channel(32);
         let target = IdBytes(generic_hash(&*keypair.public));
         let announcer = self.announce(target, keypair.clone(), vec![]);
         self.inner.write().unwrap().add_listening_key(keypair, tx);
 
-        Server::new(rx, self.inner.clone(), announcer)
+        ServerFuture::new(rx, self.inner.clone(), announcer)
     }
 }
 
@@ -724,8 +724,8 @@ impl Stream for DhtInner {
                     dht_rpc::RpcEvent::ResponseResult(_response_ok) => {
                         return Poll::Pending;
                     }
-                    dht_rpc::RpcEvent::RoutingUpdated { .. } => todo!(),
-                    dht_rpc::RpcEvent::Bootstrapped(_bootstrapped) => todo!(),
+                    dht_rpc::RpcEvent::RoutingUpdated { .. } => {}
+                    dht_rpc::RpcEvent::Bootstrapped(_bootstrapped) => {}
                     dht_rpc::RpcEvent::ReadyToCommit { .. } => todo!(),
                     dht_rpc::RpcEvent::QueryResult(_query_result) => {
                         return Poll::Pending;
