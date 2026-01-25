@@ -4,6 +4,38 @@
 
 Building a Rust `hyperswarm` crate on top of `hyperdht`, providing topic-based peer discovery and automatic connection management. This mirrors the JS hyperswarm library.
 
+## Recent Progress (January 2026)
+
+### hyperdht (hdht) - Major Milestones
+
+#### Connection Relay Working ✓
+Relay connections now work, allowing clients to connect to servers through intermediary relay nodes:
+- `rsrsrs_relay_connection_flow` - Rust client → Rust relay → Rust server
+- `rsrsjs_relay_connection_flow` - Rust client → Rust relay → JS server
+- `rsjsjs_relay_connection_flow` - Rust client → JS relay → JS server
+
+Key changes:
+- `PeerHandshakeArgs` supports `.relay_address()` for specifying relay route
+- Server handles `from_relay` messages correctly
+- Relay nodes forward handshake messages between client and server
+
+#### Server Announce-First Pattern ✓
+- Server now announces on the DHT before accepting connections
+- Fixes timing issues where clients couldn't find servers
+
+#### Bidirectional RS ↔ JS Interop ✓
+- `test_rs_connects_to_js` - Rust dht.connect() to JS server
+- `test_js_connects_to_rs` - JS node.connect() to Rust server
+- Data flows both directions successfully
+- `rsrs_server_tx_first` / `rsrs_client_tx_first` - Pure Rust scenarios
+
+#### Other hdht Features
+- `Dht::next()` - Stream support for handling DHT events
+- `unannounce()` - Remove announcements from DHT (tested)
+- `announce_clear()` - Clear and re-announce with new keypair (tested)
+
+---
+
 ## Original Plan
 
 ### Planned Crate Structure
@@ -114,7 +146,21 @@ swarm.destroy()
 ```
 
 ### Test Coverage
-- 15 tests passing
+
+**hdht tests (19 tests in hdht/tests/adht.rs):**
+- `rsrs_server_tx_first` / `rsrs_client_tx_first` - Pure Rust peer handshake
+- `js_announces_rs_looksup` / `rs_announces_js_looksup` - Announce/lookup interop
+- `dht_lookup` - Lookup JS server by topic
+- `js_server_listen_rs_find_peer` - Find peer interop
+- `dht_peer_handshake` - Direct peer handshake to JS
+- `test_rs_connects_to_js` / `test_js_connects_to_rs` - Full connection interop
+- `rs_unannounce` / `rs_announce_clear` - Unannounce functionality
+- `rsrsrs_relay_connection_flow` - All-Rust relay
+- `relay_handlers_basic` - Relay handler smoke test
+- `rsrsjs_relay_connection_flow` - RS→RS→JS relay
+- `rsjsjs_relay_connection_flow` - RS→JS→JS relay
+
+**swarm tests (15 tests):**
 - Unit tests for PeerInfo, Priority, ConnectionSet
 - Basic integration tests for Swarm lifecycle
 
@@ -142,10 +188,10 @@ swarm.destroy()
 - [ ] SwarmEvent stream (Connection, Disconnection, PeersDiscovered)
 - [ ] Stats tracking (connects attempted/opened/closed)
 - [ ] unannounce on leave() when was server
-- [ ] JS interop tests
 
 ### Future (Complex Networking)
-- [ ] Relay support (relay_addresses in announce)
+- [x] **Relay support** - Basic relay connections working (see above)
+- [ ] Relay address announcement (include relay_addresses in announce)
 - [ ] Holepunching
 - [ ] Firewall callback
 
@@ -178,3 +224,12 @@ thiserror = "1.0.68"
 tracing = "0.1.41"
 rand = "0.7.3"
 ```
+
+---
+
+## Next Steps
+
+1. **Test stability** - Ensure all relay tests pass consistently
+2. **Auto-connect** - Wire up discovered peers to auto-connect via `dht.connect()`
+3. **Connection management** - Implement retry backoff and connection limits
+4. **Swarm events** - Expose connection/disconnection events to users
