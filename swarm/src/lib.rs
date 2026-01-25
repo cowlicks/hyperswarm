@@ -478,7 +478,7 @@ impl Swarm {
     async fn attempt_connections(inner: &Arc<RwLock<SwarmInner>>) {
         loop {
             // Get next peer to connect (if within limits)
-            let connect_info = {
+            let (pk, pub_key_bytes, relay_addresses, connection_tx) = {
                 let mut guard = inner.write().unwrap();
 
                 // Check limits
@@ -490,12 +490,8 @@ impl Swarm {
                 }
 
                 // Get next peer from queue
-                let queued = match guard.queue.pop() {
-                    Some(q) => {
-                        debug!(pk = ?q.public_key, "popped peer from queue");
-                        q
-                    }
-                    None => break,
+                let Some(queued) = guard.queue.pop() else {
+                    break; // no more peers
                 };
 
                 // Check if already connected before getting mutable peer borrow
@@ -525,16 +521,12 @@ impl Swarm {
                 let pub_key_bytes = queued.public_key.0;
                 let connection_tx = guard.connection_tx.clone();
 
-                Some((
+                (
                     queued.public_key,
                     pub_key_bytes,
                     relay_addresses,
                     connection_tx,
-                ))
-            };
-
-            let Some((pk, pub_key_bytes, relay_addresses, connection_tx)) = connect_info else {
-                break;
+                )
             };
 
             // Spawn connection task
