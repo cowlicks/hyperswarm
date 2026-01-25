@@ -1,7 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use hypercore_handshake::CipherEvent;
 use hyperswarm::{DhtConfig, JoinOpts, Swarm};
-use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
+use test_utils::{Result, Testnet};
 
 macro_rules! timeout {
     ($fut:expr, $ms:expr) => {{ tokio::time::timeout(std::time::Duration::from_millis($ms), $fut).await }};

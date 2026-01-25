@@ -4,7 +4,7 @@ use dht_rpc::IdBytes;
 use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
 use hyperswarm::{DhtConfig, JoinOpts, Swarm, SwarmConfig};
-use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
+use test_utils::{Result, Testnet};
 
 macro_rules! timeout {
     ($fut:expr, $ms:expr) => {{
@@ -31,16 +31,10 @@ async fn server_announces_client_discovers_foo() -> Result<()> {
     swarm_a.join(topic, JoinOpts::Server)?;
     swarm_a.flush().await?;
 
-    // Wait for announce to propagate
-    wait!(300);
-
     // Swarm B: client - discovers peers on topic
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     swarm_b.join(topic, JoinOpts::Client)?;
     swarm_b.flush().await?;
-
-    // Wait for lookup to complete
-    wait!(300);
 
     // B should have discovered A
     assert!(
@@ -70,15 +64,10 @@ async fn multiple_servers_discovered() -> Result<()> {
     swarm_b.join(topic, JoinOpts::Server)?;
     swarm_b.flush().await?;
 
-    // Wait for announces
-    wait!(300);
-
     // Client discovers
     let swarm_c = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     swarm_c.join(topic, JoinOpts::Client)?;
-
-    // Wait for lookup
-    wait!(300);
+    swarm_c.flush().await?;
 
     // C should have found both A and B
     let peers = swarm_c.peers_count();
@@ -156,9 +145,6 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     swarm_a.join(topic, JoinOpts::Server)?;
     swarm_a.flush().await?;
 
-    // Wait for announce to propagate
-    wait!(300);
-
     // Swarm B: client with auto-connect enabled (default)
     let config_b = SwarmConfig::new(DhtConfig::default().add_bootstrap_node(bs_addr));
     let swarm_b = Swarm::with_config(config_b).await?;
@@ -167,9 +153,6 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     // Join as client - should auto-discover peers
     swarm_b.join(topic, JoinOpts::Client)?;
     swarm_b.flush().await?;
-
-    // Wait for discovery
-    wait!(300);
 
     // Should have discovered the server peer
     assert!(
@@ -197,9 +180,6 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     let mut server = swarm_a.listen()?.await?;
     swarm_a.join(topic, JoinOpts::Server)?;
     swarm_a.flush().await?;
-
-    // Wait for announce to propagate
-    wait!(300);
 
     // Get connection stream to receive auto-connect events
     let mut connections = swarm_b.connections();

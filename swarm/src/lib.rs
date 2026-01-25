@@ -16,10 +16,13 @@ use std::{
 };
 
 use dht_rpc::{Commit, IdBytes};
-use futures::{Future, Stream, StreamExt, stream::FuturesUnordered};
-use hyperdht::adht::{Announce, Dht, PeerHandshakeArgs};
+use futures::{
+    Future, Stream,
+    stream::{FuturesUnordered, SelectAll},
+};
+use hyperdht::adht::{Announce, Dht, Lookup, LookupResponse, PeerHandshakeArgs};
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, error, trace};
 
 mod config;
 mod connection_set;
@@ -108,19 +111,87 @@ struct SwarmInner {
     connection_tx: mpsc::Sender<ConnectionEvent>,
     /// Pending announce futures
     pending_announces: FuturesUnordered<PendingAnnounce>,
+    /// Pending lookup streams
+    pending_lookups: SelectAll<PendingLookup>,
+}
+
+impl SwarmInner {
+    fn handle_lookup_response(&mut self, topic: IdBytes, response: LookupResponse) {
+        // Check if we're still interested in this topic
+        // TODO we should abort the lookup here since we aren't interested
+        if !self.discoveries.contains_key(&topic) {
+            return;
+        }
+
+        for peer in response.peers {
+            let pk = IdBytes(*peer.public_key);
+            // Convert relay addresses to SocketAddr
+            let relay_addrs: Vec<std::net::SocketAddr> =
+                peer.relay_addresses.iter().map(|a| (*a).into()).collect();
+            debug!(?pk, ?relay_addrs, "discovered peer");
+
+            let peer_already_connected = self.connections.has(&pk);
+            let peer_is_new = !self.peers.contains_key(&pk);
+
+            let peer_info = self
+                .peers
+                .entry(pk)
+                .or_insert_with(|| PeerInfo::new(pk).with_topic(topic));
+            peer_info.add_relay_addresses(relay_addrs);
+
+            // Enqueue for connection if:
+            if self.config.auto_connect     // Auto-connect enabled
+                && !peer_already_connected  // Not already connected
+                && !peer_info.queued        // Nor already queued
+                && !peer_info.connecting    // Nor connecting
+                // Nor banned
+                && !peer_info.banned
+            {
+                peer_info.queued = true;
+                let priority = peer_info.priority;
+                self.queue.push(QueuedPeer {
+                    public_key: pk,
+                    priority,
+                    queued_at: Instant::now(),
+                    shuffle_key: rand::random(),
+                });
+                if peer_is_new {
+                    debug!(?pk, "enqueued new peer for connection");
+                }
+            }
+        }
+    }
 }
 
 enum SwarmEvent {
-    AnnounceComplete,
+    #[expect(unused)]
+    AnnounceComplete(Result<IdBytes>),
+    #[expect(unused)]
+    LookupComplete(Result<IdBytes>),
 }
 
 impl Stream for SwarmInner {
     type Item = Result<SwarmEvent>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Poll::Ready(Some(_)) = Pin::new(&mut self.pending_announces).poll_next(cx) {
-            return Poll::Ready(Some(Ok(SwarmEvent::AnnounceComplete)));
+        if let Poll::Ready(Some(res)) = Pin::new(&mut self.pending_announces).poll_next(cx) {
+            return Poll::Ready(Some(Ok(SwarmEvent::AnnounceComplete(res))));
         }
+
+        while let Poll::Ready(Some((topic, result))) =
+            Pin::new(&mut self.pending_lookups).poll_next(cx)
+        {
+            match result {
+                Ok(Some(response)) => self.handle_lookup_response(topic, response),
+                Ok(None) => {
+                    trace!(?topic, "lookup complete");
+                }
+                Err(e) => {
+                    error!(?topic, ?e, "lookup error");
+                }
+            }
+        }
+
         Poll::Pending
     }
 }
@@ -151,7 +222,8 @@ impl Swarm {
             retry_timer: RetryTimer::new(),
             pending_connects: 0,
             connection_tx,
-            pending_announces: FuturesUnordered::new(),
+            pending_announces: Default::default(),
+            pending_lookups: Default::default(),
         }));
 
         let swarm = Self {
@@ -256,80 +328,11 @@ impl Swarm {
             (lookup, announce)
         };
 
-        // Spawn task to drive the lookup
-        if let Some(mut lookup) = lookup {
-            let inner = self.inner.clone();
-            tokio::spawn(async move {
-                while let Some(result) = lookup.next().await {
-                    match result {
-                        Ok(Some(response)) => {
-                            let mut guard = inner.write().unwrap();
-                            if !guard.discoveries.contains_key(&topic) {
-                                break;
-                            }
-                            // Get config before mutable borrows
-                            let auto_connect = guard.config.auto_connect;
-
-                            for peer in response.peers {
-                                let pk = IdBytes(*peer.public_key);
-                                // Convert relay addresses to SocketAddr
-                                let relay_addrs: Vec<std::net::SocketAddr> =
-                                    peer.relay_addresses.iter().map(|a| (*a).into()).collect();
-                                debug!(?pk, ?relay_addrs, "discovered peer");
-
-                                // Check if already connected before getting mutable peer borrow
-                                let already_connected = guard.connections.has(&pk);
-
-                                // Check if this is a new peer
-                                let is_new = !guard.peers.contains_key(&pk);
-
-                                let peer_info = guard.peers.entry(pk).or_insert_with(|| {
-                                    let mut info = PeerInfo::new(pk);
-                                    info.add_topic(topic);
-                                    info
-                                });
-
-                                // Update relay addresses (merge with existing)
-                                for addr in relay_addrs {
-                                    if !peer_info.relay_addresses.contains(&addr) {
-                                        peer_info.relay_addresses.push(addr);
-                                    }
-                                }
-
-                                // Enqueue for connection if:
-                                // - Not already connected
-                                // - Not already queued or connecting
-                                // - Auto-connect is enabled
-                                if auto_connect
-                                    && !already_connected
-                                    && !peer_info.queued
-                                    && !peer_info.connecting
-                                    && !peer_info.banned
-                                {
-                                    peer_info.queued = true;
-                                    let priority = peer_info.priority;
-                                    guard.queue.push(QueuedPeer {
-                                        public_key: pk,
-                                        priority,
-                                        queued_at: Instant::now(),
-                                        shuffle_key: rand::random(),
-                                    });
-                                    if is_new {
-                                        debug!(?pk, "enqueued new peer for connection");
-                                    }
-                                }
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            debug!(?e, "lookup error");
-                        }
-                    }
-                }
-            });
+        if let Some(lookup) = lookup {
+            let pl = PendingLookup { topic, lookup };
+            self.inner.write().unwrap().pending_lookups.push(pl);
         }
 
-        // Spawn task to drive the announce
         if let Some(announce) = announce {
             self.inner
                 .write()
@@ -759,6 +762,23 @@ impl Future for FlushAnnouncesAndLookups {
             return Poll::Ready(Ok(()));
         }
         Poll::Pending
+    }
+}
+
+struct PendingLookup {
+    topic: IdBytes,
+    lookup: Lookup,
+}
+
+impl Stream for PendingLookup {
+    type Item = (IdBytes, hyperdht::Result<Option<LookupResponse>>);
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.lookup).poll_next(cx) {
+            Poll::Ready(Some(result)) => Poll::Ready(Some((self.topic, result))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 

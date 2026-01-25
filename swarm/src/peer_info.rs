@@ -99,11 +99,13 @@ impl PeerInfo {
         }
     }
 
-    /// Create a new PeerInfo with relay addresses
-    pub fn with_relay_addresses(public_key: IdBytes, relay_addresses: Vec<SocketAddr>) -> Self {
-        let mut info = Self::new(public_key);
-        info.relay_addresses = relay_addresses;
-        info
+    /// Add relay addresses if they are new (merge with existing)
+    pub fn add_relay_addresses(&mut self, relay_addresses: Vec<SocketAddr>) {
+        for addr in relay_addresses {
+            if !self.relay_addresses.contains(&addr) {
+                self.relay_addresses.push(addr);
+            }
+        }
     }
 
     /// Called when a connection is successfully established
@@ -132,8 +134,9 @@ impl PeerInfo {
     }
 
     /// Add a topic this peer is associated with
-    pub fn add_topic(&mut self, topic: IdBytes) {
+    pub fn with_topic(mut self, topic: IdBytes) -> Self {
         self.topics.insert(topic);
+        self
     }
 
     /// Remove a topic association
