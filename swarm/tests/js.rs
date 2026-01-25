@@ -1,5 +1,14 @@
+use futures::{SinkExt, StreamExt};
+use hypercore_handshake::CipherEvent;
 use hyperswarm::{DhtConfig, JoinOpts, Swarm};
-use test_utils::{Result, Testnet};
+use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
+
+macro_rules! timeout {
+    ($fut:expr, $ms:expr) => {{ tokio::time::timeout(std::time::Duration::from_millis($ms), $fut).await }};
+    ($fut:expr) => {
+        timeout!($fut, 2000)
+    };
+}
 
 #[tokio::test]
 async fn rust_discovers_js_server() -> Result<()> {
@@ -107,5 +116,133 @@ await swarm.flush();  // Wait for announce to complete
     let n_peers: usize = tn.repl.json_run_tcp("outputJson(swarm.peers.size)").await?;
     dbg!(n_peers);
     assert!(dbg!(n_peers) > 0, "Should discover JS peer");
+    Ok(())
+}
+
+/// Rust swarm auto-connects to JS Hyperswarm server and exchanges messages
+#[tokio::test]
+async fn rust_swarm_connects_to_js_swarm_exchanges_messages() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.bootstrap_addr().await?;
+
+    let topic = tn.make_topic("test-topic").await?;
+
+    // JS: Create a Hyperswarm server that announces on topic
+    tn.repl
+        .run_tcp(format!(
+            r#"
+const Hyperswarm = require('hyperswarm');
+js_swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
+const topic = Buffer.from({:?});
+
+js_conn = deferred();
+js_rx_data = deferred();
+
+js_swarm.on('connection', (socket, peerInfo) => {{
+    js_conn.resolve(socket);
+    socket.on('data', (data) => {{
+        js_rx_data.resolve(data.toString());
+    }});
+}});
+
+await js_swarm.join(topic, {{ server: true, client: false }}).flushed();
+"#,
+            bs_addr, topic
+        ))
+        .await?;
+
+    // Rust: Create swarm as client, should auto-discover and auto-connect
+    let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    rust_swarm.bootstrap().await?;
+
+    let mut connections = rust_swarm.connections();
+    rust_swarm.join(topic.into(), JoinOpts::Client)?;
+
+    // Wait for auto-connect
+    let Some(Ok(event)) = timeout!(connections.next())? else {
+        panic!("Rust swarm should receive connection event");
+    };
+    let mut rust_conn = event.connection;
+
+    // Rust sends to JS
+    rust_conn.send(b"hello from rust".into()).await?;
+    let js_rx: String = tn.repl.get_name("js_rx_data").await?;
+    assert_eq!(js_rx, "hello from rust");
+
+    // JS sends to Rust
+    tn.repl
+        .run_tcp("(await js_conn).write(Buffer.from('hello from js'))")
+        .await?;
+
+    let Some(CipherEvent::Message(msg)) = rust_conn.next().await else {
+        panic!("Expected message from JS");
+    };
+    assert_eq!(msg.as_slice(), b"hello from js");
+
+    Ok(())
+}
+
+/// JS swarm auto-connects to Rust swarm server and exchanges messages
+#[tokio::test]
+async fn js_swarm_connects_to_rust_swarm_exchanges_messages() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.bootstrap_addr().await?;
+
+    let topic = tn.make_topic("test-topic").await?;
+
+    // Rust: Create swarm as server, listen and announce
+    let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    rust_swarm.bootstrap().await?;
+
+    let mut server = rust_swarm.listen()?.await?;
+    rust_swarm.join(topic.into(), JoinOpts::Both)?;
+
+    // Wait for announce to propagate
+    wait!(300);
+
+    // JS: Create a hyperswarm client that joins topic
+    tn.repl
+        .run_tcp(format!(
+            r#"
+const Hyperswarm = require('hyperswarm');
+js_swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
+const topic = Buffer.from({:?});
+
+js_conn = deferred();
+js_rx_data = deferred();
+
+js_swarm.on('connection', (socket, peerInfo) => {{
+    js_conn.resolve(socket);
+    socket.on('data', (data) => {{
+        js_rx_data.resolve(data.toString());
+    }});
+}});
+
+js_swarm.join(topic, {{ server: false, client: true }});
+"#,
+            bs_addr, topic
+        ))
+        .await?;
+
+    // Rust server should receive the connection from JS
+    let Some(Ok(mut rust_conn)) = timeout!(server.next())? else {
+        panic!("Rust server should receive connection from JS");
+    };
+
+    // Rust sends to JS
+    rust_conn.send(b"hello from rust server".into()).await?;
+    let js_rx: String = tn.repl.get_name("js_rx_data").await?;
+    assert_eq!(js_rx, "hello from rust server");
+
+    // JS sends to Rust
+    tn.repl
+        .run_tcp("(await js_conn).write(Buffer.from('hello from js client'))")
+        .await?;
+
+    let Some(CipherEvent::Message(msg)) = rust_conn.next().await else {
+        panic!("Expected message from JS");
+    };
+    assert_eq!(msg.as_slice(), b"hello from js client");
+
     Ok(())
 }
