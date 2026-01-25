@@ -39,33 +39,24 @@ pub use retry::{RetryEntry, RetryTimer};
 pub use dht_rpc::{DhtConfig, IdBytes as Topic};
 pub use hyperdht::{Connection, Keypair, PublicKey, adht::ConnectFuture};
 
-/// Options for joining a topic
-#[derive(Debug, Clone, Copy, Default)]
-pub struct JoinOpts {
-    /// Announce self on DHT (server mode)
-    pub server: bool,
-    /// Lookup peers on DHT (client mode)
-    pub client: bool,
+// TODO when we need more options, turn JoinOpts into a struct and make this enum a field.
+#[derive(Debug, Default)]
+pub enum JoinOpts {
+    Client,
+    Server,
+    #[default]
+    Both,
 }
 
 impl JoinOpts {
-    pub fn server() -> Self {
-        Self {
-            server: true,
-            client: false,
-        }
+    pub fn server(&self) -> bool {
+        matches!(self, JoinOpts::Server) || matches!(self, JoinOpts::Both)
     }
-    pub fn client() -> Self {
-        Self {
-            server: false,
-            client: true,
-        }
+    pub fn client(&self) -> bool {
+        matches!(self, JoinOpts::Client) || matches!(self, JoinOpts::Both)
     }
-    pub fn both() -> Self {
-        Self {
-            server: true,
-            client: true,
-        }
+    pub fn both(&self) -> bool {
+        matches!(self, JoinOpts::Both)
     }
 }
 
@@ -221,18 +212,18 @@ impl Swarm {
 
             let discovery = Discovery {
                 topic,
-                server: opts.server,
-                client: opts.client,
+                server: opts.server(),
+                client: opts.client(),
             };
             inner.discoveries.insert(topic, discovery);
 
-            let lookup = if opts.client {
+            let lookup = if opts.client() {
                 Some(inner.dht.lookup(topic, Commit::No)?)
             } else {
                 None
             };
 
-            let announce = if opts.server {
+            let announce = if opts.server() {
                 Some(inner.dht.announce(topic, inner.keypair.clone(), vec![]))
             } else {
                 None
@@ -720,7 +711,7 @@ mod tests {
         assert!(!swarm.has_topic(&topic));
         assert_eq!(swarm.topics_count(), 0);
 
-        swarm.join(topic, JoinOpts::both()).unwrap();
+        swarm.join(topic, JoinOpts::Both).unwrap();
         assert!(swarm.has_topic(&topic));
         assert_eq!(swarm.topics_count(), 1);
 
@@ -735,7 +726,7 @@ mod tests {
         swarm.destroy();
 
         let topic = IdBytes::random();
-        let result = swarm.join(topic, JoinOpts::client());
+        let result = swarm.join(topic, JoinOpts::Client);
         assert!(result.is_err());
     }
 }

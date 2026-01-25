@@ -28,14 +28,14 @@ async fn server_announces_client_discovers_foo() -> Result<()> {
     // Swarm A: server - listens and announces on topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server = swarm_a.listen()?;
-    swarm_a.join(topic, JoinOpts::server())?;
+    swarm_a.join(topic, JoinOpts::Server)?;
 
     // Wait for announce to propagate
     wait!(300);
 
     // Swarm B: client - discovers peers on topic
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    swarm_b.join(topic, JoinOpts::client())?;
+    swarm_b.join(topic, JoinOpts::Client)?;
 
     // Wait for lookup to complete
     wait!(300);
@@ -60,18 +60,18 @@ async fn multiple_servers_discovered() -> Result<()> {
     // Create two servers announcing on same topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server_a = swarm_a.listen()?;
-    swarm_a.join(topic, JoinOpts::server())?;
+    swarm_a.join(topic, JoinOpts::Server)?;
 
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server_b = swarm_b.listen()?;
-    swarm_b.join(topic, JoinOpts::server())?;
+    swarm_b.join(topic, JoinOpts::Server)?;
 
     // Wait for announces
     wait!(300);
 
     // Client discovers
     let swarm_c = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    swarm_c.join(topic, JoinOpts::client())?;
+    swarm_c.join(topic, JoinOpts::Client)?;
 
     // Wait for lookup
     wait!(300);
@@ -100,7 +100,7 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
     swarm_a.bootstrap().await?;
     let mut server_a = swarm_a.listen()?.await?;
     let server_addr = swarm_a.local_addr()?;
-    swarm_a.join(topic, JoinOpts::server())?;
+    swarm_a.join(topic, JoinOpts::Server)?;
 
     // Swarm B: client - connects to A directly using known address and public key
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
@@ -149,7 +149,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     let swarm_a = Swarm::with_config(config_a).await?;
     swarm_a.bootstrap().await?;
     let _server_a = swarm_a.listen()?;
-    swarm_a.join(topic, JoinOpts::server())?;
+    swarm_a.join(topic, JoinOpts::Server)?;
 
     // Wait for announce to propagate
     wait!(300);
@@ -160,7 +160,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     swarm_b.bootstrap().await?;
 
     // Join as client - should auto-discover peers
-    swarm_b.join(topic, JoinOpts::client())?;
+    swarm_b.join(topic, JoinOpts::Client)?;
 
     // Wait for discovery
     wait!(300);
@@ -189,7 +189,7 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     swarm_b.bootstrap().await?;
 
     let mut server = swarm_a.listen()?.await?;
-    swarm_a.join(topic, JoinOpts::server())?;
+    swarm_a.join(topic, JoinOpts::Server)?;
 
     // Wait for announce to propagate
     wait!(300);
@@ -198,7 +198,7 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     let mut connections = swarm_b.connections();
 
     // Join as client - should auto-discover and auto-connect
-    swarm_b.join(topic, JoinOpts::client())?;
+    swarm_b.join(topic, JoinOpts::Client)?;
 
     let Some(Ok(mut server_conn)) = timeout!(server.next())? else {
         todo!()

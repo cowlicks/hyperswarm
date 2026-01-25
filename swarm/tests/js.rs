@@ -23,7 +23,7 @@ async fn rust_discovers_js_server() -> Result<()> {
 
     // Rust: Discover the JS peer
     let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    rust_swarm.join(topic.into(), JoinOpts::client())?;
+    rust_swarm.join(topic.into(), JoinOpts::Client)?;
 
     // Wait for discovery
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -44,7 +44,7 @@ async fn js_discovers_rust_server() -> Result<()> {
 
     // Rust: Create a swarm and announce on a topic
     let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    rust_swarm.join(topic.into(), JoinOpts::server())?;
+    rust_swarm.join(topic.into(), JoinOpts::Server)?;
 
     // Wait for announce to propagate
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -99,7 +99,7 @@ await swarm.flush();  // Wait for announce to complete
 
     // Rust: Discover the JS peer
     let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    rust_swarm.join(topic.into(), JoinOpts::client())?;
+    rust_swarm.join(topic.into(), JoinOpts::Client)?;
 
     // Wait for discovery
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
