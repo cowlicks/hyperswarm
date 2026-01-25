@@ -220,8 +220,8 @@ impl Swarm {
         self.inner.read().unwrap().peers.len()
     }
 
-    pub fn flush(&self) -> FlushAnnounces {
-        FlushAnnounces {
+    pub fn flush(&self) -> FlushAnnouncesAndLookups {
+        FlushAnnouncesAndLookups {
             inner: self.inner.clone(),
         }
     }
@@ -745,17 +745,17 @@ impl Future for PendingAnnounce {
     }
 }
 
-pub struct FlushAnnounces {
+pub struct FlushAnnouncesAndLookups {
     inner: Arc<RwLock<SwarmInner>>,
 }
 
-impl Future for FlushAnnounces {
+impl Future for FlushAnnouncesAndLookups {
     type Output = Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut inner = self.inner.write().unwrap();
         let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
-        if inner.pending_announces.is_empty() {
+        if inner.pending_announces.is_empty() && inner.pending_lookups.is_empty() {
             return Poll::Ready(Ok(()));
         }
         Poll::Pending
