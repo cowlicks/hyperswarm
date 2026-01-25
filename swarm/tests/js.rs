@@ -11,11 +11,11 @@ async fn rust_discovers_js_server() -> Result<()> {
     tn.repl
         .run_tcp(format!(
             r#"
-      const Hyperswarm = require('hyperswarm');
-      const swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
-      const topic = Buffer.from({:?});
-      await swarm.join(topic, {{ server: true, client: false }});
-      await swarm.flush();  // Wait for announce to complete
+const Hyperswarm = require('hyperswarm');
+const swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
+const topic = Buffer.from({:?});
+await swarm.join(topic, {{ server: true, client: false }});
+await swarm.flush();  // Wait for announce to complete
   "#,
             bs_addr, topic
         ))
@@ -53,16 +53,16 @@ async fn js_discovers_rust_server() -> Result<()> {
     tn.repl
         .run_tcp(format!(
             r#"
-  const DHT = require('hyperdht');
-  const dht = new DHT({{ bootstrap: ['{}'] }});
-  const topic = Buffer.from({:?});
+const DHT = require('hyperdht');
+const dht = new DHT({{ bootstrap: ['{}'] }});
+const topic = Buffer.from({:?});
 
-  const peers = [];
-  for await (const peer of dht.lookup(topic)) {{
-      peers.push(...peer.peers);
-  }}
+const peers = [];
+for await (const peer of dht.lookup(topic)) {{
+  peers.push(...peer.peers);
+}}
 
-  globalThis.peerCount = peers.length;
+globalThis.peerCount = peers.length;
   "#,
             bs_addr, topic
         ))
