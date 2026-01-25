@@ -29,6 +29,7 @@ async fn server_announces_client_discovers_foo() -> Result<()> {
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server = swarm_a.listen()?;
     swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.flush().await?;
 
     // Wait for announce to propagate
     wait!(300);
@@ -36,6 +37,7 @@ async fn server_announces_client_discovers_foo() -> Result<()> {
     // Swarm B: client - discovers peers on topic
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.flush().await?;
 
     // Wait for lookup to complete
     wait!(300);
@@ -61,10 +63,12 @@ async fn multiple_servers_discovered() -> Result<()> {
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server_a = swarm_a.listen()?;
     swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.flush().await?;
 
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server_b = swarm_b.listen()?;
     swarm_b.join(topic, JoinOpts::Server)?;
+    swarm_b.flush().await?;
 
     // Wait for announces
     wait!(300);
@@ -150,6 +154,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     swarm_a.bootstrap().await?;
     let _server_a = swarm_a.listen()?;
     swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.flush().await?;
 
     // Wait for announce to propagate
     wait!(300);
@@ -161,6 +166,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
 
     // Join as client - should auto-discover peers
     swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.flush().await?;
 
     // Wait for discovery
     wait!(300);
@@ -190,6 +196,7 @@ async fn auto_connect_establishes_connection() -> Result<()> {
 
     let mut server = swarm_a.listen()?.await?;
     swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.flush().await?;
 
     // Wait for announce to propagate
     wait!(300);
@@ -199,6 +206,7 @@ async fn auto_connect_establishes_connection() -> Result<()> {
 
     // Join as client - should auto-discover and auto-connect
     swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.flush().await?;
 
     let Some(Ok(mut server_conn)) = timeout!(server.next())? else {
         todo!()

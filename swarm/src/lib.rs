@@ -16,8 +16,8 @@ use std::{
 };
 
 use dht_rpc::{Commit, IdBytes};
-use futures::{Stream, StreamExt};
-use hyperdht::adht::{Dht, PeerHandshakeArgs};
+use futures::{Future, Stream, StreamExt, stream::FuturesUnordered};
+use hyperdht::adht::{Announce, Dht, PeerHandshakeArgs};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -106,6 +106,23 @@ struct SwarmInner {
     pending_connects: usize,
     /// Channel sender for connection events
     connection_tx: mpsc::Sender<ConnectionEvent>,
+    /// Pending announce futures
+    pending_announces: FuturesUnordered<PendingAnnounce>,
+}
+
+enum SwarmEvent {
+    AnnounceComplete,
+}
+
+impl Stream for SwarmInner {
+    type Item = Result<SwarmEvent>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Poll::Ready(Some(_)) = Pin::new(&mut self.pending_announces).poll_next(cx) {
+            return Poll::Ready(Some(Ok(SwarmEvent::AnnounceComplete)));
+        }
+        Poll::Pending
+    }
 }
 
 impl Swarm {
@@ -134,6 +151,7 @@ impl Swarm {
             retry_timer: RetryTimer::new(),
             pending_connects: 0,
             connection_tx,
+            pending_announces: FuturesUnordered::new(),
         }));
 
         let swarm = Self {
@@ -200,6 +218,12 @@ impl Swarm {
     /// Number of known peers
     pub fn peers_count(&self) -> usize {
         self.inner.read().unwrap().peers.len()
+    }
+
+    pub fn flush(&self) -> FlushAnnounces {
+        FlushAnnounces {
+            inner: self.inner.clone(),
+        }
     }
 
     /// Join a topic for peer discovery
@@ -307,12 +331,11 @@ impl Swarm {
 
         // Spawn task to drive the announce
         if let Some(announce) = announce {
-            tokio::spawn(async move {
-                match announce.await {
-                    Ok(()) => debug!(?topic, "announced"),
-                    Err(e) => debug!(?topic, ?e, "announce error"),
-                }
-            });
+            self.inner
+                .write()
+                .unwrap()
+                .pending_announces
+                .push(PendingAnnounce::new(topic, announce));
         }
 
         Ok(())
@@ -636,6 +659,11 @@ impl Stream for ConnectionStream {
     type Item = Result<ConnectionEvent>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        {
+            let mut inner = self.inner.write().unwrap();
+            _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        };
+
         // Poll server for incoming connections first
         if let Some(ref mut server) = self.server {
             match Pin::new(server).poll_next(cx) {
@@ -689,6 +717,48 @@ impl Clone for Swarm {
             inner: self.inner.clone(),
             connection_rx: self.connection_rx.clone(),
         }
+    }
+}
+
+struct PendingAnnounce {
+    topic: IdBytes,
+    announce: Announce,
+}
+
+impl PendingAnnounce {
+    fn new(topic: IdBytes, announce: Announce) -> Self {
+        Self { topic, announce }
+    }
+}
+
+impl Future for PendingAnnounce {
+    type Output = Result<IdBytes>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Poll::Ready(res) = Pin::new(&mut self.announce).poll(cx) {
+            return Poll::Ready(match res {
+                Ok(_) => Ok(self.topic),
+                Err(e) => Err(e.into()),
+            });
+        }
+        Poll::Pending
+    }
+}
+
+pub struct FlushAnnounces {
+    inner: Arc<RwLock<SwarmInner>>,
+}
+
+impl Future for FlushAnnounces {
+    type Output = Result<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut inner = self.inner.write().unwrap();
+        let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+        if inner.pending_announces.is_empty() {
+            return Poll::Ready(Ok(()));
+        }
+        Poll::Pending
     }
 }
 
