@@ -18,8 +18,8 @@ use tokio::sync::{
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
     BootstrapFuture, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
-    OutRequestBuilder, Peer, QueryId, QueryNext, RequestMsgData, Rpc, RpcDhtRequestFuture,
-    generic_hash,
+    OutRequestBuilder, Peer, QueryArgs, QueryId, QueryNext, RequestMsgData, Rpc,
+    RpcDhtRequestFuture, generic_hash,
 };
 use futures::{Stream, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
@@ -563,7 +563,9 @@ impl DhtInner {
     }
 
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
-        let query = self.rpc.query_next(commands::LOOKUP, target, None, commit);
+        let query = self
+            .rpc
+            .query(QueryArgs::new(commands::LOOKUP, target).commit(commit));
         Ok(Lookup {
             query,
             topic: target,
@@ -573,9 +575,7 @@ impl DhtInner {
 
     pub fn find_peer(&self, pub_key: PublicKey) -> Result<FindPeer> {
         let target = IdBytes(generic_hash(&*pub_key));
-        let query = self
-            .rpc
-            .query_next(commands::FIND_PEER, target, None, Commit::No);
+        let query = self.rpc.query(QueryArgs::new(commands::FIND_PEER, target));
         Ok(FindPeer {
             query,
             topic: target,
@@ -590,9 +590,7 @@ impl DhtInner {
         keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> Announce {
-        let query = self
-            .rpc
-            .query_next(commands::LOOKUP, target, None, Commit::No);
+        let query = self.rpc.query(QueryArgs::new(commands::LOOKUP, target));
         Announce {
             rpc: self.rpc.clone(),
             query,
@@ -604,9 +602,7 @@ impl DhtInner {
         }
     }
     pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
-        let query = self
-            .rpc
-            .query_next(commands::LOOKUP, target, None, Commit::No);
+        let query = self.rpc.query(QueryArgs::new(commands::LOOKUP, target));
         Unannounce {
             rpc: self.rpc.clone(),
             query,
@@ -688,9 +684,7 @@ impl DhtInner {
         keypair: Keypair,
         relay_addresses: Vec<SocketAddr>,
     ) -> AnnounceClear {
-        let query = self
-            .rpc
-            .query_next(commands::LOOKUP, target, None, Commit::No);
+        let query = self.rpc.query(QueryArgs::new(commands::LOOKUP, target));
         AnnounceClear {
             rpc: self.rpc.clone(),
             query,

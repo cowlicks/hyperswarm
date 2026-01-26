@@ -417,20 +417,14 @@ impl Rpc {
         .await
     }
 
-    pub fn query_next(
-        &self,
-        command: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> QueryNext {
+    pub fn query(&self, args: QueryArgs) -> QueryNext {
         const QUERY_STREAM_CHANNEL_SIZE: usize = 1024;
         let (parts_tx, parts_rx) = mpsc::channel(QUERY_STREAM_CHANNEL_SIZE);
         let (result_tx, result_rx) = oneshot::channel();
 
         {
             let mut inner = self.inner.lock().unwrap();
-            let qid = inner.query(command, target, value, commit);
+            let qid = inner.query(args);
             inner.store_qid_stream_sender(qid, parts_tx);
             inner.store_qid_sender(qid, result_tx);
         };
@@ -449,6 +443,39 @@ impl Stream for Rpc {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut inner = self.inner.lock().unwrap();
         Stream::poll_next(Pin::new(&mut *inner), cx)
+    }
+}
+
+#[derive(Debug)]
+pub struct QueryArgs {
+    command: Command,
+    target: IdBytes,
+    value: Option<Vec<u8>>,
+    commit: Option<Commit>,
+    closest_nodes: Option<Vec<Peer>>,
+}
+
+impl QueryArgs {
+    pub fn new(command: Command, target: IdBytes) -> Self {
+        Self {
+            command,
+            target,
+            value: None,
+            commit: None,
+            closest_nodes: None,
+        }
+    }
+    pub fn value(mut self, value: Vec<u8>) -> Self {
+        self.value = Some(value);
+        self
+    }
+    pub fn commit(mut self, value: Commit) -> Self {
+        self.commit = Some(value);
+        self
+    }
+    pub fn closest_nodes(mut self, value: Vec<Peer>) -> Self {
+        self.closest_nodes = Some(value);
+        self
     }
 }
 
@@ -873,24 +900,31 @@ impl RpcInner {
         self.bootstrapped
     }
 
-    #[instrument(skip(self, value))]
-    pub fn query(
-        &mut self,
-        cmd: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> QueryId {
+    #[instrument(skip(self, args))]
+    pub fn query(&mut self, args: QueryArgs) -> QueryId {
+        // Use routing table peers for QueryTable (commit tracking)
         let peers = self
             .kbuckets
-            .closest(&target)
+            .closest(&args.target)
             .take(usize::from(K_VALUE))
             .map(|e| PeerId::new(e.node.value.addr, e.node.key))
             .collect::<Vec<_>>();
 
-        let bootstrap_nodes: Vec<Peer> = self.bootstrap_nodes.iter().map(Peer::from).collect();
-        self.queries
-            .add_stream(cmd, peers, target, value, bootstrap_nodes, commit)
+        // Use closest_nodes if provided, otherwise fall back to bootstrap_nodes
+        let bootstrap: Vec<Peer> = args
+            .closest_nodes
+            .unwrap_or_else(|| self.bootstrap_nodes.iter().map(Peer::from).collect());
+
+        let commit = args.commit.unwrap_or(Commit::No);
+
+        self.queries.add_stream(
+            args.command,
+            peers,
+            args.target,
+            args.value,
+            bootstrap,
+            commit,
+        )
     }
 
     pub fn request(&mut self, req: OutRequestBuilder) -> Tid {

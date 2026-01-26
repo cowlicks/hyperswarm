@@ -1,4 +1,4 @@
-use dht_rpc::{Commit, DhtConfig, Peer, commands};
+use dht_rpc::{DhtConfig, Peer, QueryArgs, commands};
 use test_utils::{Result, Testnet, log};
 
 macro_rules! rpc_setup {
@@ -88,9 +88,7 @@ outputJson([...pub_key]);
     let idbytes: [u8; 32] = idbytes.try_into().unwrap();
     let command = hyperdht::commands::FIND_PEER;
     log();
-    let x = rpc
-        .query_next(command, idbytes.into(), None, Commit::No)
-        .await?;
+    let x = rpc.query(QueryArgs::new(command, idbytes.into())).await?;
     dbg!(&x);
     //assert_eq!(x.request.command, command);
     Ok(())
