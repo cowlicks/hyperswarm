@@ -105,7 +105,6 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
         async {
             swarm_b
                 .peer_handshake(server_pub_key.clone(), server_addr)
-                .unwrap()
                 .await
                 .unwrap()
         },

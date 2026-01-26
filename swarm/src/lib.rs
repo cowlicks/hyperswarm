@@ -397,14 +397,22 @@ impl Swarm {
         &self,
         remote_public_key: PublicKey,
         destination: std::net::SocketAddr,
-    ) -> Result<hyperdht::adht::PeerHandshake> {
-        let inner = self.inner.read().unwrap();
-        if inner.destroyed {
-            return Err(Error::Destroyed);
+    ) -> impl Future<Output = Result<Connection>> {
+        let (destroyed, phs) = {
+            let inner = self.inner.read().unwrap();
+            (
+                inner.destroyed,
+                inner
+                    .dht
+                    .peer_handshake(PeerHandshakeArgs::new(remote_public_key, destination)),
+            )
+        };
+        async move {
+            if destroyed {
+                return Err(Error::Destroyed);
+            }
+            phs.await.map_err(Into::into)
         }
-        Ok(inner
-            .dht
-            .peer_handshake(PeerHandshakeArgs::new(remote_public_key, destination))?)
     }
 
     /// Get a stream of connection events (both client and server)
@@ -531,9 +539,9 @@ impl Swarm {
 
             // Spawn connection task
             let inner_clone = inner.clone();
-            tokio::spawn(async move {
-                let pub_key = PublicKey::from(pub_key_bytes);
+            let pub_key = PublicKey::from(pub_key_bytes);
 
+            tokio::spawn(async move {
                 // Try to connect using relay addresses if available
                 // Note: relay support in hyperdht is not yet implemented,
                 // so this will fall back to dht.connect() which uses find_peer
@@ -548,16 +556,15 @@ impl Swarm {
                                 .dht
                                 .peer_handshake(PeerHandshakeArgs::new(pub_key.clone(), *addr))
                         };
-                        if let Ok(h) = handshake {
-                            match h.await {
-                                Ok(conn) => {
-                                    debug!(?pk, ?addr, "connected via relay");
-                                    result = Some(Ok(conn));
-                                    break;
-                                }
-                                Err(e) => {
-                                    debug!(?pk, ?addr, ?e, "relay connection failed");
-                                }
+                        match handshake.await {
+                            Ok(conn) => {
+                                debug!(?pk, ?addr, "connected via relay");
+                                result = Some(Ok(conn));
+                                break;
+                            }
+                            Err(e) => {
+                                // continue
+                                debug!(?pk, ?addr, ?e, "relay connection failed");
                             }
                         }
                     }
@@ -772,6 +779,7 @@ impl Stream for PendingLookup {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

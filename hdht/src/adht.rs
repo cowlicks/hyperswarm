@@ -145,8 +145,12 @@ impl Dht {
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.inner.read().unwrap().local_addr()
     }
-    pub fn peer_handshake(&self, args: PeerHandshakeArgs) -> Result<PeerHandshake> {
-        self.inner.read().unwrap().peer_handshake(args)
+    pub fn peer_handshake(
+        &self,
+        args: PeerHandshakeArgs,
+    ) -> impl Future<Output = Result<Connection>> + use<> {
+        let fut = { self.inner.read().unwrap().peer_handshake(args) };
+        async move { fut?.await }
     }
     pub fn announce_clear(
         &self,

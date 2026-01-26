@@ -51,7 +51,6 @@ async fn rsrs_server_tx_first() -> Result<()> {
     let client = tokio::spawn(async move {
         let mut conn = b
             .peer_handshake(PeerHandshakeArgs::new(keypair.public, a_addr))
-            .unwrap()
             .await
             .unwrap();
 
@@ -99,7 +98,6 @@ async fn rsrs_client_tx_first() -> Result<()> {
     let client = tokio::spawn(async move {
         let mut conn = b
             .peer_handshake(PeerHandshakeArgs::new(keypair.public, a_addr))
-            .unwrap()
             .await
             .unwrap();
         conn.send(b"hi".into()).await.unwrap();
@@ -304,7 +302,7 @@ outputJson([...pub_key]);
     let port: u16 = tn.repl.get_name("server_addr").await?;
     let dest = format!("127.0.0.1:{port}").parse()?;
     let mut conn = dht
-        .peer_handshake(PeerHandshakeArgs::new(pub_key.into(), dest))?
+        .peer_handshake(PeerHandshakeArgs::new(pub_key.into(), dest))
         .await?;
     conn.send(b"from rust".into()).await?;
     let msg: String = tn.repl.get_name("server_rx_data").await?;
@@ -539,7 +537,7 @@ async fn rsrsrs_relay_connection_flow() -> Result<()> {
     let mut client_conn = client
         .peer_handshake(
             PeerHandshakeArgs::new(server_keypair.public, relay_addr).relay_address(server_addr),
-        )?
+        )
         .await?;
 
     // Server should receive connection through relay
@@ -594,7 +592,7 @@ async fn relay_handlers_basic() -> Result<()> {
     // This should at least not panic, even if it times out
     let handshake_future = client.peer_handshake(
         PeerHandshakeArgs::new(server_keypair.public, relay_addr).relay_address(relay_addr),
-    )?;
+    );
 
     //let handshake_future = client.peer_handshake_with_relay(server_keypair.public, relay_addr)?;
     let result = tokio::time::timeout(Duration::from_secs(2), handshake_future).await;
@@ -677,7 +675,7 @@ outputJson([...pub_key]);
     let mut client_conn = client
         .peer_handshake(
             PeerHandshakeArgs::new(PublicKey::from(pub_key), relay_addr).relay_address(server_addr),
-        )?
+        )
         .await?;
 
     // Server should receive connection through relay
@@ -759,7 +757,7 @@ outputJson([...pub_key]);
     let mut client_conn = client
         .peer_handshake(
             PeerHandshakeArgs::new(PublicKey::from(pub_key), relay_addr).relay_address(server_addr),
-        )?
+        )
         .await?;
 
     // Server should receive connection through relay
