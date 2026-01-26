@@ -583,7 +583,7 @@ impl Swarm {
                             guard.pending_connects = guard.pending_connects.saturating_sub(1);
 
                             if let Some(peer_info) = guard.peers.get_mut(&pk) {
-                                peer_info.connecting = false;
+                                // TODO Maybe connection state should be an enum
                                 peer_info.connected();
                             }
 
@@ -625,7 +625,6 @@ impl Swarm {
         let auto_retry = guard.config.auto_retry;
 
         if let Some(peer_info) = guard.peers.get_mut(&pk) {
-            peer_info.connecting = false;
             peer_info.disconnected(); // Increments attempts, updates priority
 
             // Schedule retry if enabled and not banned

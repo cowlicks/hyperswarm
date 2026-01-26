@@ -110,6 +110,7 @@ impl PeerInfo {
 
     /// Called when a connection is successfully established
     pub fn connected(&mut self) {
+        self.connecting = false;
         self.proven = true;
         self.connected_time = Some(Instant::now());
         self.update_priority();
