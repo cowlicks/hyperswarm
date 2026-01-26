@@ -379,7 +379,7 @@ impl Swarm {
         if inner.destroyed {
             return Err(Error::Destroyed);
         }
-        Ok(inner.dht.connect(pub_key)?)
+        Ok(inner.dht.connect(pub_key, None)?)
     }
 
     /// Bootstrap the DHT connection
@@ -573,7 +573,7 @@ impl Swarm {
                     // No relay addresses, use dht.connect (find_peer + handshake)
                     let connect = {
                         let guard = inner_clone.read().unwrap();
-                        guard.dht.connect(pub_key)
+                        guard.dht.connect(pub_key, None)
                     };
                     match connect {
                         Ok(connect_future) => Some(connect_future.await.map_err(Error::from)),

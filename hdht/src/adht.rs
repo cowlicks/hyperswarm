@@ -113,17 +113,25 @@ impl Dht {
     pub fn bootstrap(&self) -> BootstrapFuture {
         self.inner.read().unwrap().bootstrap()
     }
-    pub fn connect(&self, pub_key: PublicKey) -> Result<ConnectFuture> {
+    pub fn connect(
+        &self,
+        pub_key: PublicKey,
+        closest_nodes: Option<Vec<Peer>>,
+    ) -> Result<ConnectFuture> {
         self.inner
             .read()
             .unwrap()
-            .connect(pub_key, self.inner.clone())
+            .connect(pub_key, closest_nodes, self.inner.clone())
     }
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
         self.inner.read().unwrap().lookup(target, commit)
     }
-    pub fn find_peer(&self, pub_key: PublicKey) -> Result<FindPeer> {
-        self.inner.read().unwrap().find_peer(pub_key)
+    pub fn find_peer(
+        &self,
+        pub_key: PublicKey,
+        closest_nodes: Option<Vec<Peer>>,
+    ) -> Result<FindPeer> {
+        self.inner.read().unwrap().find_peer(pub_key, closest_nodes)
     }
     pub fn announce(
         &self,
@@ -552,8 +560,13 @@ impl DhtInner {
         self.rpc.bootstrap()
     }
 
-    pub fn connect(&self, pub_key: PublicKey, dht: Arc<RwLock<DhtInner>>) -> Result<ConnectFuture> {
-        let query = self.find_peer(pub_key.clone())?;
+    pub fn connect(
+        &self,
+        pub_key: PublicKey,
+        closest_nodes: Option<Vec<Peer>>,
+        dht: Arc<RwLock<DhtInner>>,
+    ) -> Result<ConnectFuture> {
+        let query = self.find_peer(pub_key.clone(), closest_nodes)?;
         Ok(ConnectFuture {
             dht,
             query,
@@ -573,9 +586,17 @@ impl DhtInner {
         })
     }
 
-    pub fn find_peer(&self, pub_key: PublicKey) -> Result<FindPeer> {
+    pub fn find_peer(
+        &self,
+        pub_key: PublicKey,
+        closest_nodes: Option<Vec<Peer>>,
+    ) -> Result<FindPeer> {
         let target = IdBytes(generic_hash(&*pub_key));
-        let query = self.rpc.query(QueryArgs::new(commands::FIND_PEER, target));
+        let mut args = QueryArgs::new(commands::FIND_PEER, target);
+        if let Some(nodes) = closest_nodes {
+            args = args.closest_nodes(nodes);
+        }
+        let query = self.rpc.query(args);
         Ok(FindPeer {
             query,
             topic: target,
