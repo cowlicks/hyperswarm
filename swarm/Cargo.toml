@@ -12,6 +12,9 @@ thiserror = "1.0.68"
 tracing = "0.1.41"
 rand = "0.7.3"
 
+[dependencies.utils]
+path = "../utils"
+
 [dev-dependencies]
 test_utils = { path = "../test_utils" }
 tokio = { version = "1.41.0", features = ["rt-multi-thread", "macros", "time"] }

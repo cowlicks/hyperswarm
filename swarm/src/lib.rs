@@ -41,7 +41,9 @@ pub use retry::{RetryEntry, RetryTimer};
 // Re-export from dependencies
 pub use dht_rpc::{DhtConfig, IdBytes as Topic};
 pub use hyperdht::{Connection, Keypair, PublicKey, adht::ConnectFuture};
+use utils::PeriodicJob;
 
+const DEFAULT_AUTO_CONNECT_JOB_INTERVAL: Duration = Duration::from_millis(100);
 // TODO when we need more options, turn JoinOpts into a struct and make this enum a field.
 #[derive(Debug, Default)]
 pub enum JoinOpts {
@@ -114,6 +116,7 @@ struct SwarmInner {
     /// Pending connection futures
     pending_connections: FuturesUnordered<PendingConnection>,
     waker: Option<Waker>,
+    auto_connect_job: PeriodicJob,
 }
 
 pub enum SwarmEvent {
@@ -127,6 +130,9 @@ impl Stream for SwarmInner {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.waker.is_none() {
             self.waker = Some(cx.waker().clone());
+        }
+        if let Poll::Ready(()) = self.auto_connect_job.poll_now(cx) {
+            self.auto_connect_job();
         }
         if let Poll::Ready(Some(res)) = Pin::new(&mut self.pending_announces).poll_next(cx) {
             return Poll::Ready(Some(Ok(SwarmEvent::AnnounceComplete(res))));
@@ -210,6 +216,7 @@ impl SwarmInner {
             }
         }
     }
+
     fn handle_connection_result(&mut self, pk: IdBytes, result: hyperdht::Result<Connection>) {
         match result {
             Ok(connection) => {
@@ -250,6 +257,84 @@ impl SwarmInner {
             }
         }
     }
+
+    fn auto_connect_job(&mut self) {
+        if self.destroyed {
+            return;
+        }
+
+        for entry in self.retry_timer.get_ready() {
+            let already_connected = self.connections.has(&entry.public_key);
+
+            let Some(peer_info) = self.peers.get_mut(&entry.public_key) else {
+                continue;
+            };
+            peer_info.waiting = false;
+            if !peer_info.banned && !peer_info.connecting && !already_connected {
+                peer_info.queued = true;
+                self.queue.push(QueuedPeer {
+                    public_key: entry.public_key,
+                    priority: peer_info.priority,
+                    queued_at: Instant::now(),
+                    shuffle_key: rand::random(),
+                });
+            }
+        }
+        self.attempt_connections();
+    }
+    fn attempt_connections(&mut self) {
+        loop {
+            // Get next peer to connect (if within limits)
+            let (pk, relay_addresses) = {
+                // Check limits
+                if self.pending_connections.len() >= self.config.max_parallel {
+                    break;
+                }
+                if self.connections.len() >= self.config.max_peers {
+                    break;
+                }
+
+                // Get next peer from queue
+                let Some(queued) = self.queue.pop() else {
+                    break; // no more peers
+                };
+
+                // Check if already connected before getting mutable peer borrow
+                let already_connected = self.connections.has(&queued.public_key);
+
+                // Update peer state
+                let peer_info = match self.peers.get_mut(&queued.public_key) {
+                    Some(p) => p,
+                    None => continue, // Peer was removed
+                };
+
+                // Skip if already connected or connecting
+                if already_connected || peer_info.connecting {
+                    peer_info.queued = false;
+                    continue;
+                }
+
+                // Get relay addresses before marking as connecting
+                let relay_addresses = peer_info.relay_addresses.clone();
+
+                peer_info.queued = false;
+                peer_info.connecting = true;
+                peer_info.last_attempt = Some(Instant::now());
+
+                (queued.public_key, relay_addresses)
+            };
+
+            let pub_key = PublicKey::from(pk.0);
+            let closest_nodes = (!relay_addresses.is_empty())
+                .then(|| relay_addresses.iter().map(Peer::from).collect());
+            {
+                let future = self.dht.connect(pub_key, closest_nodes);
+                self.pending_connections
+                    .push(PendingConnection { pk, future });
+                self.maybe_wake();
+            };
+        }
+    }
 }
 
 impl Swarm {
@@ -284,16 +369,13 @@ impl Swarm {
             pending_lookups: Default::default(),
             pending_connections: Default::default(),
             waker: Default::default(),
+            auto_connect_job: PeriodicJob::new(DEFAULT_AUTO_CONNECT_JOB_INTERVAL),
         }));
 
         let swarm = Self {
             inner: inner.clone(),
             connection_rx: Arc::new(tokio::sync::Mutex::new(connection_rx)),
         };
-
-        if config.auto_connect {
-            swarm.spawn_auto_connect_task();
-        }
 
         Ok(swarm)
     }
@@ -494,113 +576,6 @@ impl Swarm {
             connection_rx: self.connection_rx.clone(),
             server: Some(server.await?),
         })
-    }
-
-    /// Spawn the auto-connect background task
-    fn spawn_auto_connect_task(&self) {
-        let inner = self.inner.clone();
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(100));
-
-            loop {
-                interval.tick().await;
-
-                // Check if destroyed
-                {
-                    let guard = inner.read().unwrap();
-                    if guard.destroyed {
-                        break;
-                    }
-                }
-
-                // Process retry timer - re-enqueue ready peers
-                {
-                    let mut guard = inner.write().unwrap();
-                    let ready_entries = guard.retry_timer.get_ready();
-                    for entry in ready_entries {
-                        // Check connections first before getting mutable peer borrow
-                        let already_connected = guard.connections.has(&entry.public_key);
-
-                        if let Some(peer_info) = guard.peers.get_mut(&entry.public_key) {
-                            peer_info.waiting = false;
-                            if !peer_info.banned && !peer_info.connecting && !already_connected {
-                                peer_info.queued = true;
-                                let priority = peer_info.priority;
-                                guard.queue.push(QueuedPeer {
-                                    public_key: entry.public_key,
-                                    priority,
-                                    queued_at: Instant::now(),
-                                    shuffle_key: rand::random(),
-                                });
-                            }
-                        }
-                    }
-                }
-
-                // Attempt connections from queue
-                Self::attempt_connections(&inner);
-            }
-        });
-    }
-
-    /// Attempt to connect to peers from the queue
-    fn attempt_connections(inner: &Arc<RwLock<SwarmInner>>) {
-        loop {
-            // Get next peer to connect (if within limits)
-            let (pk, relay_addresses) = {
-                let mut guard = inner.write().unwrap();
-
-                // Check limits
-                if guard.pending_connections.len() >= guard.config.max_parallel {
-                    break;
-                }
-                if guard.connections.len() >= guard.config.max_peers {
-                    break;
-                }
-
-                // Get next peer from queue
-                let Some(queued) = guard.queue.pop() else {
-                    break; // no more peers
-                };
-
-                // Check if already connected before getting mutable peer borrow
-                let already_connected = guard.connections.has(&queued.public_key);
-
-                // Update peer state
-                let peer_info = match guard.peers.get_mut(&queued.public_key) {
-                    Some(p) => p,
-                    None => continue, // Peer was removed
-                };
-
-                // Skip if already connected or connecting
-                if already_connected || peer_info.connecting {
-                    peer_info.queued = false;
-                    continue;
-                }
-
-                // Get relay addresses before marking as connecting
-                let relay_addresses = peer_info.relay_addresses.clone();
-
-                peer_info.queued = false;
-                peer_info.connecting = true;
-                peer_info.last_attempt = Some(Instant::now());
-
-                (queued.public_key, relay_addresses)
-            };
-
-            let pub_key = PublicKey::from(pk.0);
-            let closest_nodes = (!relay_addresses.is_empty())
-                .then(|| relay_addresses.iter().map(Peer::from).collect());
-            {
-                let guard = inner.read().unwrap();
-                let future = guard.dht.connect(pub_key, closest_nodes);
-                guard
-                    .pending_connections
-                    .push(PendingConnection { pk, future });
-                guard.maybe_wake();
-            };
-        }
     }
 }
 
