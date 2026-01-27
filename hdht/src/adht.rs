@@ -113,15 +113,39 @@ impl Dht {
     pub fn bootstrap(&self) -> BootstrapFuture {
         self.inner.read().unwrap().bootstrap()
     }
+    /// Connect to a peer by their public key.
+    ///
+    /// The `closest_nodes` parameter provides starting hints for peer discovery, similar to
+    /// `relayAddresses` in JavaScript hyperswarm. These are typically DHT nodes that previously
+    /// told us about this peer (from a lookup). The query starts from these nodes rather than
+    /// DHT bootstrap nodes, making discovery faster.
+    ///
+    /// ## Differences from JavaScript implementation
+    ///
+    /// JS hyperswarm calls `dht.connect(publicKey, { relayAddresses })` which passes them as
+    /// `closestNodes` to `findPeer` with `onlyClosestNodes: true`. This means JS:
+    /// 1. Only queries the provided relay nodes (doesn't fall back to routing table)
+    /// 2. Does up to 2 query attempts before giving up
+    /// 3. For each responding node, calls `connectThroughNode` to do the handshake
+    ///
+    /// Rust implementation:
+    /// 1. Uses `closest_nodes` as starting nodes for the `find_peer` query
+    /// 2. May still fall back to routing table nodes if closest_nodes don't respond
+    /// 3. For each responding node, starts a `peer_handshake`
+    ///
+    /// The JS `onlyClosestNodes` behavior could be added to Rust's `QueryArgs` if needed.
     pub fn connect(
         &self,
         pub_key: PublicKey,
         closest_nodes: Option<Vec<Peer>>,
-    ) -> Result<ConnectFuture> {
-        self.inner
+    ) -> impl Future<Output = Result<Connection>> + use<> {
+        let inner = self.inner.clone();
+        let fut = self
+            .inner
             .read()
             .unwrap()
-            .connect(pub_key, closest_nodes, self.inner.clone())
+            .connect(pub_key, closest_nodes, inner);
+        async move { fut?.await }
     }
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
         self.inner.read().unwrap().lookup(target, commit)

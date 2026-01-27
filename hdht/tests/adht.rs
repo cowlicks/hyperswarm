@@ -352,7 +352,7 @@ outputJson([...pub_key]);
         .await?;
 
     dht.bootstrap().await?;
-    let mut conn = dht.connect(pub_key.into(), None)?.await?;
+    let mut conn = dht.connect(pub_key.into(), None).await?;
     conn.send(b"from rust".into()).await?;
     let msg: String = tn.repl.get_name("server_rx_data").await?;
     assert_eq!(msg, "from rust");

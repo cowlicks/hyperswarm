@@ -374,12 +374,15 @@ impl Swarm {
     }
 
     /// Connect to a peer by their public key
-    pub fn connect(&self, pub_key: PublicKey) -> Result<ConnectFuture> {
-        let inner = self.inner.read().unwrap();
-        if inner.destroyed {
-            return Err(Error::Destroyed);
+    pub fn connect(&self, pub_key: PublicKey) -> impl Future<Output = Result<Connection>> {
+        let destroyed = self.inner.read().unwrap().destroyed;
+        let fut = self.inner.read().unwrap().dht.connect(pub_key, None);
+        async move {
+            if destroyed {
+                return Err(Error::Destroyed);
+            }
+            Ok(fut.await?)
         }
-        Ok(inner.dht.connect(pub_key, None)?)
     }
 
     /// Bootstrap the DHT connection
@@ -550,12 +553,10 @@ impl Swarm {
                         .unwrap()
                         .dht
                         .connect(pub_key, closest_nodes)
-                        .unwrap()
                 };
-                let connection_result = Some(connection_result.await);
 
-                match connection_result {
-                    Some(Ok(connection)) => {
+                match connection_result.await {
+                    Ok(connection) => {
                         debug!(?pk, "connection succeeded");
                         // Connection succeeded - update state
                         let should_emit = {
@@ -583,12 +584,8 @@ impl Swarm {
                                 .await;
                         }
                     }
-                    Some(Err(e)) => {
+                    Err(e) => {
                         debug!(?pk, ?e, "connection failed");
-                        Self::handle_connection_failure(&inner_clone, pk);
-                    }
-                    None => {
-                        debug!(?pk, "no connection methods available");
                         Self::handle_connection_failure(&inner_clone, pk);
                     }
                 }

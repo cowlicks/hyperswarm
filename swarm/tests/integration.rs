@@ -187,7 +187,7 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     swarm_b.join(topic, JoinOpts::Client)?;
     swarm_b.flush().await?;
 
-    let Some(Ok(mut server_conn)) = timeout!(server.next())? else {
+    let Some(Ok(mut server_conn)) = server.next().await else {
         todo!()
     };
     let Some(Ok(client_event)) = timeout!(connections.next())? else {
