@@ -77,7 +77,6 @@ impl Future for ConnectFuture {
                 match Pin::new(handshake).poll(cx) {
                     Poll::Ready(Ok(conn)) => return Poll::Ready(Ok(conn)),
                     Poll::Ready(Err(_)) => {
-                        // Handshake failed, try next peer
                         self.pending_handshake = None;
                     }
                     Poll::Pending => return Poll::Pending,
