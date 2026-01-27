@@ -4,6 +4,7 @@ members = [
   "hdht",
   "rpc",
   "swarm",
-  "test_utils"
+  "test_utils",
+  "utils"
 ]
 resolver = "2"

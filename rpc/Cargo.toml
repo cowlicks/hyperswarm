@@ -33,6 +33,9 @@ version = "2.1.0"
 [dependencies.udx]
 version = "0.1.0"
 
+[dependencies.utils]
+path = "../utils"
+
 [dependencies.tokio]
 version = "1.41.0"
 features = ["rt", "net", "sync"]

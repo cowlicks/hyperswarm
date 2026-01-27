@@ -15,7 +15,6 @@ mod cenc;
 mod commit;
 mod constants;
 mod io;
-mod jobs;
 mod kbucket;
 mod message;
 mod query;
@@ -63,12 +62,12 @@ use rand::{
 use crate::{
     cenc::validate_id,
     commit::{CommitMessage, Progress},
-    jobs::PeriodicJob,
     kbucket::{
         Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,
     },
     util::pretty_bytes,
 };
+use utils::PeriodicJob;
 use compact_encoding::EncodingError;
 use tokio::sync::oneshot::{self, Receiver, Sender, error::RecvError};
 
