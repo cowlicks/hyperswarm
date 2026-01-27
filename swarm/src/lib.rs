@@ -196,7 +196,16 @@ impl Stream for SwarmInner {
     }
 }
 
+impl SwarmInner {
+    fn name(&self) -> String {
+        self.dht.name()
+    }
+}
+
 impl Swarm {
+    pub fn name(&self) -> String {
+        self.inner.read().unwrap().name()
+    }
     /// Create a new Swarm with the given config
     pub async fn with_config(config: SwarmConfig) -> Result<Self> {
         let keypair = Keypair::default();
