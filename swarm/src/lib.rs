@@ -11,7 +11,7 @@ use std::{
     collections::HashMap,
     pin::Pin,
     sync::{Arc, RwLock},
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -113,6 +113,7 @@ struct SwarmInner {
     pending_announces: FuturesUnordered<PendingAnnounce>,
     /// Pending lookup streams
     pending_lookups: SelectAll<PendingLookup>,
+    waker: Option<Waker>,
 }
 
 impl SwarmInner {
@@ -174,6 +175,9 @@ impl Stream for SwarmInner {
     type Item = Result<SwarmEvent>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.waker.is_none() {
+            self.waker = Some(cx.waker().clone());
+        }
         if let Poll::Ready(Some(res)) = Pin::new(&mut self.pending_announces).poll_next(cx) {
             return Poll::Ready(Some(Ok(SwarmEvent::AnnounceComplete(res))));
         }
@@ -199,6 +203,11 @@ impl Stream for SwarmInner {
 impl SwarmInner {
     fn name(&self) -> String {
         self.dht.name()
+    }
+    fn maybe_wake(&self) {
+        if let Some(waker) = &self.waker {
+            waker.wake_by_ref();
+        }
     }
 }
 
@@ -233,6 +242,7 @@ impl Swarm {
             connection_tx,
             pending_announces: Default::default(),
             pending_lookups: Default::default(),
+            waker: Default::default(),
         }));
 
         let swarm = Self {
