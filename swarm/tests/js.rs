@@ -109,14 +109,14 @@ await swarm.flush();  // Wait for announce to complete
         .await?;
 
     // Rust: Discover the JS peer
-    let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let mut rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     rust_swarm.join(topic.into(), JoinOpts::Client)?;
     rust_swarm.flush().await?;
 
     tokio::spawn(async move {
         loop {
             wait!(100);
-            _ = rust_swarm.flush().await;
+            _ = rust_swarm.next().await;
         }
     });
     // Wait for discovery

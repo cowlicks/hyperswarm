@@ -116,58 +116,8 @@ struct SwarmInner {
     waker: Option<Waker>,
 }
 
-impl SwarmInner {
-    fn handle_lookup_response(&mut self, topic: IdBytes, response: LookupResponse) {
-        // Check if we're still interested in this topic
-        // TODO we should abort the lookup here since we aren't interested
-        if !self.discoveries.contains_key(&topic) {
-            return;
-        }
-
-        for peer in response.peers {
-            let pk = IdBytes(*peer.public_key);
-            // Convert relay addresses to SocketAddr
-            let relay_addrs: Vec<std::net::SocketAddr> =
-                peer.relay_addresses.iter().map(|a| (*a).into()).collect();
-            debug!(?pk, ?relay_addrs, "discovered peer");
-
-            let peer_already_connected = self.connections.has(&pk);
-            let peer_is_new = !self.peers.contains_key(&pk);
-
-            let peer_info = self
-                .peers
-                .entry(pk)
-                .or_insert_with(|| PeerInfo::new(pk).with_topic(topic));
-            peer_info.add_relay_addresses(relay_addrs);
-
-            // Enqueue for connection if:
-            if self.config.auto_connect     // Auto-connect enabled
-                && !peer_already_connected  // Not already connected
-                && !peer_info.queued        // Nor already queued
-                && !peer_info.connecting    // Nor connecting
-                // Nor banned
-                && !peer_info.banned
-            {
-                peer_info.queued = true;
-                let priority = peer_info.priority;
-                self.queue.push(QueuedPeer {
-                    public_key: pk,
-                    priority,
-                    queued_at: Instant::now(),
-                    shuffle_key: rand::random(),
-                });
-                if peer_is_new {
-                    debug!(?pk, "enqueued new peer for connection");
-                }
-            }
-        }
-    }
-}
-
-enum SwarmEvent {
-    #[expect(unused)]
+pub enum SwarmEvent {
     AnnounceComplete(Result<IdBytes>),
-    #[expect(unused)]
     LookupComplete(Result<IdBytes>),
 }
 
@@ -213,6 +163,51 @@ impl SwarmInner {
     fn maybe_wake(&self) {
         if let Some(waker) = &self.waker {
             waker.wake_by_ref();
+        }
+    }
+    fn handle_lookup_response(&mut self, topic: IdBytes, response: LookupResponse) {
+        // Check if we're still interested in this topic
+        // TODO we should abort the lookup here since we aren't interested
+        if !self.discoveries.contains_key(&topic) {
+            return;
+        }
+
+        for peer in response.peers {
+            let pk = IdBytes(*peer.public_key);
+            // Convert relay addresses to SocketAddr
+            let relay_addrs: Vec<std::net::SocketAddr> =
+                peer.relay_addresses.iter().map(|a| (*a).into()).collect();
+            debug!(?pk, ?relay_addrs, "discovered peer");
+
+            let peer_already_connected = self.connections.has(&pk);
+            let peer_is_new = !self.peers.contains_key(&pk);
+
+            let peer_info = self
+                .peers
+                .entry(pk)
+                .or_insert_with(|| PeerInfo::new(pk).with_topic(topic));
+            peer_info.add_relay_addresses(relay_addrs);
+
+            // Enqueue for connection if:
+            if self.config.auto_connect     // Auto-connect enabled
+                && !peer_already_connected  // Not already connected
+                && !peer_info.queued        // Nor already queued
+                && !peer_info.connecting    // Nor connecting
+                // Nor banned
+                && !peer_info.banned
+            {
+                peer_info.queued = true;
+                let priority = peer_info.priority;
+                self.queue.push(QueuedPeer {
+                    public_key: pk,
+                    priority,
+                    queued_at: Instant::now(),
+                    shuffle_key: rand::random(),
+                });
+                if peer_is_new {
+                    debug!(?pk, "enqueued new peer for connection");
+                }
+            }
         }
     }
     fn handle_connection_result(&mut self, pk: IdBytes, result: hyperdht::Result<Connection>) {
@@ -606,6 +601,15 @@ impl Swarm {
                 guard.maybe_wake();
             };
         }
+    }
+}
+
+impl Stream for Swarm {
+    type Item = Result<SwarmEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut guard = self.inner.write().unwrap();
+        Pin::new(&mut *guard).poll_next(cx)
     }
 }
 
