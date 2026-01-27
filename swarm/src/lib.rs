@@ -272,14 +272,14 @@ impl Swarm {
 
     /// Start listening for incoming connections
     /// Returns a Server stream that yields connections
-    pub fn listen(&self) -> Result<hyperdht::ServerFuture> {
+    pub fn listen(&self) -> Result<ServerFuture> {
         let mut inner = self.inner.write().unwrap();
         if inner.destroyed {
             return Err(Error::Destroyed);
         }
         inner.listening = true;
         let server = inner.dht.listen(inner.keypair.clone());
-        Ok(server)
+        Ok(ServerFuture::new(Some(self.inner.clone()), server))
     }
 
     /// Number of connections
@@ -623,7 +623,7 @@ impl Swarm {
 pub struct ConnectionStream {
     inner: Arc<RwLock<SwarmInner>>,
     connection_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<ConnectionEvent>>>,
-    server: Option<hyperdht::Server>,
+    server: Option<Server>,
 }
 
 impl Stream for ConnectionStream {
@@ -747,6 +747,56 @@ impl Stream for PendingLookup {
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+pub struct ServerFuture {
+    swarm: Option<Arc<RwLock<SwarmInner>>>,
+    dht_server_future: hyperdht::ServerFuture,
+}
+
+impl ServerFuture {
+    fn new(
+        swarm: Option<Arc<RwLock<SwarmInner>>>,
+        dht_server_future: hyperdht::ServerFuture,
+    ) -> Self {
+        Self {
+            swarm,
+            dht_server_future,
+        }
+    }
+}
+impl Future for ServerFuture {
+    type Output = Result<Server>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Drive the DHT while announcing
+        if let Some(swarm) = self.swarm.as_ref() {
+            let _ = Pin::new(&mut *swarm.write().unwrap()).poll_next(cx);
+        }
+
+        match Pin::new(&mut self.dht_server_future).poll(cx) {
+            Poll::Ready(Ok(dht_server)) => {
+                let swarm = self.swarm.take().expect("polled after completion");
+                Poll::Ready(Ok(Server { dht_server, swarm }))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+pub struct Server {
+    swarm: Arc<RwLock<SwarmInner>>,
+    dht_server: hyperdht::Server,
+}
+impl Stream for Server {
+    type Item = Result<Connection>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        _ = Pin::new(&mut *self.swarm.write().unwrap()).poll_next(cx);
+        Pin::new(&mut self.dht_server)
+            .poll_next(cx)
+            .map_err(Into::into)
     }
 }
 
