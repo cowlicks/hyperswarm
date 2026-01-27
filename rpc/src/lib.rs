@@ -67,9 +67,9 @@ use crate::{
     },
     util::pretty_bytes,
 };
-use utils::PeriodicJob;
 use compact_encoding::EncodingError;
 use tokio::sync::oneshot::{self, Receiver, Sender, error::RecvError};
+use utils::PeriodicJob;
 
 use self::{
     io::{IoConfig, IoHandler, IoHandlerEvent},
