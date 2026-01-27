@@ -105,14 +105,14 @@ struct SwarmInner {
     queue: PeerQueue,
     /// Retry timer for failed connections
     retry_timer: RetryTimer,
-    /// Number of in-flight connection attempts
-    pending_connects: usize,
     /// Channel sender for connection events
     connection_tx: mpsc::Sender<ConnectionEvent>,
     /// Pending announce futures
     pending_announces: FuturesUnordered<PendingAnnounce>,
     /// Pending lookup streams
     pending_lookups: SelectAll<PendingLookup>,
+    /// Pending connection futures
+    pending_connections: FuturesUnordered<PendingConnection>,
     waker: Option<Waker>,
 }
 
@@ -196,6 +196,12 @@ impl Stream for SwarmInner {
             }
         }
 
+        while let Poll::Ready(Some((pk, result))) =
+            Pin::new(&mut self.pending_connections).poll_next(cx)
+        {
+            self.handle_connection_result(pk, result);
+        }
+
         Poll::Pending
     }
 }
@@ -207,6 +213,46 @@ impl SwarmInner {
     fn maybe_wake(&self) {
         if let Some(waker) = &self.waker {
             waker.wake_by_ref();
+        }
+    }
+    fn handle_connection_result(&mut self, pk: IdBytes, result: hyperdht::Result<Connection>) {
+        match result {
+            Ok(connection) => {
+                debug!(?pk, "connection succeeded");
+
+                if let Some(peer_info) = self.peers.get_mut(&pk) {
+                    peer_info.connected();
+                }
+
+                let add_result = self.connections.add(pk, true);
+                if add_result != AddResult::KeptExisting {
+                    let _ = self.connection_tx.try_send(ConnectionEvent {
+                        connection,
+                        client: true,
+                        remote_public_key: pk,
+                    });
+                }
+            }
+            Err(e) => {
+                debug!(?pk, ?e, "connection failed");
+
+                let Some(peer_info) = self.peers.get_mut(&pk) else {
+                    return;
+                };
+                peer_info.disconnected(); // Increments attempts, updates priority
+
+                // Schedule retry if enabled and not banned
+                let should_retry = self.config.auto_retry
+                    && peer_info.reconnecting
+                    && !peer_info.banned
+                    && peer_info.priority != Priority::VeryLow;
+
+                if should_retry {
+                    peer_info.waiting = true;
+                    let attempts = peer_info.attempts;
+                    self.retry_timer.schedule(RetryEntry::new(pk, attempts));
+                }
+            }
         }
     }
 }
@@ -238,10 +284,10 @@ impl Swarm {
             discoveries: HashMap::new(),
             queue: PeerQueue::new(),
             retry_timer: RetryTimer::new(),
-            pending_connects: 0,
             connection_tx,
             pending_announces: Default::default(),
             pending_lookups: Default::default(),
+            pending_connections: Default::default(),
             waker: Default::default(),
         }));
 
@@ -250,7 +296,6 @@ impl Swarm {
             connection_rx: Arc::new(tokio::sync::Mutex::new(connection_rx)),
         };
 
-        // Spawn auto-connect task if enabled
         if config.auto_connect {
             swarm.spawn_auto_connect_task();
         }
@@ -499,20 +544,20 @@ impl Swarm {
                 }
 
                 // Attempt connections from queue
-                Self::attempt_connections(&inner).await;
+                Self::attempt_connections(&inner);
             }
         });
     }
 
     /// Attempt to connect to peers from the queue
-    async fn attempt_connections(inner: &Arc<RwLock<SwarmInner>>) {
+    fn attempt_connections(inner: &Arc<RwLock<SwarmInner>>) {
         loop {
             // Get next peer to connect (if within limits)
-            let (pk, pub_key_bytes, relay_addresses, connection_tx) = {
+            let (pk, relay_addresses) = {
                 let mut guard = inner.write().unwrap();
 
                 // Check limits
-                if guard.pending_connects >= guard.config.max_parallel {
+                if guard.pending_connections.len() >= guard.config.max_parallel {
                     break;
                 }
                 if guard.connections.len() >= guard.config.max_peers {
@@ -545,95 +590,21 @@ impl Swarm {
                 peer_info.queued = false;
                 peer_info.connecting = true;
                 peer_info.last_attempt = Some(Instant::now());
-                guard.pending_connects += 1;
 
-                // Get connection info
-                let pub_key_bytes = queued.public_key.0;
-                let connection_tx = guard.connection_tx.clone();
-
-                (
-                    queued.public_key,
-                    pub_key_bytes,
-                    relay_addresses,
-                    connection_tx,
-                )
+                (queued.public_key, relay_addresses)
             };
 
-            // Spawn connection task
-            let inner_clone = inner.clone();
-            let pub_key = PublicKey::from(pub_key_bytes);
-
-            tokio::spawn(async move {
-                let closest_nodes = (!relay_addresses.is_empty())
-                    .then(|| relay_addresses.iter().map(Peer::from).collect());
-                let connection_result = {
-                    inner_clone
-                        .read()
-                        .unwrap()
-                        .dht
-                        .connect(pub_key, closest_nodes)
-                };
-
-                match connection_result.await {
-                    Ok(connection) => {
-                        debug!(?pk, "connection succeeded");
-                        // Connection succeeded - update state
-                        let should_emit = {
-                            let mut guard = inner_clone.write().unwrap();
-                            guard.pending_connects = guard.pending_connects.saturating_sub(1);
-
-                            if let Some(peer_info) = guard.peers.get_mut(&pk) {
-                                // TODO Maybe connection state should be an enum
-                                peer_info.connected();
-                            }
-
-                            // Add to connection set
-                            let add_result = guard.connections.add(pk, true);
-                            add_result != AddResult::KeptExisting
-                        }; // guard dropped here
-
-                        if should_emit {
-                            // Emit connection event (guard is dropped, safe to await)
-                            let _ = connection_tx
-                                .send(ConnectionEvent {
-                                    connection,
-                                    client: true,
-                                    remote_public_key: pk,
-                                })
-                                .await;
-                        }
-                    }
-                    Err(e) => {
-                        debug!(?pk, ?e, "connection failed");
-                        Self::handle_connection_failure(&inner_clone, pk);
-                    }
-                }
-            });
-        }
-    }
-
-    /// Handle a failed connection attempt
-    fn handle_connection_failure(inner: &Arc<RwLock<SwarmInner>>, pk: IdBytes) {
-        let mut guard = inner.write().unwrap();
-        guard.pending_connects = guard.pending_connects.saturating_sub(1);
-
-        // Get config value first before mutable peer borrow
-        let auto_retry = guard.config.auto_retry;
-
-        if let Some(peer_info) = guard.peers.get_mut(&pk) {
-            peer_info.disconnected(); // Increments attempts, updates priority
-
-            // Schedule retry if enabled and not banned
-            let should_retry = auto_retry
-                && peer_info.reconnecting
-                && !peer_info.banned
-                && peer_info.priority != Priority::VeryLow;
-
-            if should_retry {
-                peer_info.waiting = true;
-                let attempts = peer_info.attempts;
-                guard.retry_timer.schedule(RetryEntry::new(pk, attempts));
-            }
+            let pub_key = PublicKey::from(pk.0);
+            let closest_nodes = (!relay_addresses.is_empty())
+                .then(|| relay_addresses.iter().map(Peer::from).collect());
+            {
+                let guard = inner.read().unwrap();
+                let future = guard.dht.connect(pub_key, closest_nodes);
+                guard
+                    .pending_connections
+                    .push(PendingConnection { pk, future });
+                guard.maybe_wake();
+            };
         }
     }
 }
@@ -651,7 +622,7 @@ impl Stream for ConnectionStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         {
             let mut inner = self.inner.write().unwrap();
-            _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+            _ = Pin::new(&mut *inner).poll_next(cx);
         };
 
         // Poll server for incoming connections first
@@ -675,7 +646,7 @@ impl Stream for ConnectionStream {
                     })));
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(e.into())));
+                    return Poll::Ready(Some(Err(e)));
                 }
                 Poll::Ready(None) => {
                     self.server = None;
@@ -764,6 +735,22 @@ impl Stream for PendingLookup {
         match Pin::new(&mut self.lookup).poll_next(cx) {
             Poll::Ready(Some(result)) => Poll::Ready(Some((self.topic, result))),
             Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+struct PendingConnection {
+    pk: IdBytes,
+    future: ConnectFuture,
+}
+
+impl Future for PendingConnection {
+    type Output = (IdBytes, hyperdht::Result<Connection>);
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Pin::new(&mut self.future).poll(cx) {
+            Poll::Ready(result) => Poll::Ready((self.pk, result)),
             Poll::Pending => Poll::Pending,
         }
     }

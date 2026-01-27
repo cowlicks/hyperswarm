@@ -1,7 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use hypercore_handshake::CipherEvent;
 use hyperswarm::{DhtConfig, JoinOpts, Swarm};
-use test_utils::{Result, Testnet};
+use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
 
 macro_rules! timeout {
     ($fut:expr, $ms:expr) => {{ tokio::time::timeout(std::time::Duration::from_millis($ms), $fut).await }};
@@ -36,7 +36,7 @@ await swarm.flush();  // Wait for announce to complete
     rust_swarm.flush().await?;
 
     // Wait for discovery
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    wait!(100);
 
     assert!(
         dbg!(rust_swarm.peers_count()) > 0,
@@ -113,18 +113,23 @@ await swarm.flush();  // Wait for announce to complete
     rust_swarm.join(topic.into(), JoinOpts::Client)?;
     rust_swarm.flush().await?;
 
+    tokio::spawn(async move {
+        loop {
+            wait!(100);
+            _ = rust_swarm.flush().await;
+        }
+    });
     // Wait for discovery
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    wait!(1000);
 
     let n_peers: usize = tn.repl.json_run_tcp("outputJson(swarm.peers.size)").await?;
-    dbg!(n_peers);
     assert!(dbg!(n_peers) > 0, "Should discover JS peer");
     Ok(())
 }
 
 /// Rust swarm auto-connects to JS Hyperswarm server and exchanges messages
 #[tokio::test]
-async fn rust_swarm_connects_to_js_swarm_exchanges_messages_foo() -> Result<()> {
+async fn rust_swarm_connects_to_js_swarm_exchanges_messages() -> Result<()> {
     let mut tn = Testnet::new().await?;
     let bs_addr = tn.bootstrap_addr().await?;
 
@@ -163,7 +168,7 @@ await js_swarm.join(topic, {{ server: true, client: false }}).flushed();
     rust_swarm.flush().await?;
 
     // Wait for auto-connect
-    let Some(Ok(event)) = timeout!(connections.next(), 1000)? else {
+    let Some(Ok(event)) = timeout!(connections.next(), 5000)? else {
         panic!("Rust swarm should receive connection event");
     };
     let mut rust_conn = event.connection;

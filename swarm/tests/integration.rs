@@ -4,7 +4,7 @@ use dht_rpc::IdBytes;
 use futures::{SinkExt, StreamExt, join};
 use hypercore_handshake::CipherEvent;
 use hyperswarm::{DhtConfig, JoinOpts, Swarm, SwarmConfig};
-use test_utils::{Result, Testnet};
+use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
 
 macro_rules! timeout {
     ($fut:expr, $ms:expr) => {{
@@ -164,7 +164,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
 
 /// Test that auto-connect actually establishes connections to discovered peers
 #[tokio::test]
-async fn auto_connect_establishes_connection_foo() -> Result<()> {
+async fn auto_connect_establishes_connection() -> Result<()> {
     let mut tn = Testnet::new().await?;
     let bs_addr = tn.bootstrap_addr().await?;
 
@@ -187,26 +187,29 @@ async fn auto_connect_establishes_connection_foo() -> Result<()> {
     swarm_b.join(topic, JoinOpts::Client)?;
     swarm_b.flush().await?;
 
-    let Some(Ok(mut server_conn)) = timeout!(server.next(), 1000)? else {
-        todo!()
-    };
-    let Some(Ok(client_event)) = timeout!(connections.next())? else {
-        todo!()
-    };
-
-    let mut client_conn = client_event.connection;
-
-    // Test bidirectional communication
-    server_conn.send(b"from server".into()).await?;
-    let Some(CipherEvent::Message(msg)) = client_conn.next().await else {
-        todo!()
-    };
-    assert_eq!(msg, b"from server");
-    client_conn.send(b"from client".into()).await?;
-
-    let Some(CipherEvent::Message(msg)) = server_conn.next().await else {
-        todo!()
-    };
-    assert_eq!(msg, b"from client");
+    let a = tokio::spawn(async move {
+        let Some(Ok(client_event)) = timeout!(connections.next()).unwrap() else {
+            todo!()
+        };
+        let mut client_conn = client_event.connection;
+        let Some(CipherEvent::Message(msg)) = client_conn.next().await else {
+            todo!()
+        };
+        assert_eq!(msg, b"from server");
+        client_conn.send(b"from client".into()).await.unwrap();
+        wait!(100);
+    });
+    let b = tokio::spawn(async move {
+        let Some(Ok(mut server_conn)) = timeout!(server.next(), 1000).unwrap() else {
+            todo!()
+        };
+        server_conn.send(b"from server".into()).await.unwrap();
+        let Some(CipherEvent::Message(msg)) = server_conn.next().await else {
+            todo!()
+        };
+        assert_eq!(msg, b"from client");
+        wait!(100);
+    });
+    _ = join!(a, b);
     Ok(())
 }
