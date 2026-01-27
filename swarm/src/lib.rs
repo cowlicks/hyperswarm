@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dht_rpc::{Commit, IdBytes};
+use dht_rpc::{Commit, IdBytes, Peer};
 use futures::{
     Future, Stream,
     stream::{FuturesUnordered, SelectAll},
@@ -542,44 +542,17 @@ impl Swarm {
             let pub_key = PublicKey::from(pub_key_bytes);
 
             tokio::spawn(async move {
-                // Try to connect using relay addresses if available
-                // Note: relay support in hyperdht is not yet implemented,
-                // so this will fall back to dht.connect() which uses find_peer
-                let connection_result = if !relay_addresses.is_empty() {
-                    // Try each relay address
-                    let mut result = None;
-                    for addr in &relay_addresses {
-                        debug!(?pk, ?addr, "trying relay address");
-                        let handshake = {
-                            let guard = inner_clone.read().unwrap();
-                            guard
-                                .dht
-                                .peer_handshake(PeerHandshakeArgs::new(pub_key.clone(), *addr))
-                        };
-                        match handshake.await {
-                            Ok(conn) => {
-                                debug!(?pk, ?addr, "connected via relay");
-                                result = Some(Ok(conn));
-                                break;
-                            }
-                            Err(e) => {
-                                // continue
-                                debug!(?pk, ?addr, ?e, "relay connection failed");
-                            }
-                        }
-                    }
-                    result
-                } else {
-                    // No relay addresses, use dht.connect (find_peer + handshake)
-                    let connect = {
-                        let guard = inner_clone.read().unwrap();
-                        guard.dht.connect(pub_key, None)
-                    };
-                    match connect {
-                        Ok(connect_future) => Some(connect_future.await.map_err(Error::from)),
-                        Err(e) => Some(Err(e.into())),
-                    }
+                let closest_nodes = (!relay_addresses.is_empty())
+                    .then(|| relay_addresses.iter().map(Peer::from).collect());
+                let connection_result = {
+                    inner_clone
+                        .read()
+                        .unwrap()
+                        .dht
+                        .connect(pub_key, closest_nodes)
+                        .unwrap()
                 };
+                let connection_result = Some(connection_result.await);
 
                 match connection_result {
                     Some(Ok(connection)) => {
@@ -779,7 +752,6 @@ impl Stream for PendingLookup {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
