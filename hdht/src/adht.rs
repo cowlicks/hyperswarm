@@ -46,9 +46,23 @@ pub struct QueryResult {
     pub query_id: QueryId,
 }
 
+enum TakableResult<T, E> {
+    Ok(T),
+    Err(Option<E>),
+}
+
+impl<T, E> TakableResult<T, E> {
+    fn from_result(result: std::result::Result<T, E>) -> Self {
+        match result {
+            Ok(x) => TakableResult::Ok(x),
+            Err(e) => TakableResult::Err(Some(e)),
+        }
+    }
+}
+
 pub struct ConnectFuture {
     dht: Arc<RwLock<DhtInner>>,
-    query: FindPeer,
+    query: TakableResult<FindPeer, Error>,
     pub_key: PublicKey,
     pending_handshake: Option<PeerHandshake>,
 }
@@ -70,8 +84,16 @@ impl Future for ConnectFuture {
                 }
             }
 
+            let mut query = match &mut self.query {
+                TakableResult::Ok(x) => x,
+                TakableResult::Err(e) => match e.take() {
+                    Some(e) => return Poll::Ready(Err(e)),
+                    None => todo!(),
+                },
+            };
+
             // Poll the query for more peers
-            match Pin::new(&mut self.query).poll_next(cx) {
+            match Pin::new(&mut query).poll_next(cx) {
                 Poll::Ready(Some(Ok(Some(FindPeerResponse { response, .. })))) => {
                     // Try to start a handshake with this peer
                     let dht = self.dht.read().unwrap();
@@ -134,18 +156,11 @@ impl Dht {
     /// 3. For each responding node, starts a `peer_handshake`
     ///
     /// The JS `onlyClosestNodes` behavior could be added to Rust's `QueryArgs` if needed.
-    pub fn connect(
-        &self,
-        pub_key: PublicKey,
-        closest_nodes: Option<Vec<Peer>>,
-    ) -> impl Future<Output = Result<Connection>> + use<> {
-        let inner = self.inner.clone();
-        let fut = self
-            .inner
+    pub fn connect(&self, pub_key: PublicKey, closest_nodes: Option<Vec<Peer>>) -> ConnectFuture {
+        self.inner
             .read()
             .unwrap()
-            .connect(pub_key, closest_nodes, inner);
-        async move { fut?.await }
+            .connect(pub_key, closest_nodes, self.inner.clone())
     }
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
         self.inner.read().unwrap().lookup(target, commit)
@@ -589,14 +604,13 @@ impl DhtInner {
         pub_key: PublicKey,
         closest_nodes: Option<Vec<Peer>>,
         dht: Arc<RwLock<DhtInner>>,
-    ) -> Result<ConnectFuture> {
-        let query = self.find_peer(pub_key.clone(), closest_nodes)?;
-        Ok(ConnectFuture {
+    ) -> ConnectFuture {
+        ConnectFuture {
             dht,
-            query,
+            query: TakableResult::from_result(self.find_peer(pub_key.clone(), closest_nodes)),
             pub_key,
             pending_handshake: None,
-        })
+        }
     }
 
     pub fn lookup(&self, target: IdBytes, commit: Commit) -> Result<Lookup> {
