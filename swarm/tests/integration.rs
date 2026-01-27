@@ -19,7 +19,7 @@ macro_rules! timeout {
 }
 /// Server announces and client discovers via lookup
 #[tokio::test]
-async fn server_announces_client_discovers_foo() -> Result<()> {
+async fn server_announces_client_discovers() -> Result<()> {
     let mut tn = Testnet::new().await?;
     let bs_addr = tn.bootstrap_addr().await?;
 
@@ -164,7 +164,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
 
 /// Test that auto-connect actually establishes connections to discovered peers
 #[tokio::test]
-async fn auto_connect_establishes_connection() -> Result<()> {
+async fn auto_connect_establishes_connection_foo() -> Result<()> {
     let mut tn = Testnet::new().await?;
     let bs_addr = tn.bootstrap_addr().await?;
 
@@ -187,7 +187,7 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     swarm_b.join(topic, JoinOpts::Client)?;
     swarm_b.flush().await?;
 
-    let Some(Ok(mut server_conn)) = server.next().await else {
+    let Some(Ok(mut server_conn)) = timeout!(server.next(), 1000)? else {
         todo!()
     };
     let Some(Ok(client_event)) = timeout!(connections.next())? else {

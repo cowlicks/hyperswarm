@@ -124,7 +124,7 @@ await swarm.flush();  // Wait for announce to complete
 
 /// Rust swarm auto-connects to JS Hyperswarm server and exchanges messages
 #[tokio::test]
-async fn rust_swarm_connects_to_js_swarm_exchanges_messages() -> Result<()> {
+async fn rust_swarm_connects_to_js_swarm_exchanges_messages_foo() -> Result<()> {
     let mut tn = Testnet::new().await?;
     let bs_addr = tn.bootstrap_addr().await?;
 
@@ -163,7 +163,7 @@ await js_swarm.join(topic, {{ server: true, client: false }}).flushed();
     rust_swarm.flush().await?;
 
     // Wait for auto-connect
-    let Some(Ok(event)) = timeout!(connections.next())? else {
+    let Some(Ok(event)) = timeout!(connections.next(), 1000)? else {
         panic!("Rust swarm should receive connection event");
     };
     let mut rust_conn = event.connection;
