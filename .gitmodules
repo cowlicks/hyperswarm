@@ -9,7 +9,7 @@
 [submodule "test_utils/js/rpc"]
 	path = test_utils/js/rpc
 	url = git@github.com:cowlicks/dht-rpc.git
-	branch = rs-hyperswarm-hdht-tests-changes
+	branch = rust-changes
 [submodule "test_utils/js/sodium-native"]
 	path = test_utils/js/sodium-native
 	url = git@github.com:cowlicks/sodium-native.git
@@ -24,4 +24,5 @@
 	branch = rust-changes
 [submodule "test_utils/js/hyperswarm"]
 	path = test_utils/js/hyperswarm
-	url = git@github.com:holepunchto/hyperswarm.git
+	url = git@github.com:cowlicks/hyperswarmjs.git
+	branch = rust-changes
