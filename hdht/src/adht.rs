@@ -295,7 +295,7 @@ impl DhtInner {
         match command {
             values::PEER_HANDSHAKE => self.on_peer_handshake(*request, peer)?,
             values::PEER_HOLEPUNCH => todo!(),
-            values::FIND_PEER => { /* TODO */ }
+            values::FIND_PEER => self.on_find_peer(*request, peer)?,
             values::LOOKUP => todo!(),
             values::ANNOUNCE => self.on_announce(*request, peer)?,
             values::UNANNOUNCE => todo!(),
@@ -364,6 +364,21 @@ impl DhtInner {
 
         // 7. Reply with success (no value, no token, no closer nodes)
         self.rpc.respond(&request, None, Some(vec![]), &from_peer)?;
+        Ok(())
+    }
+
+    /// Handle FIND_PEER query - return a single peer record from the router.
+    /// Used when target == hash(publicKey) - for direct peer lookups.
+    fn on_find_peer(&self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+        let Some(target) = request.target else {
+            return Ok(());
+        };
+        let target = IdBytes(target);
+
+        // Look up the router for a self-announcing peer
+        let value = self.peer_router.get(&target).map(|e| e.record.clone());
+
+        self.rpc.respond(&request, value, None, &from_peer)?;
         Ok(())
     }
 
