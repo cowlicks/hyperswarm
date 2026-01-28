@@ -338,7 +338,7 @@ impl IoHandler {
     }
     pub fn error(
         &mut self,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         error: usize,
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
@@ -403,13 +403,13 @@ impl IoHandler {
 
     pub fn response(
         &mut self,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
-        peer: Peer,
+        peer: &Peer,
     ) -> crate::Result<Receiver<()>> {
         let id = (!self.ephemeral).then(|| self.id().0);
-        let token = Some(self.token(&peer, 1)?);
+        let token = Some(self.token(peer, 1)?);
         let (tx, rx) = oneshot::channel();
         self.enqueue_reply(
             ReplyMsgData {

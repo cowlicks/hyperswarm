@@ -286,7 +286,7 @@ impl Query {
     // TODO use binary search ot insert
     // TODO in theory, new elements distances get smaller. So maybe reverse the list.
     #[instrument(skip_all)]
-    fn maybe_update_closest_replies(&mut self, data: Arc<InResponse>) -> Option<usize> {
+    fn maybe_update_closest_replies(&mut self, data: &Arc<InResponse>) -> Option<usize> {
         let reply_distance = self.peer_iter.target.distance(data.response.id?);
         let replace = self.closest_replies.len() >= K_VALUE.into();
 
@@ -332,7 +332,7 @@ impl Query {
     }
 
     // TODO unused
-    pub(crate) fn _on_timeout(&mut self, peer: Peer) {
+    pub(crate) fn _on_timeout(&mut self, peer: &Peer) {
         self.stats.failure += 1;
         for (p, state) in self.inner.peers_mut() {
             if p.addr == peer.addr {
@@ -340,7 +340,7 @@ impl Query {
                 break;
             }
         }
-        self.peer_iter.on_failure(&peer);
+        self.peer_iter.on_failure(peer);
     }
 
     /// Received a response to a requested driven by this query.
@@ -358,7 +358,7 @@ impl Query {
             }
             // Before commit
             _ => {
-                self.maybe_update_closest_replies(data.clone());
+                self.maybe_update_closest_replies(&data);
                 let remote = data
                     .response
                     .id
@@ -392,7 +392,7 @@ impl Query {
         Some(data)
     }
 
-    fn send(&mut self, peer: Peer) -> QueryEvent {
+    fn send(&self, peer: Peer) -> QueryEvent {
         QueryEvent::Query {
             command: self.cmd,
             target: *self.target(),
@@ -630,7 +630,7 @@ impl QueryStats {
     /// Counters are merged cumulatively while the instants for
     /// start and end of the queries are taken as the minimum and
     /// maximum, respectively.
-    pub fn merge(self, other: QueryStats) -> Self {
+    pub fn merge(self, other: &QueryStats) -> Self {
         QueryStats {
             requests: self.requests + other.requests,
             success: self.success + other.success,

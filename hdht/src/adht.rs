@@ -411,10 +411,10 @@ impl DhtInner {
             .to_encoded_bytes()?;
 
         self.rpc.respond(
-            request,
+            &request,
             Some(reply_payload.into()),
-            Some(vec![]),                   // No closer nodes
-            Peer::new(peer_address.into()), // Client's address
+            Some(vec![]),                    // No closer nodes
+            &Peer::new(peer_address.into()), // Client's address
         )?;
 
         Ok(())
@@ -551,10 +551,10 @@ impl DhtInner {
             .build()?;
 
         let response_flushed = self.rpc.respond(
-            request,
+            &request,
             Some(peer_handshake_payload.to_encoded_bytes()?.into()),
             Some(vec![]),
-            Peer::new(from_peer.addr),
+            &Peer::new(from_peer.addr),
         )?;
         // Queue the connection to be sent after the response is flushed
         self.pending_connections.push(PendingConnection {

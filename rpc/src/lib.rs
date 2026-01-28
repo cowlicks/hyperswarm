@@ -6,8 +6,8 @@
     redundant_lifetimes,
     //unsafe_code, // TODO
     non_local_definitions,
-    //clippy::needless_pass_by_value, // TODO
-    //clippy::needless_pass_by_ref_mut, // TODO
+    clippy::needless_pass_by_value, // TODO
+    clippy::needless_pass_by_ref_mut, // TODO
     clippy::enum_glob_use
 )]
 
@@ -393,10 +393,10 @@ impl Rpc {
     }
     pub fn respond(
         &self,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
-        peer: Peer,
+        peer: &Peer,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
         self.inner
             .lock()
@@ -727,7 +727,7 @@ impl RpcInner {
                             // TODO add all commit handlers
                             match cev {
                                 E::AutoStart((_, _)) => {
-                                    let tids = pin.default_commit(query.clone());
+                                    let tids = pin.default_commit(&query);
                                     query.write().unwrap().commit =
                                         C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
                                 }
@@ -793,11 +793,11 @@ impl RpcInner {
                                 "QueryPoolEvent::Finished. Query::id = {:?}",
                                 q.try_read().map(|x| x.id)
                             );
-                            let event = pin.query_finished(q);
+                            let event = pin.query_finished(&q);
                             return Poll::Ready(Some(event));
                         }
                         QueryPoolEvent::Timeout(q) => {
-                            let event = pin.query_timeout(q);
+                            let event = pin.query_timeout(&q);
                             trace!("{event:#?}");
                             return Poll::Ready(Some(event));
                         }
@@ -1061,10 +1061,10 @@ impl RpcInner {
 
         match request.command {
             Command::Internal(cmd) => match cmd {
-                InternalCommand::Ping => self.on_ping(request, &peer),
-                InternalCommand::FindNode => self.on_find_node(request, peer),
-                InternalCommand::PingNat => self.on_ping_nat(request, peer),
-                InternalCommand::DownHint => self.on_down_hint(request, peer),
+                InternalCommand::Ping => self.on_ping(&request, &peer),
+                InternalCommand::FindNode => self.on_find_node(&request, &peer),
+                InternalCommand::PingNat => self.on_ping_nat(&request, peer),
+                InternalCommand::DownHint => self.on_down_hint(&request, peer),
             },
             Command::External(command) => {
                 return Ok(Some(RpcEvent::CustomRequest(CustomCommandRequest {
@@ -1135,7 +1135,7 @@ impl RpcInner {
         value: Option<Vec<u8>>,
         token: Option<[u8; 32]>,
         has_closer_nodes: bool,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         peer: &Peer,
     ) {
         let closer_nodes: Vec<Peer> = match (has_closer_nodes, request.target) {
@@ -1155,7 +1155,7 @@ impl RpcInner {
     }
 
     /// Handle a ping request
-    fn on_ping(&mut self, msg: RequestMsgData, peer: &Peer /* peer who sent ping */) {
+    fn on_ping(&mut self, msg: &RequestMsgData, peer: &Peer /* peer who sent ping */) {
         let msg = ReplyMsgData {
             tid: msg.tid,
             to: peer.clone(),
@@ -1171,7 +1171,7 @@ impl RpcInner {
     /// Handle an incoming find peers request.
     ///
     /// Reply only if the remote provided a target to get the closest nodes for.
-    fn on_find_node(&mut self, request: RequestMsgData, peer: Peer) {
+    fn on_find_node(&mut self, request: &RequestMsgData, peer: &Peer) {
         // TODO same as 582
         let closer_nodes: Vec<Peer> = match request.target {
             Some(t) => self.closer_nodes(IdBytes::from(t), usize::from(K_VALUE)),
@@ -1185,7 +1185,7 @@ impl RpcInner {
             tid: request.tid,
             to: peer.clone(),
             id: (!self.ephemeral).then(|| self.id.get().0),
-            token: self.io.token(&peer, 1).ok(),
+            token: self.io.token(peer, 1).ok(),
             closer_nodes,
             error: 0,
             value: None,
@@ -1201,7 +1201,7 @@ impl RpcInner {
             .collect::<Vec<_>>()
         //PeersEncoding::encode(&nodes)
     }
-    fn on_down_hint(&mut self, request: RequestMsgData, peer: Peer) {
+    fn on_down_hint(&mut self, request: &RequestMsgData, peer: Peer) {
         match &request.value {
             None => {
                 // TODO emit an event about this
@@ -1276,7 +1276,7 @@ impl RpcInner {
         };
     }
 
-    fn on_ping_nat(&mut self, request: RequestMsgData, mut peer: Peer) {
+    fn on_ping_nat(&mut self, request: &RequestMsgData, mut peer: Peer) {
         let port = match &request.value {
             Some(port_buf) => {
                 if port_buf.len() < 2 {
@@ -1333,7 +1333,7 @@ impl RpcInner {
         self.enque_stream_event(RpcEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
     }
 
-    fn default_commit(&mut self, query: Arc<RwLock<Query>>) -> Vec<Tid> {
+    fn default_commit(&mut self, query: &Arc<RwLock<Query>>) -> Vec<Tid> {
         let q = query.read().unwrap();
         q.closest_replies
             .iter()
@@ -1418,7 +1418,7 @@ impl RpcInner {
 
     /// Handles a finished query.
     #[instrument(skip_all)]
-    fn query_finished(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
+    fn query_finished(&mut self, query: &Arc<RwLock<Query>>) -> RpcEvent {
         let is_find_node = matches!(
             query.read().unwrap().command(),
             Command::Internal(InternalCommand::FindNode)
@@ -1482,7 +1482,7 @@ impl RpcInner {
         }
     }
     /// Handles a query that timed out.
-    fn query_timeout(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
+    fn query_timeout(&mut self, query: &Arc<RwLock<Query>>) -> RpcEvent {
         self.query_finished(query)
     }
 

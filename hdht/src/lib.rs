@@ -231,13 +231,13 @@ fn decode_peer_handshake_response(resp: &Arc<InResponse>) -> Result<Arc<PeerHand
     let server_address = if let Some(x) = hs.peer_address {
         x
     } else {
-        resp.request.to.socketv4()?.clone()
+        *resp.request.to.socketv4()?
     };
 
     Ok(Arc::new(PeerHandshakeResponse::new(
         hs.noise,
         hs.peer_address.is_some(),
         server_address,
-        resp.response.to.socketv4()?.clone(),
+        *resp.response.to.socketv4()?,
     )))
 }
