@@ -298,7 +298,7 @@ impl DhtInner {
             values::FIND_PEER => self.on_find_peer(*request, peer)?,
             values::LOOKUP => self.on_lookup(*request, peer)?,
             values::ANNOUNCE => self.on_announce(*request, peer)?,
-            values::UNANNOUNCE => todo!(),
+            values::UNANNOUNCE => self.on_unannounce(*request, peer)?,
             x => todo!("{x}"),
         }
         Ok(())
@@ -413,6 +413,64 @@ impl DhtInner {
         };
 
         self.rpc.respond(&request, value, None, &from_peer)?;
+        Ok(())
+    }
+
+    /// Handle UNANNOUNCE query - verify signature and remove peer record.
+    fn on_unannounce(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+        // 1. Validate required fields
+        let Some(target) = request.target else {
+            return Ok(());
+        };
+        let Some(token) = request.token else {
+            return Ok(());
+        };
+        let Some(value) = &request.value else {
+            return Ok(());
+        };
+
+        // 2. Decode announce value (same format as ANNOUNCE)
+        let Ok((ann, _)) = AnnounceRequestValue::decode(value) else {
+            return Ok(());
+        };
+
+        // 3. Encode peer for signature verification
+        let encoded_peer = match ann.peer.to_encoded_bytes() {
+            Ok(bytes) => bytes.to_vec(),
+            Err(_) => return Ok(()),
+        };
+
+        // 4. Verify signature with UNANNOUNCE namespace
+        let our_id = self.rpc.id();
+        let signable = crate::crypto::make_signable_announce_or_unannounce(
+            IdBytes(target),
+            &token,
+            &our_id.0,
+            &encoded_peer,
+            &namespace::UNANNOUNCE,
+        );
+        if ann
+            .peer
+            .public_key
+            .verify(ann.signature, &signable)
+            .is_err()
+        {
+            trace!("UNANNOUNCE: invalid signature");
+            return Ok(()); // Silent fail on invalid signature
+        }
+
+        // 5. Remove record
+        let pubkey_hash = generic_hash(&*ann.peer.public_key);
+        let is_self_announce = pubkey_hash == target;
+        let target = IdBytes(target);
+
+        if is_self_announce {
+            self.peer_router.delete(&target);
+        }
+        self.peer_records.remove(&target, &*ann.peer.public_key);
+
+        // 6. Reply with success (no value, no token, no closer nodes)
+        self.rpc.respond(&request, None, Some(vec![]), &from_peer)?;
         Ok(())
     }
 
