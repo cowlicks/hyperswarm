@@ -54,6 +54,30 @@ impl ConnectionState {
     }
 }
 
+/// How we learned about this peer
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PeerOrigin {
+    /// Found via DHT lookup (we initiate connection)
+    #[default]
+    Discovered,
+    /// Added explicitly via join_peer
+    Explicit,
+    /// They connected to us
+    Incoming,
+}
+
+impl PeerOrigin {
+    /// Whether we are the client (initiator) for this peer
+    pub fn is_client(&self) -> bool {
+        matches!(self, Self::Discovered | Self::Explicit)
+    }
+
+    /// Whether this is an explicit peer (added via join_peer)
+    pub fn is_explicit(&self) -> bool {
+        matches!(self, Self::Explicit)
+    }
+}
+
 /// Priority levels for peer connection attempts
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
@@ -98,11 +122,8 @@ pub struct PeerInfo {
     /// Connection lifecycle state
     pub state: ConnectionState,
 
-    /// Whether we initiated the connection (true) or accepted it (false)
-    pub client: bool,
-
-    /// Whether this is an explicit peer (added via join_peer)
-    pub explicit: bool,
+    /// How we learned about this peer
+    pub origin: PeerOrigin,
 
     /// Topics this peer is associated with
     pub topics: HashSet<IdBytes>,
@@ -120,8 +141,7 @@ impl PeerInfo {
             attempts: 0,
             priority: Priority::Normal,
             state: ConnectionState::Idle,
-            client: false,
-            explicit: false,
+            origin: PeerOrigin::Discovered,
             topics: HashSet::new(),
         }
     }
@@ -224,7 +244,7 @@ impl PeerInfo {
     /// Check if this peer should be garbage collected
     pub fn should_gc(&self) -> bool {
         // Don't GC if busy, explicit, or has topics
-        if self.state.is_busy() || self.explicit || !self.topics.is_empty() {
+        if self.state.is_busy() || self.origin.is_explicit() || !self.topics.is_empty() {
             return false;
         }
 
@@ -331,11 +351,11 @@ mod tests {
 
         // Explicit peer should not be GC'd
         info.topics.clear();
-        info.explicit = true;
+        info.origin = PeerOrigin::Explicit;
         assert!(!info.should_gc());
 
         // Queued peer should not be GC'd
-        info.explicit = false;
+        info.origin = PeerOrigin::Discovered;
         info.state = ConnectionState::Queued;
         assert!(!info.should_gc());
     }

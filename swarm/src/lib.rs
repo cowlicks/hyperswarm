@@ -34,7 +34,7 @@ mod retry;
 pub use config::SwarmConfig;
 pub use connection_set::{AddResult, ConnectionInfo, ConnectionSet};
 pub use error::{Error, Result};
-pub use peer_info::{ConnectionState, PeerInfo, Priority};
+pub use peer_info::{ConnectionState, PeerInfo, PeerOrigin, Priority};
 pub use queue::{PeerQueue, QueuedPeer};
 pub use retry::{RetryEntry, RetryTimer};
 
