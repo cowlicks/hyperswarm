@@ -28,13 +28,14 @@ use tracing::{error, info, instrument, trace};
 use crate::{
     DEFAULT_BOOTSTRAP, Error, Keypair, Result,
     cenc::{
-        HandshakeSteps, NoisePayload, NoisePayloadBuilder, PeerHandshakePayload,
-        PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
+        AnnounceRequestValue, HandshakeSteps, NoisePayload, NoisePayloadBuilder,
+        PeerHandshakePayload, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
     },
     commands,
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
+    persistent::{PeerRecordCache, PeerRouter, RouterEntry},
     request_announce_or_unannounce_value,
     server::ServerFuture,
 };
@@ -247,6 +248,10 @@ pub struct DhtInner {
     listening_keypairs: HashMap<IdBytes, (Keypair, mpsc::Sender<Result<Connection>>)>,
     /// Connections waiting for their response to be flushed
     pending_connections: Vec<PendingConnection>,
+    /// Peer record cache for LOOKUP queries (stores peers by topic)
+    peer_records: PeerRecordCache,
+    /// Router for self-announcing peers (FIND_PEER queries)
+    peer_router: PeerRouter,
 }
 
 impl DhtInner {
@@ -262,10 +267,11 @@ impl DhtInner {
         Ok(Self {
             rpc: Rpc::with_config(config).await?,
             id_maker: StreamIdMaker::new(),
-            //default_keypair: generate_keypair()?,
             default_keypair: Default::default(),
             listening_keypairs: Default::default(),
             pending_connections: Default::default(),
+            peer_records: PeerRecordCache::new(),
+            peer_router: PeerRouter::new(),
         })
     }
     pub fn name(&self) -> String {
@@ -291,10 +297,73 @@ impl DhtInner {
             values::PEER_HOLEPUNCH => todo!(),
             values::FIND_PEER => { /* TODO */ }
             values::LOOKUP => todo!(),
-            values::ANNOUNCE => todo!(),
+            values::ANNOUNCE => self.on_announce(*request, peer)?,
             values::UNANNOUNCE => todo!(),
             x => todo!("{x}"),
         }
+        Ok(())
+    }
+
+    /// Handle ANNOUNCE query - verify signature and store peer record.
+    fn on_announce(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+        // 1. Validate required fields
+        let Some(target) = request.target else {
+            return Ok(());
+        };
+        let Some(token) = request.token else {
+            return Ok(());
+        };
+        let Some(value) = &request.value else {
+            return Ok(());
+        };
+
+        // 2. Decode announce value
+        let Ok((ann, _)) = AnnounceRequestValue::decode(value) else {
+            return Ok(());
+        };
+
+        // 3. Encode peer for signature verification
+        let encoded_peer = match ann.peer.to_encoded_bytes() {
+            Ok(bytes) => bytes.to_vec(),
+            Err(_) => return Ok(()),
+        };
+
+        // 4. Verify signature
+        let our_id = self.rpc.id();
+        let signable = crate::crypto::make_signable_announce_or_unannounce(
+            IdBytes(target),
+            &token,
+            &our_id.0,
+            &encoded_peer,
+            &namespace::ANNOUNCE,
+        );
+        if ann
+            .peer
+            .public_key
+            .verify(ann.signature, &signable)
+            .is_err()
+        {
+            trace!("ANNOUNCE: invalid signature");
+            return Ok(()); // Silent fail on invalid signature
+        }
+
+        // 5. Determine storage location
+        let pubkey_hash = generic_hash(&*ann.peer.public_key);
+        let is_self_announce = pubkey_hash == target;
+        let target = IdBytes(target);
+
+        // 6. Store record
+        if is_self_announce {
+            self.peer_router
+                .set(target, RouterEntry::new(from_peer.addr, encoded_peer));
+            self.peer_records.remove(&target, &*ann.peer.public_key);
+        } else {
+            self.peer_records
+                .add(target, *ann.peer.public_key, encoded_peer);
+        }
+
+        // 7. Reply with success (no value, no token, no closer nodes)
+        self.rpc.respond(&request, None, Some(vec![]), &from_peer)?;
         Ok(())
     }
 
