@@ -1801,3 +1801,10 @@ pub fn fill_random_bytes(dest: &mut [u8]) {
     let mut rng = StdRng::from_rng(OsRng).unwrap();
     rng.fill_bytes(dest)
 }
+
+fn socket_into_v4(addr: &SocketAddr) -> Result<&SocketAddrV4> {
+    let SocketAddr::V4(addr) = &addr else {
+        return Err(Error::Ipv6NotSupported);
+    };
+    Ok(addr)
+}
