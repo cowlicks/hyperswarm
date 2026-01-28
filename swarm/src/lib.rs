@@ -98,8 +98,6 @@ struct SwarmInner {
     dht: Dht,
     keypair: Keypair,
     config: SwarmConfig,
-    destroyed: bool,
-    listening: bool,
     connections: ConnectionSet,
     peers: HashMap<IdBytes, PeerInfo>,
     discoveries: HashMap<IdBytes, Discovery>,
@@ -259,10 +257,6 @@ impl SwarmInner {
     }
 
     fn auto_connect_job(&mut self) {
-        if self.destroyed {
-            return;
-        }
-
         for entry in self.retry_timer.get_ready() {
             let already_connected = self.connections.has(&entry.public_key);
 
@@ -357,8 +351,6 @@ impl Swarm {
                 auto_retry: config.auto_retry,
                 dht_config: DhtConfig::default(), // Not used after init
             },
-            destroyed: false,
-            listening: false,
             connections: ConnectionSet::new(),
             peers: HashMap::new(),
             discoveries: HashMap::new(),
@@ -401,26 +393,12 @@ impl Swarm {
         self.inner.read().unwrap().keypair.clone()
     }
 
-    /// Check if destroyed
-    pub fn destroyed(&self) -> bool {
-        self.inner.read().unwrap().destroyed
-    }
-
-    /// Check if listening for connections
-    pub fn listening(&self) -> bool {
-        self.inner.read().unwrap().listening
-    }
-
     /// Start listening for incoming connections
     /// Returns a Server stream that yields connections
-    pub fn listen(&self) -> Result<ServerFuture> {
-        let mut inner = self.inner.write().unwrap();
-        if inner.destroyed {
-            return Err(Error::Destroyed);
-        }
-        inner.listening = true;
+    pub fn listen(&self) -> ServerFuture {
+        let inner = self.inner.write().unwrap();
         let server = inner.dht.listen(inner.keypair.clone());
-        Ok(ServerFuture::new(Some(self.inner.clone()), server))
+        ServerFuture::new(Some(self.inner.clone()), server)
     }
 
     /// Number of connections
@@ -443,10 +421,6 @@ impl Swarm {
     pub fn join(&self, topic: IdBytes, opts: JoinOpts) -> Result<()> {
         let (lookup, announce) = {
             let mut inner = self.inner.write().unwrap();
-            if inner.destroyed {
-                return Err(Error::Destroyed);
-            }
-
             let discovery = Discovery {
                 topic,
                 server: opts.server(),
@@ -486,15 +460,10 @@ impl Swarm {
     }
 
     /// Leave a topic
-    pub fn leave(&self, topic: &IdBytes) -> Result<()> {
+    pub fn leave(&self, topic: &IdBytes) {
         let mut inner = self.inner.write().unwrap();
-        if inner.destroyed {
-            return Err(Error::Destroyed);
-        }
-
         inner.discoveries.remove(topic);
         // TODO: Unannounce if was server
-        Ok(())
     }
 
     /// Check if joined to a topic
@@ -507,23 +476,10 @@ impl Swarm {
         self.inner.read().unwrap().discoveries.len()
     }
 
-    /// Destroy the swarm
-    pub fn destroy(&self) {
-        let mut inner = self.inner.write().unwrap();
-        inner.destroyed = true;
-        inner.discoveries.clear();
-    }
-
     /// Connect to a peer by their public key
     pub fn connect(&self, pub_key: PublicKey) -> impl Future<Output = Result<Connection>> {
-        let destroyed = self.inner.read().unwrap().destroyed;
         let fut = self.inner.read().unwrap().dht.connect(pub_key, None);
-        async move {
-            if destroyed {
-                return Err(Error::Destroyed);
-            }
-            Ok(fut.await?)
-        }
+        async move { Ok(fut.await?) }
     }
 
     /// Bootstrap the DHT connection
@@ -542,21 +498,14 @@ impl Swarm {
         remote_public_key: PublicKey,
         destination: std::net::SocketAddr,
     ) -> impl Future<Output = Result<Connection>> {
-        let (destroyed, phs) = {
-            let inner = self.inner.read().unwrap();
-            (
-                inner.destroyed,
-                inner
-                    .dht
-                    .peer_handshake(PeerHandshakeArgs::new(remote_public_key, destination)),
-            )
+        let phs = {
+            self.inner
+                .read()
+                .unwrap()
+                .dht
+                .peer_handshake(PeerHandshakeArgs::new(remote_public_key, destination))
         };
-        async move {
-            if destroyed {
-                return Err(Error::Destroyed);
-            }
-            phs.await.map_err(Into::into)
-        }
+        async move { phs.await.map_err(Into::into) }
     }
 
     /// Get a stream of connection events (both client and server)
@@ -570,11 +519,10 @@ impl Swarm {
 
     /// Start listening and get unified connection stream
     pub async fn listen_all(&self) -> Result<ConnectionStream> {
-        let server = self.listen()?;
         Ok(ConnectionStream {
             inner: self.inner.clone(),
             connection_rx: self.connection_rx.clone(),
-            server: Some(server.await?),
+            server: Some(self.listen().await?),
         })
     }
 }
@@ -792,7 +740,6 @@ mod tests {
     #[tokio::test]
     async fn test_create_swarm() {
         let swarm = Swarm::default_config().await.unwrap();
-        assert!(!swarm.destroyed());
         assert_eq!(swarm.connections_count(), 0);
     }
 
@@ -808,18 +755,8 @@ mod tests {
         assert!(swarm.has_topic(&topic));
         assert_eq!(swarm.topics_count(), 1);
 
-        swarm.leave(&topic).unwrap();
+        swarm.leave(&topic);
         assert!(!swarm.has_topic(&topic));
         assert_eq!(swarm.topics_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_join_after_destroy_fails() {
-        let swarm = Swarm::default_config().await.unwrap();
-        swarm.destroy();
-
-        let topic = IdBytes::random();
-        let result = swarm.join(topic, JoinOpts::Client);
-        assert!(result.is_err());
     }
 }

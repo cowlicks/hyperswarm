@@ -203,7 +203,7 @@ async fn js_swarm_connects_to_rust_swarm_exchanges_messages() -> Result<()> {
     let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     rust_swarm.bootstrap().await?;
 
-    let mut server = rust_swarm.listen()?.await?;
+    let mut server = rust_swarm.listen().await?;
     rust_swarm.join(topic.into(), JoinOpts::Both)?;
     rust_swarm.flush().await?;
 
