@@ -296,7 +296,7 @@ impl DhtInner {
             values::PEER_HANDSHAKE => self.on_peer_handshake(*request, peer)?,
             values::PEER_HOLEPUNCH => todo!(),
             values::FIND_PEER => self.on_find_peer(*request, peer)?,
-            values::LOOKUP => todo!(),
+            values::LOOKUP => self.on_lookup(*request, peer)?,
             values::ANNOUNCE => self.on_announce(*request, peer)?,
             values::UNANNOUNCE => todo!(),
             x => todo!("{x}"),
@@ -377,6 +377,40 @@ impl DhtInner {
 
         // Look up the router for a self-announcing peer
         let value = self.peer_router.get(&target).map(|e| e.record.clone());
+
+        self.rpc.respond(&request, value, None, &from_peer)?;
+        Ok(())
+    }
+
+    /// Handle LOOKUP query - return up to 20 peer records for a topic.
+    fn on_lookup(&self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+        let Some(target) = request.target else {
+            return Ok(());
+        };
+        let target = IdBytes(target);
+
+        // Get up to 20 records from cache
+        let mut records: Vec<&[u8]> = self
+            .peer_records
+            .get(&target, 20)
+            .into_iter()
+            .map(|r| r.encoded.as_slice())
+            .collect();
+
+        // Also check router for a self-announcing peer on this topic
+        if let Some(entry) = self.peer_router.get(&target) {
+            if records.len() < 20 {
+                records.push(&entry.record);
+            }
+        }
+
+        // Encode as array of raw bytes using compact-encoding
+        let value = if records.is_empty() {
+            None
+        } else {
+            let slices: &[&[u8]] = &records;
+            Some(slices.to_encoded_bytes()?.to_vec())
+        };
 
         self.rpc.respond(&request, value, None, &from_peer)?;
         Ok(())
