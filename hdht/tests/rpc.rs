@@ -33,7 +33,7 @@ outputJson([...pub_key]);
 ",
         )
         .await?;
-    let sport: usize = tn
+    let port: usize = tn
         .repl
         .json_run_tcp("outputJson(server.dht.io.serverSocket._port)")
         .await?;
@@ -48,7 +48,7 @@ outputJson([...pub_key]);
     //let x = rpc.request(command, Some(idbytes), None, destination, None).await?;
     //let command = commands::DOWN_HINT;
     let command = commands::PING;
-    let addr = format!("127.0.0.1:{sport}");
+    let addr = format!("127.0.0.1:{port}");
     let destination: Peer = addr.parse()?;
     let x = rpc.request(command, None, None, destination, None).await?;
     assert_eq!(x.request.command, command);
@@ -75,7 +75,7 @@ outputJson([...pub_key]);
 ",
         )
         .await?;
-    let sport: usize = tn
+    let _port: usize = tn
         .repl
         .json_run_tcp("outputJson(server.dht.io.serverSocket._port)")
         .await?;

@@ -23,7 +23,7 @@ use dht_rpc::{
 };
 use futures::{Stream, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
-use tracing::{error, info, instrument, trace};
+use tracing::{error, info, instrument, trace, warn};
 
 use crate::{
     DEFAULT_BOOTSTRAP, Error, Keypair, Result,
@@ -35,7 +35,7 @@ use crate::{
     crypto::PublicKey,
     decode_peer_handshake_response, namespace,
     next_router::{StreamIdMaker, connection::Connection},
-    persistent::{PeerRecordCache, PeerRouter, RouterEntry},
+    persistent::{MAX_RECORDS_PER_TOPIC, PeerRecordCache, PeerRouter, RouterEntry},
     request_announce_or_unannounce_value,
     server::ServerFuture,
 };
@@ -283,6 +283,8 @@ impl DhtInner {
         self.listening_keypairs.insert(target, (keypair, tx));
     }
 
+    #[instrument(skip_all, err)]
+    // TODO add a new error enum: FromPeerError and use them here
     pub fn on_request(
         &mut self,
         CustomCommandRequest {
@@ -305,64 +307,54 @@ impl DhtInner {
     }
 
     /// Handle ANNOUNCE query - verify signature and store peer record.
+    // TODO maybe propogate an error here about bad user data instead of returning Ok(()).
+    // Note that using ? in poll_next is valid but it propagates the error.
     fn on_announce(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
-        // 1. Validate required fields
-        let Some(target) = request.target else {
-            return Ok(());
-        };
-        let Some(token) = request.token else {
-            return Ok(());
-        };
-        let Some(value) = &request.value else {
-            return Ok(());
-        };
-
-        // 2. Decode announce value
-        let Ok((ann, _)) = AnnounceRequestValue::decode(value) else {
-            return Ok(());
+        let RequestMsgData {
+            token,
+            target,
+            value,
+            ..
+        } = &request;
+        let (Some(target), Some(token), Some(value)) = (target, token, value) else {
+            return Err(Error::BadMsgFromPeer(format!(
+                "Received Announce message with missing field:
+target = [{target:?}], token = [{token:?}], value = [{value:?}]",
+            )));
         };
 
-        // 3. Encode peer for signature verification
-        let encoded_peer = match ann.peer.to_encoded_bytes() {
-            Ok(bytes) => bytes.to_vec(),
-            Err(_) => return Ok(()),
-        };
+        let (ann, _) = AnnounceRequestValue::decode(value).map_err(Error::EncodingErrorFromPeer)?;
 
-        // 4. Verify signature
+        let encoded_peer = ann
+            .peer
+            .to_encoded_bytes()
+            .map_err(Error::EncodingErrorFromPeer)?;
+
         let our_id = self.rpc.id();
         let signable = crate::crypto::make_signable_announce_or_unannounce(
-            IdBytes(target),
-            &token,
+            IdBytes(*target),
+            token,
             &our_id.0,
             &encoded_peer,
             &namespace::ANNOUNCE,
         );
-        if ann
-            .peer
-            .public_key
-            .verify(ann.signature, &signable)
-            .is_err()
-        {
-            trace!("ANNOUNCE: invalid signature");
-            return Ok(()); // Silent fail on invalid signature
-        }
+        ann.peer.public_key.verify(ann.signature, &signable)?;
 
-        // 5. Determine storage location
         let pubkey_hash = generic_hash(&*ann.peer.public_key);
-        let is_self_announce = pubkey_hash == target;
-        let target = IdBytes(target);
+        let is_self_announce = pubkey_hash == *target;
+        let target = IdBytes(*target);
 
-        // 6. Store record
         if is_self_announce {
-            self.peer_router
-                .set(target, RouterEntry::new(from_peer.addr, encoded_peer));
-            self.peer_records.remove(&target, &*ann.peer.public_key);
+            self.peer_router.set(
+                target,
+                RouterEntry::new(from_peer.addr, encoded_peer.into()),
+            );
+            self.peer_records.remove(&target, &ann.peer.public_key);
         } else {
             self.peer_records
-                .add(target, *ann.peer.public_key, encoded_peer);
+                .add(target, *ann.peer.public_key, encoded_peer.into());
         }
 
-        // 7. Reply with success (no value, no token, no closer nodes)
         self.rpc.respond(&request, None, Some(vec![]), &from_peer)?;
         Ok(())
     }
@@ -371,40 +363,40 @@ impl DhtInner {
     /// Used when target == hash(publicKey) - for direct peer lookups.
     fn on_find_peer(&self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
         let Some(target) = request.target else {
-            return Ok(());
+            return Err(Error::BadMsgFromPeer(
+                "Received FindPeer message without a 'target' field".into(),
+            ));
         };
         let target = IdBytes(target);
 
-        // Look up the router for a self-announcing peer
         let value = self.peer_router.get(&target).map(|e| e.record.clone());
 
         self.rpc.respond(&request, value, None, &from_peer)?;
         Ok(())
     }
 
-    /// Handle LOOKUP query - return up to 20 peer records for a topic.
+    /// Handle LOOKUP query - return up to 20 (MAX_RECORDS_PER_TOPIC) peer records for a topic.
     fn on_lookup(&self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
         let Some(target) = request.target else {
-            return Ok(());
+            return Err(Error::BadMsgFromPeer(
+                "Received Lookup message without a 'target' field".into(),
+            ));
         };
         let target = IdBytes(target);
 
-        // Get up to 20 records from cache
         let mut records: Vec<&[u8]> = self
             .peer_records
-            .get(&target, 20)
+            .get(&target, MAX_RECORDS_PER_TOPIC)
             .into_iter()
             .map(|r| r.encoded.as_slice())
             .collect();
 
-        // Also check router for a self-announcing peer on this topic
-        if let Some(entry) = self.peer_router.get(&target) {
-            if records.len() < 20 {
-                records.push(&entry.record);
-            }
+        if let Some(entry) = self.peer_router.get(&target)
+            && records.len() < MAX_RECORDS_PER_TOPIC
+        {
+            records.push(&entry.record);
         }
 
-        // Encode as array of raw bytes using compact-encoding
         let value = if records.is_empty() {
             None
         } else {
@@ -418,58 +410,44 @@ impl DhtInner {
 
     /// Handle UNANNOUNCE query - verify signature and remove peer record.
     fn on_unannounce(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
-        // 1. Validate required fields
-        let Some(target) = request.target else {
-            return Ok(());
-        };
-        let Some(token) = request.token else {
-            return Ok(());
-        };
-        let Some(value) = &request.value else {
-            return Ok(());
-        };
-
-        // 2. Decode announce value (same format as ANNOUNCE)
-        let Ok((ann, _)) = AnnounceRequestValue::decode(value) else {
-            return Ok(());
+        let RequestMsgData {
+            token,
+            target,
+            value,
+            ..
+        } = &request;
+        let (Some(target), Some(token), Some(value)) = (target, token, value) else {
+            return Err(Error::BadMsgFromPeer(format!(
+                "Received UnAnnounce message with missing field:
+target = [{target:?}], token = [{token:?}], value = [{value:?}]",
+            )));
         };
 
-        // 3. Encode peer for signature verification
-        let encoded_peer = match ann.peer.to_encoded_bytes() {
-            Ok(bytes) => bytes.to_vec(),
-            Err(_) => return Ok(()),
-        };
+        let (ann, _) = AnnounceRequestValue::decode(value).map_err(Error::EncodingErrorFromPeer)?;
+        let encoded_peer = ann
+            .peer
+            .to_encoded_bytes()
+            .map_err(Error::EncodingErrorFromPeer)?;
 
-        // 4. Verify signature with UNANNOUNCE namespace
         let our_id = self.rpc.id();
         let signable = crate::crypto::make_signable_announce_or_unannounce(
-            IdBytes(target),
-            &token,
+            IdBytes(*target),
+            token,
             &our_id.0,
             &encoded_peer,
             &namespace::UNANNOUNCE,
         );
-        if ann
-            .peer
-            .public_key
-            .verify(ann.signature, &signable)
-            .is_err()
-        {
-            trace!("UNANNOUNCE: invalid signature");
-            return Ok(()); // Silent fail on invalid signature
-        }
+        ann.peer.public_key.verify(ann.signature, &signable)?;
 
-        // 5. Remove record
         let pubkey_hash = generic_hash(&*ann.peer.public_key);
-        let is_self_announce = pubkey_hash == target;
-        let target = IdBytes(target);
+        let is_self_announce = pubkey_hash == *target;
+        let target = IdBytes(*target);
 
         if is_self_announce {
             self.peer_router.delete(&target);
         }
-        self.peer_records.remove(&target, &*ann.peer.public_key);
+        self.peer_records.remove(&target, &ann.peer.public_key);
 
-        // 6. Reply with success (no value, no token, no closer nodes)
         self.rpc.respond(&request, None, Some(vec![]), &from_peer)?;
         Ok(())
     }

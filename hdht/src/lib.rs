@@ -128,6 +128,12 @@ pub enum Error {
     /// Failed to connect
     #[error("Failed to connect")]
     ConnectionFailed,
+    /// Received bad request from a peer
+    // TODO maybe make multiple variants that can pass up the error
+    #[error("Received bad data from a peer: {0}")]
+    BadMsgFromPeer(String),
+    #[error("Failed to decode message from peer data from a peer: {0}")]
+    EncodingErrorFromPeer(EncodingError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

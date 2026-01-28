@@ -8,8 +8,10 @@ use std::{collections::HashMap, net::SocketAddr};
 
 use dht_rpc::IdBytes;
 
+// TODO I think this number  should come from the # of "closer_nodes" within the rpc query kbuckets
+// code.
 /// Maximum number of peer records stored per topic
-const MAX_RECORDS_PER_TOPIC: usize = 20;
+pub const MAX_RECORDS_PER_TOPIC: usize = 20;
 
 /// A stored peer record
 #[derive(Debug, Clone)]
@@ -35,13 +37,11 @@ impl PeerRecordCache {
     pub fn add(&mut self, topic: IdBytes, public_key: [u8; 32], encoded: Vec<u8>) {
         let records = self.records.entry(topic).or_default();
 
-        // Update if peer already exists
         if let Some(r) = records.iter_mut().find(|r| r.public_key == public_key) {
             r.encoded = encoded;
             return;
         }
 
-        // Evict oldest if at capacity
         if records.len() >= MAX_RECORDS_PER_TOPIC {
             records.remove(0);
         }
