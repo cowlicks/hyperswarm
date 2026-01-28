@@ -4,10 +4,10 @@
     //missing_debug_implementations, // TODO
     //missing_docs, // TODO
     redundant_lifetimes,
-    //unsafe_code, // TODO
+    unsafe_code,
     non_local_definitions,
-    clippy::needless_pass_by_value, // TODO
-    clippy::needless_pass_by_ref_mut, // TODO
+    clippy::needless_pass_by_value,
+    clippy::needless_pass_by_ref_mut,
     clippy::enum_glob_use
 )]
 
