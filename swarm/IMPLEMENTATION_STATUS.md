@@ -227,9 +227,140 @@ rand = "0.7.3"
 
 ---
 
+## API Comparison: Rust vs JavaScript
+
+### What JS Has That Rust Doesn't
+
+| Feature | JS API | Description |
+|---------|--------|-------------|
+| **Lifecycle** | `suspend()`, `resume()`, `destroy()` | Pause/resume network activity, explicit cleanup |
+| **Direct Peer** | `joinPeer(publicKey)`, `leavePeer(publicKey)` | Target specific peers without topic |
+| **Clear All** | `clear()` | Destroy all topic discoveries at once |
+| **Statistics** | `stats` property | Connection counts (opened/closed/attempted) |
+| **Firewall** | `firewall` callback | Filter incoming connections |
+| **Relay** | `relayThrough` callback | Relay coordination |
+| **Discovery Object** | `join()` returns `PeerDiscovery` | Has `flushed()`, `refresh()`, `destroy()` |
+
+### What Rust Has That JS Doesn't
+
+| Feature | Rust API | Description |
+|---------|----------|-------------|
+| **Direct Connect** | `connect(pub_key)` | Connect to peer by public key |
+| **Low-level Handshake** | `peer_handshake(key, addr)` | Connect to specific address |
+| **Explicit Bootstrap** | `bootstrap()` | Manually bootstrap DHT |
+| **Local Address** | `local_addr()` | Get listening socket address |
+
+### Client/Server Topic Association
+
+**Key distinction in JS hyperswarm:**
+
+| Connection Type | `peerInfo.client` | `peerInfo.topics` |
+|-----------------|-------------------|-------------------|
+| Client (we connect to them) | `true` | `[topic1, topic2, ...]` - topics from lookups |
+| Server (they connect to us) | `false` | `[]` - empty, unknown |
+
+- **Client mode** (`join(topic, { client: true })`): We do lookups, discover peers, and know which topics led us to them
+- **Server mode** (`join(topic, { server: true })`): We announce, they find us, we don't know what topic brought them
+
+**Rust implementation status:**
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `ConnectionEvent.client` flag | ✅ | Distinguishes initiator vs acceptor |
+| `PeerInfo.topics` for discovered peers | ✅ | Topics added during lookup |
+| Topics empty for server connections | ✅ | No PeerInfo created for incoming |
+| Topics in ConnectionEvent | ❌ | Must lookup PeerInfo separately |
+
+---
+
+## DHT Query Handling (hdht)
+
+### Current State
+
+In `hdht/src/adht.rs`, `DhtInner::on_request()` handles incoming DHT queries:
+
+```rust
+match command {
+    PEER_HANDSHAKE => self.on_peer_handshake(...)?,  // ✅ Implemented
+    PEER_HOLEPUNCH => todo!(),                        // ❌ Not implemented
+    FIND_PEER => { /* TODO */ }                       // ❌ Ignored (empty)
+    LOOKUP => todo!(),                                // ❌ Not implemented
+    ANNOUNCE => todo!(),                              // ❌ Not implemented
+    UNANNOUNCE => todo!(),                            // ❌ Not implemented
+}
+```
+
+### What Each Query Does (from JS `persistent.js`)
+
+| Query | Purpose | JS Implementation |
+|-------|---------|-------------------|
+| **LOOKUP** | Find peers announced on a topic | Returns up to 20 peer records from `RecordCache` |
+| **FIND_PEER** | Find a specific peer by pubkey hash | Returns single record from `_router` |
+| **ANNOUNCE** | Store a peer record (with signature) | Verifies signature, stores in `RecordCache` or `_router` |
+| **UNANNOUNCE** | Remove a peer record (with signature) | Verifies signature, removes from storage |
+| **PEER_HOLEPUNCH** | NAT traversal coordination | Forwards holepunch messages between peers |
+
+### Data Structures Needed
+
+1. **RecordCache** - Stores peer records by topic hash
+   - `add(topic_hash, public_key, record)` - Store a peer record
+   - `get(topic_hash, limit)` - Get up to N peer records for a topic
+   - `remove(topic_hash, public_key)` - Remove a peer record
+
+2. **Router** - Stores "self-announcing" peers (where topic = hash(pubkey))
+   - `set(key, { relay, record })` - Store a direct peer record
+   - `get(key)` - Get the peer record
+   - `delete(key)` - Remove the record
+
+### Implementation Plan
+
+#### Phase 1: Storage Layer
+1. Create `PeerRecordCache` struct in hdht
+   - Use `HashMap<IdBytes, Vec<PeerRecord>>` for topic → records
+   - Add LRU eviction or TTL-based expiry
+   - Max 20 records per topic (like JS)
+
+2. Create `PeerRouter` struct
+   - Use `HashMap<IdBytes, RouterEntry>` for pubkey_hash → record
+   - Store relay address and encoded peer record
+
+#### Phase 2: Query Handlers
+1. **`on_lookup()`** - Query the `PeerRecordCache`, return encoded records
+2. **`on_find_peer()`** - Query the `PeerRouter`, return single record
+3. **`on_announce()`**:
+   - Decode announce message
+   - Verify signature using `crypto_sign_verify_detached`
+   - If `target == hash(pubkey)`: store in `PeerRouter`
+   - Else: store in `PeerRecordCache`
+   - Reply with `{ token: false, closerNodes: false }`
+
+4. **`on_unannounce()`**:
+   - Decode unannounce message
+   - Verify signature
+   - Remove from appropriate storage
+   - Reply
+
+#### Phase 3: Holepunching (Future)
+- `on_peer_holepunch()` - Forward holepunch messages between peers behind NAT
+
+### Files to Create/Modify
+
+| File | Changes |
+|------|---------|
+| `hdht/src/persistent.rs` | New: `PeerRecordCache`, `PeerRouter` |
+| `hdht/src/adht.rs` | Add `on_lookup`, `on_find_peer`, `on_announce`, `on_unannounce` |
+| `hdht/src/cenc.rs` | Add `Announce` message encoding if not present |
+
+### Why This Matters
+
+Without query handling, Rust DHT nodes are "selfish" - they can query the network but don't help route or store data for others. Implementing these handlers makes Rust nodes full DHT participants, improving network health and enabling pure-Rust DHT networks.
+
+---
+
 ## Next Steps
 
 1. **Test stability** - Ensure all relay tests pass consistently
 2. **Auto-connect** - Wire up discovered peers to auto-connect via `dht.connect()`
 3. **Connection management** - Implement retry backoff and connection limits
 4. **Swarm events** - Expose connection/disconnection events to users
+5. **DHT query handling** - Implement LOOKUP, FIND_PEER, ANNOUNCE, UNANNOUNCE handlers
