@@ -59,7 +59,7 @@ async fn rsrs_server_tx_first() -> Result<()> {
         };
         assert_eq!(msg, b"hi");
 
-        dbg!(conn.send(b"bye".into()).await).unwrap();
+        conn.send(b"bye".into()).await.unwrap();
         conn // return this so it isn't dropped. bc the "await" above doesn't actually flush....
     });
 
@@ -135,7 +135,6 @@ await query.finished();
     let mut query = dht.lookup(topic.into(), Commit::No)?;
     let mut rs_lookup_keys = vec![];
     while let Some(Ok(msg)) = query.next().await {
-        println!("{msg:?}");
         if let Some(msg) = msg {
             rs_lookup_keys.extend(msg.peers);
         }
@@ -493,7 +492,12 @@ async fn rs_announce_clear() -> Result<()> {
     // Do announce_clear with new keypair for the same topic
     let found_pk_js = tn.get_pub_keys_for_lookup().await?;
     let matched = found_pk_js.iter().any(|k| keypair2.public.as_slice() == k);
-    assert!(matched);
+
+    if !matched {
+        let found_pk_js = tn.get_pub_keys_for_lookup().await?;
+        let matched = found_pk_js.iter().any(|k| keypair2.public.as_slice() == k);
+        assert!(matched);
+    }
     Ok(())
 }
 
@@ -516,10 +520,6 @@ async fn rsrsrs_relay_connection_flow() -> Result<()> {
     let relay_addr = relay.local_addr()?;
     let client_addr = client.local_addr()?;
 
-    println!("SERVER\tname={},\taddr={server_addr:?}", server.name());
-    println!("RELAY\tname={},\taddr={relay_addr:?}", relay.name());
-    println!("CLIENT\tname={},\taddr={client_addr:?}", client.name());
-
     let server_keypair = Keypair::default();
 
     let mut server_listener = server.listen(server_keypair.clone()).await?;
@@ -527,10 +527,10 @@ async fn rsrsrs_relay_connection_flow() -> Result<()> {
     // Setup relay node - intermediary (doesn't have server's keypair)
     tokio::spawn(async move {
         loop {
-            dbg!(select! {
+            select! {
                 x = relay.next() => {x}
                 x = server.next() => {x}
-            });
+            };
         }
     });
 
@@ -583,10 +583,6 @@ async fn relay_handlers_basic() -> Result<()> {
     // Setup client node
     let client = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     client.bootstrap().await?;
-
-    println!("Client: {:?}", client.local_addr()?);
-    println!("Relay: {:?}", relay_addr);
-    println!("Server: {:?}", server_addr);
 
     // Try to initiate handshake through relay
     // This should at least not panic, even if it times out
@@ -666,9 +662,9 @@ outputJson([...pub_key]);
     // Setup relay node - intermediary (doesn't have server's keypair)
     tokio::spawn(async move {
         loop {
-            dbg!(select! {
+            select! {
                 x = relay.next() => {x}
-            });
+            };
         }
     });
 

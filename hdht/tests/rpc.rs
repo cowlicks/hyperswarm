@@ -79,7 +79,6 @@ outputJson([...pub_key]);
         .repl
         .json_run_tcp("outputJson(server.dht.io.serverSocket._port)")
         .await?;
-    println!("SPORT {sport}");
     // For FIND_NODE test
     let idbytes: Vec<u8> = tn
         .repl
@@ -88,8 +87,7 @@ outputJson([...pub_key]);
     let idbytes: [u8; 32] = idbytes.try_into().unwrap();
     let command = hyperdht::commands::FIND_PEER;
     log();
-    let x = rpc.query(QueryArgs::new(command, idbytes.into())).await?;
-    dbg!(&x);
+    let _x = rpc.query(QueryArgs::new(command, idbytes.into())).await?;
     //assert_eq!(x.request.command, command);
     Ok(())
 }
