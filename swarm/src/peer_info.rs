@@ -78,6 +78,28 @@ impl PeerOrigin {
     }
 }
 
+/// Trust level based on connection history
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TrustLevel {
+    /// Never successfully connected
+    #[default]
+    Unknown,
+    /// Had at least one successful connection
+    Proven,
+    /// Blocked due to firewall or too many failures
+    Banned,
+}
+
+impl TrustLevel {
+    pub fn is_proven(&self) -> bool {
+        matches!(self, Self::Proven)
+    }
+
+    pub fn is_banned(&self) -> bool {
+        matches!(self, Self::Banned)
+    }
+}
+
 /// Priority levels for peer connection attempts
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
@@ -107,11 +129,8 @@ pub struct PeerInfo {
     /// Whether to attempt reconnection on disconnect
     pub reconnecting: bool,
 
-    /// Whether the peer has been cryptographically verified (successful connection)
-    pub proven: bool,
-
-    /// Whether this peer is banned (firewall blocked or too many failures)
-    pub banned: bool,
+    /// Trust level based on connection history
+    pub trust: TrustLevel,
 
     /// Number of failed connection attempts
     pub attempts: u32,
@@ -136,8 +155,7 @@ impl PeerInfo {
             public_key,
             relay_addresses: Vec::new(),
             reconnecting: true,
-            proven: false,
-            banned: false,
+            trust: TrustLevel::Unknown,
             attempts: 0,
             priority: Priority::Normal,
             state: ConnectionState::Idle,
@@ -160,7 +178,7 @@ impl PeerInfo {
         self.state = ConnectionState::Connected {
             since: Instant::now(),
         };
-        self.proven = true;
+        self.trust = TrustLevel::Proven;
         self.update_priority();
     }
 
@@ -195,13 +213,13 @@ impl PeerInfo {
 
     /// Ban this peer
     pub fn ban(&mut self) {
-        self.banned = true;
+        self.trust = TrustLevel::Banned;
         self.priority = Priority::VeryLow;
     }
 
     /// Update the priority based on current state
     pub fn update_priority(&mut self) -> bool {
-        if self.banned {
+        if self.trust.is_banned() {
             self.priority = Priority::VeryLow;
             return false;
         }
@@ -214,9 +232,9 @@ impl PeerInfo {
             && (self.priority != old_priority || !self.state.is_queued())
     }
 
-    /// Calculate priority based on attempts and proven status
+    /// Calculate priority based on attempts and trust level
     fn calculate_priority(&self) -> Priority {
-        match (self.proven, self.attempts) {
+        match (self.trust.is_proven(), self.attempts) {
             // Proven peers get higher priority
             (true, 0) => Priority::VeryHigh,
             (true, 1) => Priority::VeryHigh,
@@ -235,7 +253,7 @@ impl PeerInfo {
 
     /// Reset state for re-discovery
     pub fn reset(&mut self) {
-        if !self.proven {
+        if !self.trust.is_proven() {
             self.attempts = 0;
         }
         self.update_priority();
@@ -249,7 +267,7 @@ impl PeerInfo {
         }
 
         // GC if banned or too many attempts
-        self.banned || self.attempts > 10
+        self.trust.is_banned() || self.attempts > 10
     }
 }
 
@@ -269,18 +287,17 @@ mod tests {
     fn test_new_peer_priority() {
         let info = PeerInfo::new(IdBytes::random());
         assert_eq!(info.priority, Priority::Normal);
-        assert!(!info.proven);
-        assert!(!info.banned);
+        assert_eq!(info.trust, TrustLevel::Unknown);
         assert_eq!(info.attempts, 0);
     }
 
     #[test]
     fn test_connected_sets_proven() {
         let mut info = PeerInfo::new(IdBytes::random());
-        assert!(!info.proven);
+        assert!(!info.trust.is_proven());
 
         info.connected();
-        assert!(info.proven);
+        assert!(info.trust.is_proven());
         assert_eq!(info.priority, Priority::VeryHigh);
     }
 
@@ -289,7 +306,7 @@ mod tests {
         let mut info = PeerInfo::new(IdBytes::random());
         info.ban();
 
-        assert!(info.banned);
+        assert!(info.trust.is_banned());
         assert_eq!(info.priority, Priority::VeryLow);
     }
 
@@ -320,7 +337,7 @@ mod tests {
     #[test]
     fn test_proven_peer_priority() {
         let mut info = PeerInfo::new(IdBytes::random());
-        info.proven = true;
+        info.trust = TrustLevel::Proven;
 
         // Proven with no attempts - VeryHigh
         assert_eq!(info.calculate_priority(), Priority::VeryHigh);
@@ -345,7 +362,7 @@ mod tests {
         assert!(info.should_gc());
 
         // Reset and add topic - should not GC
-        info.banned = false;
+        info.trust = TrustLevel::Unknown;
         info.topics.insert(IdBytes::random());
         assert!(!info.should_gc());
 

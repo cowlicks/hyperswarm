@@ -34,7 +34,7 @@ mod retry;
 pub use config::SwarmConfig;
 pub use connection_set::{AddResult, ConnectionInfo, ConnectionSet};
 pub use error::{Error, Result};
-pub use peer_info::{ConnectionState, PeerInfo, PeerOrigin, Priority};
+pub use peer_info::{ConnectionState, PeerInfo, PeerOrigin, Priority, TrustLevel};
 pub use queue::{PeerQueue, QueuedPeer};
 pub use retry::{RetryEntry, RetryTimer};
 
@@ -196,7 +196,7 @@ impl SwarmInner {
             if self.config.auto_connect     // Auto-connect enabled
                 && !peer_already_connected  // Not already connected
                 && peer_info.state.is_idle() // Not busy (queued/waiting/connecting)
-                && !peer_info.banned        // Nor banned
+                && !peer_info.trust.is_banned() // Nor banned
             {
                 peer_info.state = ConnectionState::Queued;
                 let priority = peer_info.priority;
@@ -242,7 +242,7 @@ impl SwarmInner {
                 // Schedule retry if enabled and not banned
                 let should_retry = self.config.auto_retry
                     && peer_info.reconnecting
-                    && !peer_info.banned
+                    && !peer_info.trust.is_banned()
                     && peer_info.priority != Priority::VeryLow;
 
                 if should_retry {
@@ -261,7 +261,7 @@ impl SwarmInner {
             let Some(peer_info) = self.peers.get_mut(&entry.public_key) else {
                 continue;
             };
-            if !peer_info.banned && peer_info.state.is_waiting() && !already_connected {
+            if !peer_info.trust.is_banned() && peer_info.state.is_waiting() && !already_connected {
                 peer_info.state = ConnectionState::Queued;
                 self.queue.push(QueuedPeer {
                     public_key: entry.public_key,
