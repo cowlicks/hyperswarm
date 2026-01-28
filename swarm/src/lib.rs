@@ -34,7 +34,7 @@ mod retry;
 pub use config::SwarmConfig;
 pub use connection_set::{AddResult, ConnectionInfo, ConnectionSet};
 pub use error::{Error, Result};
-pub use peer_info::{PeerInfo, Priority};
+pub use peer_info::{ConnectionState, PeerInfo, Priority};
 pub use queue::{PeerQueue, QueuedPeer};
 pub use retry::{RetryEntry, RetryTimer};
 
@@ -195,12 +195,10 @@ impl SwarmInner {
             // Enqueue for connection if:
             if self.config.auto_connect     // Auto-connect enabled
                 && !peer_already_connected  // Not already connected
-                && !peer_info.queued        // Nor already queued
-                && !peer_info.connecting    // Nor connecting
-                // Nor banned
-                && !peer_info.banned
+                && peer_info.state.is_idle() // Not busy (queued/waiting/connecting)
+                && !peer_info.banned        // Nor banned
             {
-                peer_info.queued = true;
+                peer_info.state = ConnectionState::Queued;
                 let priority = peer_info.priority;
                 self.queue.push(QueuedPeer {
                     public_key: pk,
@@ -248,7 +246,7 @@ impl SwarmInner {
                     && peer_info.priority != Priority::VeryLow;
 
                 if should_retry {
-                    peer_info.waiting = true;
+                    peer_info.state = ConnectionState::Waiting;
                     let attempts = peer_info.attempts;
                     self.retry_timer.schedule(RetryEntry::new(pk, attempts));
                 }
@@ -263,9 +261,8 @@ impl SwarmInner {
             let Some(peer_info) = self.peers.get_mut(&entry.public_key) else {
                 continue;
             };
-            peer_info.waiting = false;
-            if !peer_info.banned && !peer_info.connecting && !already_connected {
-                peer_info.queued = true;
+            if !peer_info.banned && peer_info.state.is_waiting() && !already_connected {
+                peer_info.state = ConnectionState::Queued;
                 self.queue.push(QueuedPeer {
                     public_key: entry.public_key,
                     priority: peer_info.priority,
@@ -302,18 +299,16 @@ impl SwarmInner {
                     None => continue, // Peer was removed
                 };
 
-                // Skip if already connected or connecting
-                if already_connected || peer_info.connecting {
-                    peer_info.queued = false;
+                // Skip if already connected or not queued
+                if already_connected || !peer_info.state.is_queued() {
+                    peer_info.state = ConnectionState::Idle;
                     continue;
                 }
 
                 // Get relay addresses before marking as connecting
                 let relay_addresses = peer_info.relay_addresses.clone();
 
-                peer_info.queued = false;
-                peer_info.connecting = true;
-                peer_info.last_attempt = Some(Instant::now());
+                peer_info.state = ConnectionState::Connecting;
 
                 (queued.public_key, relay_addresses)
             };

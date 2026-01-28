@@ -11,6 +11,49 @@ use dht_rpc::IdBytes;
 /// Minimum connection time before resetting attempt counter (15 seconds)
 const MIN_CONNECTION_TIME: Duration = Duration::from_secs(15);
 
+/// Connection lifecycle state
+#[derive(Debug, Clone, Default)]
+pub enum ConnectionState {
+    /// Not doing anything
+    #[default]
+    Idle,
+    /// In the connection queue
+    Queued,
+    /// Waiting in retry timer
+    Waiting,
+    /// Currently attempting to connect
+    Connecting,
+    /// Active connection established
+    Connected { since: Instant },
+}
+
+impl ConnectionState {
+    pub fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    pub fn is_queued(&self) -> bool {
+        matches!(self, Self::Queued)
+    }
+
+    pub fn is_waiting(&self) -> bool {
+        matches!(self, Self::Waiting)
+    }
+
+    pub fn is_connecting(&self) -> bool {
+        matches!(self, Self::Connecting)
+    }
+
+    pub fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected { .. })
+    }
+
+    /// Check if peer is busy (queued, waiting, or connecting)
+    pub fn is_busy(&self) -> bool {
+        matches!(self, Self::Queued | Self::Waiting | Self::Connecting)
+    }
+}
+
 /// Priority levels for peer connection attempts
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
@@ -52,8 +95,8 @@ pub struct PeerInfo {
     /// Current priority level
     pub priority: Priority,
 
-    /// Whether this peer is currently queued for connection
-    pub queued: bool,
+    /// Connection lifecycle state
+    pub state: ConnectionState,
 
     /// Whether we initiated the connection (true) or accepted it (false)
     pub client: bool,
@@ -61,20 +104,8 @@ pub struct PeerInfo {
     /// Whether this is an explicit peer (added via join_peer)
     pub explicit: bool,
 
-    /// Whether waiting in retry timer
-    pub waiting: bool,
-
-    /// Whether currently attempting to connect
-    pub connecting: bool,
-
     /// Topics this peer is associated with
     pub topics: HashSet<IdBytes>,
-
-    /// When this peer was last connected
-    pub connected_time: Option<Instant>,
-
-    /// When the last connection attempt started
-    pub last_attempt: Option<Instant>,
 }
 
 impl PeerInfo {
@@ -88,14 +119,10 @@ impl PeerInfo {
             banned: false,
             attempts: 0,
             priority: Priority::Normal,
-            queued: false,
+            state: ConnectionState::Idle,
             client: false,
             explicit: false,
-            waiting: false,
-            connecting: false,
             topics: HashSet::new(),
-            connected_time: None,
-            last_attempt: None,
         }
     }
 
@@ -110,17 +137,18 @@ impl PeerInfo {
 
     /// Called when a connection is successfully established
     pub fn connected(&mut self) {
-        self.connecting = false;
+        self.state = ConnectionState::Connected {
+            since: Instant::now(),
+        };
         self.proven = true;
-        self.connected_time = Some(Instant::now());
         self.update_priority();
     }
 
     /// Called when a connection is closed
     pub fn disconnected(&mut self) {
         // Only increment attempts if connection was short-lived
-        if let Some(connected_time) = self.connected_time {
-            if connected_time.elapsed() < MIN_CONNECTION_TIME {
+        if let ConnectionState::Connected { since } = self.state {
+            if since.elapsed() < MIN_CONNECTION_TIME {
                 self.attempts = self.attempts.saturating_add(1);
             } else {
                 // Long-lived connection - reset attempts
@@ -130,7 +158,7 @@ impl PeerInfo {
             // Never connected - increment attempts
             self.attempts = self.attempts.saturating_add(1);
         }
-        self.connected_time = None;
+        self.state = ConnectionState::Idle;
         self.update_priority();
     }
 
@@ -162,7 +190,8 @@ impl PeerInfo {
         self.priority = self.calculate_priority();
 
         // Return true if should be queued (priority changed or is high enough)
-        self.priority != Priority::VeryLow && (self.priority != old_priority || !self.queued)
+        self.priority != Priority::VeryLow
+            && (self.priority != old_priority || !self.state.is_queued())
     }
 
     /// Calculate priority based on attempts and proven status
@@ -194,12 +223,8 @@ impl PeerInfo {
 
     /// Check if this peer should be garbage collected
     pub fn should_gc(&self) -> bool {
-        // Don't GC if:
-        // - Currently queued
-        // - Waiting in retry timer
-        // - Is an explicit peer
-        // - Has active topics
-        if self.queued || self.waiting || self.explicit || !self.topics.is_empty() {
+        // Don't GC if busy, explicit, or has topics
+        if self.state.is_busy() || self.explicit || !self.topics.is_empty() {
             return false;
         }
 
@@ -311,7 +336,7 @@ mod tests {
 
         // Queued peer should not be GC'd
         info.explicit = false;
-        info.queued = true;
+        info.state = ConnectionState::Queued;
         assert!(!info.should_gc());
     }
 }
