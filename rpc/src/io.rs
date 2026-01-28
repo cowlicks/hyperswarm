@@ -20,7 +20,7 @@ use wasm_timer::Instant;
 
 use super::{
     Command, Peer, QueryAndTid,
-    cenc::{generic_hash, generic_hash_with_key, ipv4},
+    cenc::{generic_hash, generic_hash_with_key},
     message::{MsgData, ReplyMsgData, RequestMsgData},
     query::QueryId,
     stateobserver::Observer,
@@ -73,7 +73,10 @@ impl Secrets {
     }
 
     pub fn token(&self, peer: &Peer, secret_index: usize) -> Result<[u8; 32]> {
-        generic_hash_with_key(&ipv4(&peer.addr)?.octets()[..], &self.secrets[secret_index])
+        generic_hash_with_key(
+            &peer.socketv4()?.ip().octets()[..],
+            &self.secrets[secret_index],
+        )
     }
 }
 

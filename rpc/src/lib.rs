@@ -1610,11 +1610,8 @@ impl Peer {
     /// Encoded size of a peer: 4 bytes for a Ipv4Addr and 2 bytes for a u16.
     const ENCODED_SIZE: usize = 6;
 
-    pub fn ipv4_addr(&self) -> Result<SocketAddrV4> {
-        match self.addr {
-            SocketAddr::V4(socket_addr_v4) => Ok(socket_addr_v4),
-            SocketAddr::V6(_socket_addr_v6) => Err(Error::Ipv6NotSupported),
-        }
+    pub fn socketv4(&self) -> Result<&SocketAddrV4> {
+        socket_into_v4(&self.addr)
     }
     pub fn new(addr: SocketAddr) -> Self {
         Self {

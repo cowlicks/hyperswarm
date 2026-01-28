@@ -1,6 +1,6 @@
 use std::{
     convert::TryFrom,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{Ipv4Addr, SocketAddr},
 };
 
 use compact_encoding::{
@@ -13,6 +13,7 @@ use crate::{
     Command, Error, ExternalCommand, IdBytes, InternalCommand, Peer, Result,
     constants::{HASH_SIZE, ID_SIZE, REQUEST_ID, RESPONSE_ID},
     message::{MsgData, ReplyMsgData, RequestMsgData},
+    socket_into_v4,
 };
 
 impl CompactEncoding for InternalCommand {
@@ -49,12 +50,8 @@ impl CompactEncoding for Peer {
     }
 
     fn encode<'a>(&self, buffer: &'a mut [u8]) -> std::result::Result<&'a mut [u8], EncodingError> {
-        let rest = if let IpAddr::V4(ip) = self.addr.ip() {
-            ip.encode(buffer)?
-        } else {
-            panic!("Peer's only support ipv4")
-        };
-        self.addr.port().encode(rest)
+        let ip = self.socketv4()?;
+        ip.encode(buffer)
     }
 
     fn decode(buffer: &[u8]) -> std::result::Result<(Self, &[u8]), EncodingError>
@@ -85,25 +82,14 @@ impl VecEncodable for Peer {
     }
 }
 
-pub fn ipv4(addr: &SocketAddr) -> Result<Ipv4Addr> {
-    if let IpAddr::V4(ip) = addr.ip() {
-        return Ok(ip);
-    }
-    Err(crate::Error::Ipv6NotSupported)
-}
-
 const IP_AND_PORT_NUM_BYTES: usize = 6;
 
 /// TODO this will panic for ipv6
 fn id_from_socket(addr: &SocketAddr) -> [u8; ID_SIZE] {
+    let addr = socket_into_v4(addr).expect("TODO panics for ipv6");
     let mut from_buff = vec![0; IP_AND_PORT_NUM_BYTES];
-    let rest = if let IpAddr::V4(ip) = addr.ip() {
-        ip.encode(&mut from_buff).expect("TODO")
-    } else {
-        panic!("We only support ipv4")
-    };
+    addr.encode(&mut from_buff).expect("should always fit");
 
-    let _ = addr.port().encode(rest).expect("TODO");
     generic_hash(&from_buff)
 }
 
