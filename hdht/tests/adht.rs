@@ -518,7 +518,6 @@ async fn rsrsrs_relay_connection_flow() -> Result<()> {
 
     let server_addr = server.local_addr()?;
     let relay_addr = relay.local_addr()?;
-    let client_addr = client.local_addr()?;
 
     let server_keypair = Keypair::default();
 
@@ -573,7 +572,6 @@ async fn relay_handlers_basic() -> Result<()> {
     let server_keypair = Keypair::default();
     server.bootstrap().await?;
     let _server_listener = server.listen(server_keypair.clone()).await?;
-    let server_addr = server.local_addr()?;
 
     // Setup relay node
     let relay = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
