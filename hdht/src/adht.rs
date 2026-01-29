@@ -121,12 +121,14 @@ impl Future for ConnectFuture {
 
 pub struct Dht {
     inner: Arc<RwLock<DhtInner>>,
+    driver: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Dht {
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
             inner: Arc::new(RwLock::new(DhtInner::with_config(config).await?)),
+            driver: None,
         })
     }
     pub fn name(&self) -> String {
@@ -218,6 +220,44 @@ impl Dht {
         self.inner.write().unwrap().add_listening_key(keypair, tx);
 
         ServerFuture::new(rx, self.inner.clone(), announcer)
+    }
+
+    /// Spawn a background task that drives this DHT's event loop.
+    /// The task is automatically aborted when `Dht` is dropped.
+    pub fn drive(&mut self) {
+        let inner = self.inner.clone();
+
+        let handle = tokio::spawn(async move {
+            use futures::StreamExt;
+
+            // A wrapper to drive  DhtInner
+            struct Driver(Arc<RwLock<DhtInner>>);
+
+            impl Stream for Driver {
+                type Item = Result<CustomCommandRequest>;
+
+                fn poll_next(
+                    self: Pin<&mut Self>,
+                    cx: &mut Context<'_>,
+                ) -> Poll<Option<Self::Item>> {
+                    let mut inner = self.0.write().unwrap();
+                    Pin::new(&mut *inner).poll_next(cx)
+                }
+            }
+
+            let mut driver = Driver(inner);
+            while driver.next().await.is_some() {}
+        });
+
+        self.driver = Some(handle);
+    }
+}
+
+impl Drop for Dht {
+    fn drop(&mut self) {
+        if let Some(handle) = self.driver.take() {
+            handle.abort();
+        }
     }
 }
 
