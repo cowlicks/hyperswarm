@@ -51,7 +51,7 @@ impl Deref for PublicKey {
 }
 
 impl PublicKey {
-    pub fn verify(&self, signature: Signature2, message: &[u8]) -> crate::Result<()> {
+    pub fn verify(&self, signature: &Signature2, message: &[u8]) -> crate::Result<()> {
         #[expect(unsafe_code, reason = "needed to use libsodium bindings")]
         let res = unsafe {
             libsodium_sys::crypto_sign_verify_detached(

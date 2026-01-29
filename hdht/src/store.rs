@@ -91,7 +91,7 @@ impl Store {
             .take()
             .and_then(|buf| Mutable::decode(buf.as_slice()).ok())
         {
-            return self.query_mut(query, mutable);
+            return self.query_mut(query, &mutable);
         }
         query.into_response_with_error(ERR_INVALID_INPUT)
     }
@@ -120,8 +120,8 @@ impl Store {
         }
     }
 
-    pub fn query_mut(&mut self, mut query: CommandQuery, mutable: Mutable) -> CommandQueryResponse {
-        let key = StorageKey::Mutable(Self::get_mut_key(&mutable, &query.target));
+    pub fn query_mut(&mut self, mut query: CommandQuery, mutable: &Mutable) -> CommandQueryResponse {
+        let key = StorageKey::Mutable(Self::get_mut_key(mutable, &query.target));
         if let Some(val) = self.inner.get(&key).and_then(StorageEntry::as_mutable)
             && val.seq.unwrap_or_default() >= mutable.seq.unwrap_or_default()
         {

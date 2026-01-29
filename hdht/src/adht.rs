@@ -169,7 +169,7 @@ impl Dht {
     }
     pub fn find_peer(
         &self,
-        pub_key: PublicKey,
+        pub_key: &PublicKey,
         closest_nodes: Option<Vec<Peer>>,
     ) -> Result<FindPeer> {
         self.inner.read().unwrap().find_peer(pub_key, closest_nodes)
@@ -336,12 +336,12 @@ impl DhtInner {
     ) -> Result<()> {
         use crate::commands::values;
         match command {
-            values::PEER_HANDSHAKE => self.on_peer_handshake(*request, peer)?,
+            values::PEER_HANDSHAKE => self.on_peer_handshake(&request, &peer)?,
             values::PEER_HOLEPUNCH => todo!(),
-            values::FIND_PEER => self.on_find_peer(*request, peer)?,
-            values::LOOKUP => self.on_lookup(*request, peer)?,
+            values::FIND_PEER => self.on_find_peer(&request, &peer)?,
+            values::LOOKUP => self.on_lookup(&request, &peer)?,
             values::ANNOUNCE => self.on_announce(*request, peer)?,
-            values::UNANNOUNCE => self.on_unannounce(*request, peer)?,
+            values::UNANNOUNCE => self.on_unannounce(&request, &peer)?,
             x => todo!("{x}"),
         }
         Ok(())
@@ -380,7 +380,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             &encoded_peer,
             &namespace::ANNOUNCE,
         );
-        ann.peer.public_key.verify(ann.signature, &signable)?;
+        ann.peer.public_key.verify(&ann.signature, &signable)?;
 
         let pubkey_hash = generic_hash(&*ann.peer.public_key);
         let is_self_announce = pubkey_hash == *target;
@@ -403,7 +403,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
 
     /// Handle FIND_PEER query - return a single peer record from the router.
     /// Used when target == hash(publicKey) - for direct peer lookups.
-    fn on_find_peer(&self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+    fn on_find_peer(&self, request: &RequestMsgData, from_peer: &Peer) -> Result<()> {
         let Some(target) = request.target else {
             return Err(Error::BadMsgFromPeer(
                 "Received FindPeer message without a 'target' field".into(),
@@ -413,12 +413,12 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
 
         let value = self.peer_router.get(&target).map(|e| e.record.clone());
 
-        self.rpc.respond(&request, value, None, &from_peer)?;
+        self.rpc.respond(request, value, None, from_peer)?;
         Ok(())
     }
 
     /// Handle LOOKUP query - return up to 20 (MAX_RECORDS_PER_TOPIC) peer records for a topic.
-    fn on_lookup(&self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+    fn on_lookup(&self, request: &RequestMsgData, from_peer: &Peer) -> Result<()> {
         let Some(target) = request.target else {
             return Err(Error::BadMsgFromPeer(
                 "Received Lookup message without a 'target' field".into(),
@@ -454,18 +454,18 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             Some(peers.to_encoded_bytes()?.to_vec())
         };
 
-        self.rpc.respond(&request, value, None, &from_peer)?;
+        self.rpc.respond(request, value, None, from_peer)?;
         Ok(())
     }
 
     /// Handle UNANNOUNCE query - verify signature and remove peer record.
-    fn on_unannounce(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+    fn on_unannounce(&mut self, request: &RequestMsgData, from_peer: &Peer) -> Result<()> {
         let RequestMsgData {
             token,
             target,
             value,
             ..
-        } = &request;
+        } = request;
         let (Some(target), Some(token), Some(value)) = (target, token, value) else {
             return Err(Error::BadMsgFromPeer(format!(
                 "Received UnAnnounce message with missing field:
@@ -487,7 +487,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             &encoded_peer,
             &namespace::UNANNOUNCE,
         );
-        ann.peer.public_key.verify(ann.signature, &signable)?;
+        ann.peer.public_key.verify(&ann.signature, &signable)?;
 
         let pubkey_hash = generic_hash(&*ann.peer.public_key);
         let is_self_announce = pubkey_hash == *target;
@@ -498,7 +498,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
         }
         self.peer_records.remove(&target, &ann.peer.public_key);
 
-        self.rpc.respond(&request, None, Some(vec![]), &from_peer)?;
+        self.rpc.respond(request, None, Some(vec![]), from_peer)?;
         Ok(())
     }
 
@@ -506,8 +506,8 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
     /// Relay doesn't create a UDX connection. Just pass message around to the server.
     pub fn on_peer_handshake_as_relay(
         &mut self,
-        request: RequestMsgData,
-        from_peer: Peer,
+        request: &RequestMsgData,
+        from_peer: &Peer,
         php: PeerHandshakePayload,
     ) -> Result<()> {
         match php.mode {
@@ -540,8 +540,8 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
     /// Handle PeerHandshake with mode = FromClient when we are a relay.
     fn on_peer_handshake_as_relay_from_client(
         &self,
-        request: RequestMsgData,
-        from_peer: Peer,
+        request: &RequestMsgData,
+        from_peer: &Peer,
         php: PeerHandshakePayload,
     ) -> Result<()> {
         // If no relay address is known, respond with closer nodes to help routing
@@ -595,8 +595,8 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
     }
     fn on_peer_handshake_as_relay_from_server(
         &self,
-        request: RequestMsgData,
-        from_peer: Peer,
+        request: &RequestMsgData,
+        from_peer: &Peer,
         php: PeerHandshakePayload,
     ) -> Result<()> {
         let peer_address = php
@@ -615,7 +615,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             .to_encoded_bytes()?;
 
         self.rpc.respond(
-            &request,
+            request,
             Some(reply_payload.into()),
             Some(vec![]),                    // No closer nodes
             &Peer::new(peer_address.into()), // Client's address
@@ -624,7 +624,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
         Ok(())
     }
 
-    pub fn on_peer_handshake(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
+    pub fn on_peer_handshake(&mut self, request: &RequestMsgData, from_peer: &Peer) -> Result<()> {
         let Some(target) = request.target else {
             return Err(Error::PeerHandshakeFailed("missing target".into()));
         };
@@ -714,8 +714,8 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
                     self.new_connection(peer_address.into(), hs, udx_local_id, udx_remote_id)?;
 
                 self.on_peer_handshake_as_server_from_relay(
-                    &request,
-                    &from_peer,
+                    request,
+                    from_peer,
                     noise,
                     php.peer_address,
                     connection,
@@ -743,9 +743,9 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
     }
     fn on_peer_handshake_from_client(
         &mut self,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         noise: Vec<u8>,
-        from_peer: Peer,
+        from_peer: &Peer,
         connection: Connection,
         tx: mpsc::Sender<Result<Connection>>,
     ) -> Result<()> {
@@ -755,7 +755,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             .build()?;
 
         let response_flushed = self.rpc.respond(
-            &request,
+            request,
             Some(peer_handshake_payload.to_encoded_bytes()?.into()),
             Some(vec![]),
             &Peer::new(from_peer.addr),
@@ -810,7 +810,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
     ) -> ConnectFuture {
         ConnectFuture {
             dht,
-            query: TakableResult::from_result(self.find_peer(pub_key.clone(), closest_nodes)),
+            query: TakableResult::from_result(self.find_peer(&pub_key, closest_nodes)),
             pub_key,
             pending_handshake: None,
         }
@@ -829,10 +829,10 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
 
     pub fn find_peer(
         &self,
-        pub_key: PublicKey,
+        pub_key: &PublicKey,
         closest_nodes: Option<Vec<Peer>>,
     ) -> Result<FindPeer> {
-        let target = IdBytes(generic_hash(&*pub_key));
+        let target = IdBytes(generic_hash(&**pub_key));
         let mut args = QueryArgs::new(commands::FIND_PEER, target);
         if let Some(nodes) = closest_nodes {
             args = args.closest_nodes(nodes);
@@ -869,7 +869,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             rpc: self.rpc.clone(),
             query,
             target,
-            keypair: keypair.clone(),
+            keypair,
             done: false.into(),
             pending_requests: Default::default(),
         }

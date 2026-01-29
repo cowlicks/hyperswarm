@@ -254,10 +254,11 @@ outputJson([...pub_key]);
         .await?;
 
     dht.bootstrap().await?;
-    let mut q = dht.find_peer(pub_key.into(), None)?;
+    let pub_key: hyperdht::PublicKey = pub_key.into();
+    let mut q = dht.find_peer(&pub_key, None)?;
     while let Some(e) = q.next().await {
         if let Ok(Some(resp)) = e {
-            assert_eq!(resp.peer.public_key, pub_key.into());
+            assert_eq!(resp.peer.public_key, pub_key);
         }
     }
     Ok(())

@@ -102,7 +102,7 @@ async fn rs_swarm_find_peer() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Client does find_peer
-    let mut query = client.find_peer(keypair.public.clone(), None)?;
+    let mut query = client.find_peer(&keypair.public, None)?;
     let mut found = false;
     while let Some(Ok(Some(resp))) = query.next().await {
         if resp.peer.public_key == keypair.public {

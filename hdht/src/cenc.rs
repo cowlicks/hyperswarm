@@ -752,7 +752,7 @@ mod test {
         announce
             .peer
             .public_key
-            .verify(announce.signature, &signable)
+            .verify(&announce.signature, &signable)
             .unwrap();
         Ok(())
     }

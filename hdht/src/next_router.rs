@@ -106,7 +106,7 @@ impl Router {
         tid: Tid,
         remote_public_key: [u8; 32],
         local_addrs4: Option<Vec<SocketAddrV4>>,
-        socket: UdxSocket,
+        socket: &UdxSocket,
     ) -> Result<Vec<u8>, Error> {
         let mut hs =
             Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
