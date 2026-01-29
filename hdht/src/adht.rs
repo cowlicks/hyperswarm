@@ -349,6 +349,7 @@ impl DhtInner {
     /// Handle ANNOUNCE query - verify signature and store peer record.
     // TODO maybe propogate an error here about bad user data instead of returning Ok(()).
     // Note that using ? in poll_next is valid but it propagates the error.
+    #[instrument(skip_all, err)]
     fn on_announce(&mut self, request: RequestMsgData, from_peer: Peer) -> Result<()> {
         let RequestMsgData {
             token,
@@ -424,7 +425,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
         };
         let target = IdBytes(target);
 
-        let mut records: Vec<&[u8]> = self
+        let mut encoded_records: Vec<&[u8]> = self
             .peer_records
             .get(&target, MAX_RECORDS_PER_TOPIC)
             .into_iter()
@@ -432,16 +433,24 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             .collect();
 
         if let Some(entry) = self.peer_router.get(&target)
-            && records.len() < MAX_RECORDS_PER_TOPIC
+            && encoded_records.len() < MAX_RECORDS_PER_TOPIC
         {
-            records.push(&entry.record);
+            encoded_records.push(&entry.record);
         }
 
-        let value = if records.is_empty() {
+        let value = if encoded_records.is_empty() {
             None
         } else {
-            let slices: &[&[u8]] = &records;
-            Some(slices.to_encoded_bytes()?.to_vec())
+            // TODO: There's something I don't understand here. We should be able to do:
+            // let value = PeerRecords.get(..).to_encoded_bytes()?;
+            // self.rpc.respond(.., value, ..);
+            // But that isn't working. But this does
+            let mut peers = Vec::with_capacity(encoded_records.len());
+            for encoded in encoded_records {
+                let (peer, _) = crate::cenc::Peer::decode(encoded)?;
+                peers.push(peer);
+            }
+            Some(peers.to_encoded_bytes()?.to_vec())
         };
 
         self.rpc.respond(&request, value, None, &from_peer)?;
@@ -1195,20 +1204,29 @@ impl Future for Announce {
             match Pin::new(&mut self.query).poll(cx) {
                 Poll::Ready(Ok(query_result)) => {
                     for reply in query_result.closest_replies.iter() {
-                        let Some(token) = reply.response.token else {
-                            todo!("could not get token");
+                        let (Some(token), Some(responder_id)) =
+                            (reply.response.token, reply.response.id)
+                        else {
+                            warn!(
+                                tid = reply.tid(),
+                                "In Announce result.closest_replies a reply is missing:
+    token = [{:?}] or id = [{:?}]",
+                                reply.response.token,
+                                reply.response.id
+                            );
+                            continue;
                         };
                         let value = request_announce_or_unannounce_value(
                             &self.keypair,
                             self.target,
                             &token,
-                            reply.request.to.id.expect("request.to.id TODO").into(),
+                            IdBytes(responder_id),
                             &self.relay_addresses,
                             &crate::crypto::namespace::ANNOUNCE,
                         );
                         let from_peer = Peer {
-                            id: reply.request.to.id,
-                            addr: reply.request.to.addr,
+                            id: Some(responder_id),
+                            addr: reply.peer.addr,
                             referrer: None,
                         };
                         let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
@@ -1259,21 +1277,23 @@ impl Future for Unannounce {
         if !&self.done.load(Relaxed) {
             match Pin::new(&mut self.query).poll_next(cx) {
                 Poll::Ready(Some(resp)) => {
-                    let (Some(token), Some(id), commands::LOOKUP) =
-                        (&resp.response.token, &resp.valid_peer_id(), resp.cmd())
+                    let (Some(token), Some(responder_id), commands::LOOKUP) =
+                        (&resp.response.token, resp.response.id, resp.cmd())
                     else {
-                        todo!("Don't have good stuf!!!!");
+                        warn!("Unannounce: missing token or id in response, skipping");
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
                     };
                     let destination = Peer {
                         addr: resp.peer.addr,
-                        id: Some(id.0),
+                        id: Some(responder_id),
                         referrer: None,
                     };
                     let value = request_announce_or_unannounce_value(
                         &self.keypair,
                         self.target,
                         token,
-                        *id,
+                        IdBytes(responder_id),
                         &[],
                         &namespace::UNANNOUNCE,
                     );
@@ -1327,21 +1347,23 @@ impl AnnounceClear {
         }
         match Pin::new(&mut self.query).poll_next(cx) {
             Poll::Ready(Some(resp)) => {
-                let (Some(token), Some(id), commands::LOOKUP) =
-                    (&resp.response.token, &resp.valid_peer_id(), resp.cmd())
+                let (Some(token), Some(responder_id), commands::LOOKUP) =
+                    (&resp.response.token, resp.response.id, resp.cmd())
                 else {
-                    todo!("Don't have good stuf!!!!");
+                    warn!("AnnounceClear: missing token or id in response, skipping");
+                    cx.waker().wake_by_ref();
+                    return Some(Poll::Pending);
                 };
                 let destination = Peer {
                     addr: resp.peer.addr,
-                    id: Some(id.0),
+                    id: Some(responder_id),
                     referrer: None,
                 };
                 let value = request_announce_or_unannounce_value(
                     &self.keypair,
                     self.target,
                     token,
-                    *id,
+                    IdBytes(responder_id),
                     &[],
                     &namespace::UNANNOUNCE,
                 );
@@ -1368,20 +1390,29 @@ impl AnnounceClear {
         match Pin::new(&mut self.query).poll(cx) {
             Poll::Ready(Ok(query_result)) => {
                 for reply in query_result.closest_replies.iter() {
-                    let Some(token) = reply.response.token else {
-                        todo!("could not get token");
+                    let (Some(token), Some(responder_id)) =
+                        (reply.response.token, reply.response.id)
+                    else {
+                        warn!(
+                            tid = reply.tid(),
+                            "In AnnounceClear result.closest_replies a reply is missing:
+    token = [{:?}] or id = [{:?}]",
+                            reply.response.token,
+                            reply.response.id
+                        );
+                        continue;
                     };
                     let value = request_announce_or_unannounce_value(
                         &self.keypair,
                         self.target,
                         &token,
-                        reply.request.to.id.expect("request.to.id TODO").into(),
+                        IdBytes(responder_id),
                         &self.relay_addresses,
                         &crate::crypto::namespace::ANNOUNCE,
                     );
                     let from_peer = Peer {
-                        id: reply.request.to.id,
-                        addr: reply.request.to.addr,
+                        id: Some(responder_id),
+                        addr: reply.peer.addr,
                         referrer: None,
                     };
                     let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
