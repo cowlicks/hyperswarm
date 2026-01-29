@@ -31,7 +31,7 @@ version = "1.41.0"
 features = ["rt", "net", "sync"]
 
 [dependencies.compact-encoding]
-version = "2.1.0"
+version = "2.2.0"
 
 [dependencies.udx]
 version = "0.1.0"
