@@ -224,6 +224,7 @@ impl Dht {
 
     /// Spawn a background task that drives this DHT's event loop.
     /// The task is automatically aborted when `Dht` is dropped.
+    // TODO handle the case where driver already exists
     pub fn drive(&mut self) {
         let inner = self.inner.clone();
 
