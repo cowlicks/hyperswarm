@@ -263,7 +263,6 @@ pub struct RpcInner {
     // TODO use message passing to update id's in IoHandler
     #[builder(default = "State::new(IdBytes::from(thirty_two_random_bytes()))")]
     pub id: State<IdBytes>,
-    ephemeral: bool,
     pub(crate) kbuckets: KBucketsTable<Node>,
     pub io: IoHandler,
     bootstrap_job: PeriodicJob,
@@ -599,7 +598,6 @@ pub struct DhtConfig {
     pub bootstrap_interval: Duration,
     pub ping_interval: Duration,
     pub connection_idle_timeout: Duration,
-    pub ephemeral: bool,
     pub adaptive: bool,
     pub bootstrap_nodes: Vec<SocketAddr>,
     pub socket: Option<MessageDataStream>,
@@ -615,7 +613,6 @@ impl Default for DhtConfig {
             ping_interval: Duration::from_secs(40),
             bootstrap_interval: Duration::from_secs(320),
             connection_idle_timeout: Duration::from_secs(10),
-            ephemeral: false,
             adaptive: false,
             bootstrap_nodes: Vec::new(),
             socket: None,
@@ -661,18 +658,9 @@ impl DhtConfig {
         self
     }
 
-    /// Set ephemeral: true so other peers do not add us to the peer list,
-    /// simply bootstrap.
-    ///
-    /// An ephemeral dht node won't expose its id to remote peers, hence being
-    /// ignored.
-    pub fn ephemeral(mut self) -> Self {
-        self.ephemeral = true;
-        self
-    }
-
+    /// Set `ephemeral` value. When `true` this node won't expose its `id` to remote peer, so other peers do not add us to the peer list.
     pub fn set_ephemeral(mut self, ephemeral: bool) -> Self {
-        self.ephemeral = ephemeral;
+        self.io_config.ephemeral = ephemeral;
         self
     }
 }
@@ -838,7 +826,6 @@ impl RpcInner {
 
         let mut dht = Self {
             id,
-            ephemeral: config.ephemeral,
             kbuckets: KBucketsTable::new(local_id, config.kbucket_pending_timeout),
             io,
             bootstrap_job: PeriodicJob::new(config.bootstrap_interval),
@@ -861,7 +848,7 @@ impl RpcInner {
     }
 
     pub fn is_ephemeral(&self) -> bool {
-        self.ephemeral
+        self.io.is_ephemeral()
     }
 
     /// Returns the local address that this listener is bound to.
@@ -1159,7 +1146,7 @@ impl RpcInner {
         let msg = ReplyMsgData {
             tid: msg.tid,
             to: peer.clone(),
-            id: (!self.ephemeral).then(|| self.id.get().0),
+            id: (!self.is_ephemeral()).then(|| self.id.get().0),
             token: self.io.token(peer, 1).ok(),
             closer_nodes: vec![],
             error: 0,
@@ -1184,7 +1171,7 @@ impl RpcInner {
         self.io.reply(ReplyMsgData {
             tid: request.tid,
             to: peer.clone(),
-            id: (!self.ephemeral).then(|| self.id.get().0),
+            id: (!self.is_ephemeral()).then(|| self.id.get().0),
             token: self.io.token(peer, 1).ok(),
             closer_nodes,
             error: 0,
@@ -1267,7 +1254,7 @@ impl RpcInner {
                     tid: request.tid,
                     token: self.io.token(&peer, 1).ok(),
                     to: peer,
-                    id: (!self.ephemeral).then(|| self.id.get().0),
+                    id: (!self.is_ephemeral()).then(|| self.id.get().0),
                     closer_nodes: vec![],
                     error: 0,
                     value: None,
@@ -1302,7 +1289,7 @@ impl RpcInner {
         self.io.reply(ReplyMsgData {
             tid: request.tid,
             to: peer,
-            id: (!self.ephemeral).then(|| self.id.get().0),
+            id: (!self.is_ephemeral()).then(|| self.id.get().0),
             token,
             closer_nodes: vec![],
             error: 0,

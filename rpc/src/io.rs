@@ -224,19 +224,15 @@ pub struct IoHandler {
 }
 
 impl IoHandler {
-    pub fn new(
-        id: Observer<IdBytes>,
-        message_stream: MessageDataStream,
-        _config: IoConfig,
-    ) -> Self {
+    pub fn new(id: Observer<IdBytes>, message_stream: MessageDataStream, config: IoConfig) -> Self {
         Self {
             id,
-            ephemeral: true,
+            ephemeral: config.ephemeral,
             message_stream,
             pending_send: Default::default(),
             pending_flush: None,
             pending_recv: Default::default(),
-            secrets: Default::default(),
+            secrets: config.secrets,
             tid: AtomicU16::new(rand::thread_rng().r#gen()),
             stream_waker: Default::default(),
             name: random_name(),
@@ -526,10 +522,12 @@ impl IoHandler {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct IoConfig {
-    pub rotation: Option<Duration>,
-    pub secrets: Option<([u8; 32], [u8; 32])>,
+    pub secrets: Secrets,
+    /// When true, the node won't expose its ID to remote peers.
+    /// Defaults to false (non-ephemeral).
+    pub ephemeral: bool,
 }
 
 impl Stream for IoHandler {
