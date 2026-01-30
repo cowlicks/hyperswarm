@@ -140,7 +140,7 @@ High-level swarm providing topic-based peer discovery and automatic connection m
   - Returns `ConnectionStream` yielding `ConnectionEvent`
 - [x] `Swarm::connect(pubkey)` - Connect to peer by public key
 - [x] `Swarm::peer_handshake(pubkey, addr)` - Direct connection to address
-- [x] `ConnectionEvent` - Contains connection, client flag, remote_public_key
+- [x] `ConnectionEvent` - Contains connection, client flag, remote_public_key, topics
 - [x] `ConnectionSet` - Track connections with duplicate resolution
 - [x] Auto-connect to discovered peers (via `pending_connections`)
 
@@ -160,7 +160,6 @@ High-level swarm providing topic-based peer discovery and automatic connection m
 ## Not Yet Implemented
 
 - [ ] `ConnectionEvent.remote_public_key` for server connections (currently placeholder)
-- [ ] `ConnectionEvent.topics` field
 - [ ] Refresh cycle (re-lookup/re-announce every ~10min)
 - [ ] `suspend()` / `resume()` - Pause/resume network activity
 - [ ] `join_peer(pubkey)` / `leave_peer(pubkey)` - Explicit peer targeting
@@ -212,6 +211,7 @@ swarm.connections_count() -> usize
 - `peers_connect_and_exchange_messages` - Full connection + data exchange
 - `discovery_enqueues_peers_for_connection` - Auto-connect behavior
 - `auto_connect_establishes_connection` - End-to-end auto-connect
+- `connection_event_has_topics` - Verify topics populated for client connections
 
 **js.rs** - JS interop:
 - `rust_discovers_js_server` - Rust finds JS peer
@@ -240,15 +240,6 @@ Currently placeholder `[0; 32]` for server connections.
 
 3. **hyperswarm**:
    - Update channel type, use actual key in `ConnectionEvent`
-
-### Add `topics` to ConnectionEvent
-
-**Required changes:**
-1. Add `topics: Vec<IdBytes>` field to `ConnectionEvent`
-2. For client connections: lookup `PeerInfo` and copy topics
-3. For server connections: empty `Vec` (unknown)
-
----
 
 ## Announcer (hyperdht)
 
@@ -310,8 +301,6 @@ impl Announcer {
 ## Next Steps
 
 1. **ConnectionEvent.remote_public_key** - Add `get_remote_static()` to hypercore_handshake
-2. **ConnectionEvent.topics** - Add topics field to ConnectionEvent
-3. **Announcer** - Implement automatic periodic re-announcing
-4. **Test stability** - Ensure all tests pass consistently
-5. **Refresh cycle** - Re-lookup/re-announce every ~10min
-6. **suspend/resume** - Pause/resume network activity
+2. **Announcer** - Implement automatic periodic re-announcing
+3. **Refresh cycle** - Re-lookup/re-announce every ~10min
+4. **suspend/resume** - Pause/resume network activity
