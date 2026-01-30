@@ -34,7 +34,7 @@ features = ["rt", "net", "sync"]
 version = "2.2.0"
 
 [dependencies.udx]
-version = "0.1.0"
+version = "0.2.0"
 
 [build-dependencies]
 prost-build = "0.6.1"

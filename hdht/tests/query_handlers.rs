@@ -119,7 +119,6 @@ async fn rs_swarm_find_peer() -> Result<()> {
 /// Test on_unannounce: announce, verify found, unannounce, verify gone.
 #[tokio::test]
 async fn rs_swarm_unannounce() -> Result<()> {
-    log();
     let tn = RustTestnet::new(3).await?;
     let announcer = &tn.nodes[0];
     let looker = &tn.nodes[1];
