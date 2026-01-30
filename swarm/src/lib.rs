@@ -198,7 +198,8 @@ impl SwarmInner {
             if self.config.auto_connect     // Auto-connect enabled
                 && !peer_already_connected  // Not already connected
                 && peer_info.state.is_idle() // Not busy (queued/waiting/connecting)
-                && !peer_info.trust.is_banned() // Nor banned
+                // Nor banned
+                && !peer_info.trust.is_banned()
             {
                 peer_info.state = ConnectionState::Queued;
                 let priority = peer_info.priority;
@@ -390,14 +391,6 @@ impl Swarm {
         self.inner.read().unwrap().keypair.clone()
     }
 
-    /// Start listening for incoming connections
-    /// Returns a Server stream that yields connections
-    pub fn listen(&self) -> ServerFuture {
-        let inner = self.inner.write().unwrap();
-        let server = inner.dht.listen(inner.keypair.clone());
-        ServerFuture::new(Some(self.inner.clone()), server)
-    }
-
     /// Number of connections
     pub fn connections_count(&self) -> usize {
         self.inner.read().unwrap().connections.len()
@@ -416,42 +409,36 @@ impl Swarm {
 
     /// Join a topic for peer discovery
     pub fn join(&self, topic: IdBytes, opts: JoinOpts) -> Result<()> {
-        let (lookup, announce) = {
-            let mut inner = self.inner.write().unwrap();
-            let discovery = Discovery {
-                topic,
-                server: opts.server(),
-                client: opts.client(),
-            };
-            inner.discoveries.insert(topic, discovery);
+        let mut inner = self.inner.write().unwrap();
+        let discovery = Discovery {
+            topic,
+            server: opts.server(),
+            client: opts.client(),
+        };
+        inner.discoveries.insert(topic, discovery);
 
-            let lookup = if opts.client() {
-                Some(inner.dht.lookup(topic, Commit::No)?)
-            } else {
-                None
-            };
-
-            let announce = if opts.server() {
-                Some(inner.dht.announce(topic, inner.keypair.clone(), vec![]))
-            } else {
-                None
-            };
-
-            (lookup, announce)
+        if opts.client() {
+            let lookup = inner.dht.lookup(topic, Commit::No)?;
+            let pl = PendingLookup { topic, lookup };
+            inner.pending_lookups.push(pl);
         };
 
-        if let Some(lookup) = lookup {
-            let pl = PendingLookup { topic, lookup };
-            self.inner.write().unwrap().pending_lookups.push(pl);
-        }
-
-        if let Some(announce) = announce {
-            self.inner
-                .write()
-                .unwrap()
-                .pending_announces
-                .push(PendingAnnounce::new(topic, announce));
-        }
+        if opts.server() {
+            // Announce  ourselves so we can be found
+            let self_topic = dht_rpc::generic_hash(&*inner.keypair.public).into();
+            let announce = PendingAnnounce::new(
+                topic,
+                inner.dht.announce(topic, inner.keypair.clone(), vec![]),
+            );
+            let self_ann = PendingAnnounce::new(
+                self_topic,
+                inner
+                    .dht
+                    .announce(self_topic, inner.keypair.clone(), vec![]),
+            );
+            inner.pending_announces.push(announce);
+            inner.pending_announces.push(self_ann);
+        };
 
         Ok(())
     }
@@ -505,22 +492,18 @@ impl Swarm {
         async move { phs.await.map_err(Into::into) }
     }
 
-    /// Get a stream of connection events (both client and server)
+    /// Get a stream of connection events (both client & server).
     pub fn connections(&self) -> ConnectionStream {
+        let inner = self.inner.write().unwrap();
+
+        let keypair = inner.keypair.clone();
+        let server_rx = inner.dht.get_connection_stream(keypair);
+
         ConnectionStream {
             inner: self.inner.clone(),
-            connection_rx: self.connection_rx.clone(),
-            server: None,
+            client_rx: self.connection_rx.clone(),
+            server_rx,
         }
-    }
-
-    /// Start listening and get unified connection stream
-    pub async fn listen_all(&self) -> Result<ConnectionStream> {
-        Ok(ConnectionStream {
-            inner: self.inner.clone(),
-            connection_rx: self.connection_rx.clone(),
-            server: Some(self.listen().await?),
-        })
     }
 }
 
@@ -533,11 +516,13 @@ impl Stream for Swarm {
     }
 }
 
-/// Stream that yields all connections (client and server)
+/// Stream that yields connection events (client and/or server)
 pub struct ConnectionStream {
     inner: Arc<RwLock<SwarmInner>>,
-    connection_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<ConnectionEvent>>>,
-    server: Option<Server>,
+    /// Receiver for client (outgoing) connections
+    client_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<ConnectionEvent>>>,
+    /// Receiver for server (incoming) connections
+    server_rx: mpsc::Receiver<hyperdht::Result<Connection>>,
 }
 
 impl Stream for ConnectionStream {
@@ -547,40 +532,34 @@ impl Stream for ConnectionStream {
         {
             let mut inner = self.inner.write().unwrap();
             _ = Pin::new(&mut *inner).poll_next(cx);
-        };
-
-        // Poll server for incoming connections first
-        if let Some(ref mut server) = self.server {
-            match Pin::new(server).poll_next(cx) {
-                Poll::Ready(Some(Ok(connection))) => {
-                    // For server connections, we need to track them
-                    // Note: We don't have remote public key easily available here
-                    // This is a limitation - we'd need to modify hdht to expose it
-                    let remote_public_key = IdBytes([0; 32]); // Placeholder
-
-                    {
-                        let mut guard = self.inner.write().unwrap();
-                        guard.connections.add(remote_public_key, false);
-                    }
-
-                    return Poll::Ready(Some(Ok(ConnectionEvent {
-                        connection,
-                        client: false,
-                        remote_public_key,
-                    })));
-                }
-                Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(e)));
-                }
-                Poll::Ready(None) => {
-                    self.server = None;
-                }
-                Poll::Pending => {}
-            }
         }
 
-        // Poll client connection channel (non-blocking)
-        if let Ok(mut rx) = self.connection_rx.try_lock() {
+        match Pin::new(&mut self.server_rx).poll_recv(cx) {
+            Poll::Ready(Some(Ok(connection))) => {
+                // For server connections, we need to track them
+                // Note: We don't have remote public key easily available here
+                // This is a limitation - we'd need to modify hdht to expose it
+                let remote_public_key = IdBytes([0; 32]); // Placeholder
+
+                {
+                    let mut guard = self.inner.write().unwrap();
+                    guard.connections.add(remote_public_key, false);
+                }
+
+                return Poll::Ready(Some(Ok(ConnectionEvent {
+                    connection,
+                    client: false,
+                    remote_public_key,
+                })));
+            }
+            Poll::Ready(Some(Err(e))) => {
+                return Poll::Ready(Some(Err(e.into())));
+            }
+            Poll::Ready(None) => {}
+            Poll::Pending => {}
+        }
+
+        if let Ok(mut rx) = self.client_rx.try_lock() {
             match rx.poll_recv(cx) {
                 Poll::Ready(Some(event)) => {
                     return Poll::Ready(Some(Ok(event)));
@@ -677,56 +656,6 @@ impl Future for PendingConnection {
             Poll::Ready(result) => Poll::Ready((self.pk, result)),
             Poll::Pending => Poll::Pending,
         }
-    }
-}
-
-pub struct ServerFuture {
-    swarm: Option<Arc<RwLock<SwarmInner>>>,
-    dht_server_future: hyperdht::ServerFuture,
-}
-
-impl ServerFuture {
-    fn new(
-        swarm: Option<Arc<RwLock<SwarmInner>>>,
-        dht_server_future: hyperdht::ServerFuture,
-    ) -> Self {
-        Self {
-            swarm,
-            dht_server_future,
-        }
-    }
-}
-impl Future for ServerFuture {
-    type Output = Result<Server>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Drive the DHT while announcing
-        if let Some(swarm) = self.swarm.as_ref() {
-            let _ = Pin::new(&mut *swarm.write().unwrap()).poll_next(cx);
-        }
-
-        match Pin::new(&mut self.dht_server_future).poll(cx) {
-            Poll::Ready(Ok(dht_server)) => {
-                let swarm = self.swarm.take().expect("polled after completion");
-                Poll::Ready(Ok(Server { dht_server, swarm }))
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-pub struct Server {
-    swarm: Arc<RwLock<SwarmInner>>,
-    dht_server: hyperdht::Server,
-}
-impl Stream for Server {
-    type Item = Result<Connection>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        _ = Pin::new(&mut *self.swarm.write().unwrap()).poll_next(cx);
-        Pin::new(&mut self.dht_server)
-            .poll_next(cx)
-            .map_err(Into::into)
     }
 }
 

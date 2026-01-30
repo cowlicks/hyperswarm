@@ -7,7 +7,6 @@ use std::{net::SocketAddr, time::Duration};
 use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
 use futures::StreamExt;
 use hyperdht::{Keypair, adht::Dht};
-use test_utils::log;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

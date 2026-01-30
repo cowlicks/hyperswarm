@@ -203,7 +203,7 @@ async fn js_swarm_connects_to_rust_swarm_exchanges_messages() -> Result<()> {
     let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     rust_swarm.bootstrap().await?;
 
-    let mut server = rust_swarm.listen().await?;
+    let mut server_conns = rust_swarm.connections();
     rust_swarm.join(topic.into(), JoinOpts::Both)?;
     rust_swarm.flush().await?;
 
@@ -232,9 +232,10 @@ js_swarm.join(topic, {{ server: false, client: true }});
         .await?;
 
     // Rust server should receive the connection from JS
-    let Some(Ok(mut rust_conn)) = timeout!(server.next())? else {
+    let Some(Ok(event)) = timeout!(server_conns.next())? else {
         panic!("Rust server should receive connection from JS");
     };
+    let mut rust_conn = event.connection;
 
     // Rust sends to JS
     rust_conn.send(b"hello from rust server".into()).await?;

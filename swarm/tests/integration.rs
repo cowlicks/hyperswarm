@@ -27,7 +27,7 @@ async fn server_announces_client_discovers() -> Result<()> {
 
     // Swarm A: server - listens and announces on topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    let _server = swarm_a.listen();
+    let _server_conns = swarm_a.connections();
     swarm_a.join(topic, JoinOpts::Server)?;
     swarm_a.flush().await?;
 
@@ -55,12 +55,12 @@ async fn multiple_servers_discovered() -> Result<()> {
 
     // Create two servers announcing on same topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    let _server_a = swarm_a.listen();
+    let _server_a = swarm_a.connections();
     swarm_a.join(topic, JoinOpts::Server)?;
     swarm_a.flush().await?;
 
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    let _server_b = swarm_b.listen();
+    let _server_b = swarm_b.connections();
     swarm_b.join(topic, JoinOpts::Server)?;
     swarm_b.flush().await?;
 
@@ -91,9 +91,10 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
     // Swarm A: server - listens and announces on topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     swarm_a.bootstrap().await?;
-    let mut server_a = swarm_a.listen().await?;
+    let mut server_conns = swarm_a.connections();
     let server_addr = swarm_a.local_addr()?;
     swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.flush().await?;
 
     // Swarm B: client - connects to A directly using known address and public key
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
@@ -101,15 +102,16 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
     let server_pub_key = swarm_a.keypair().public;
 
     // Run connect and accept in parallel
-    let (mut client_conn, mut server_conn) = join!(
+    let (mut client_conn, server_event) = join!(
         async {
             swarm_b
                 .peer_handshake(server_pub_key.clone(), server_addr)
                 .await
                 .unwrap()
         },
-        async { server_a.next().await.unwrap().unwrap() }
+        async { server_conns.next().await.unwrap().unwrap() }
     );
+    let mut server_conn = server_event.connection;
 
     // Server sends first
     server_conn.send(b"hello from server".into()).await?;
@@ -140,7 +142,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     let config_a = SwarmConfig::new(DhtConfig::default().add_bootstrap_node(bs_addr));
     let swarm_a = Swarm::with_config(config_a).await?;
     swarm_a.bootstrap().await?;
-    let _server_a = swarm_a.listen();
+    let _server_a = swarm_a.connections();
     swarm_a.join(topic, JoinOpts::Server)?;
     swarm_a.flush().await?;
 
@@ -176,19 +178,19 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     swarm_a.bootstrap().await?;
     swarm_b.bootstrap().await?;
 
-    let mut server = swarm_a.listen().await?;
+    let mut server_conns = swarm_a.connections();
     swarm_a.join(topic, JoinOpts::Server)?;
     swarm_a.flush().await?;
 
     // Get connection stream to receive auto-connect events
-    let mut connections = swarm_b.connections();
+    let mut client_conns = swarm_b.connections();
 
     // Join as client - should auto-discover and auto-connect
     swarm_b.join(topic, JoinOpts::Client)?;
     swarm_b.flush().await?;
 
     let a = tokio::spawn(async move {
-        let Some(Ok(client_event)) = timeout!(connections.next()).unwrap() else {
+        let Some(Ok(client_event)) = timeout!(client_conns.next()).unwrap() else {
             todo!()
         };
         let mut client_conn = client_event.connection;
@@ -200,9 +202,10 @@ async fn auto_connect_establishes_connection() -> Result<()> {
         wait!(100);
     });
     let b = tokio::spawn(async move {
-        let Some(Ok(mut server_conn)) = timeout!(server.next(), 1000).unwrap() else {
+        let Some(Ok(server_event)) = timeout!(server_conns.next(), 1000).unwrap() else {
             todo!()
         };
+        let mut server_conn = server_event.connection;
         server_conn.send(b"from server".into()).await.unwrap();
         let Some(CipherEvent::Message(msg)) = server_conn.next().await else {
             todo!()
