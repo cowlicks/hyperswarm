@@ -164,15 +164,6 @@ impl PeerInfo {
         }
     }
 
-    /// Add relay addresses if they are new (merge with existing)
-    pub fn add_relay_addresses(&mut self, relay_addresses: Vec<SocketAddr>) {
-        for addr in relay_addresses {
-            if !self.relay_addresses.contains(&addr) {
-                self.relay_addresses.push(addr);
-            }
-        }
-    }
-
     /// Called when a connection is successfully established
     pub fn connected(&mut self) {
         self.state = ConnectionState::Connected {
@@ -200,8 +191,18 @@ impl PeerInfo {
         self.update_priority();
     }
 
+    /// Add relay addresses if they are new (merge with existing)
+    pub fn add_relay_addresses(&mut self, relay_addresses: Vec<SocketAddr>) -> &mut Self {
+        for addr in relay_addresses {
+            if !self.relay_addresses.contains(&addr) {
+                self.relay_addresses.push(addr);
+            }
+        }
+        self
+    }
+
     /// Add a topic this peer is associated with
-    pub fn with_topic(mut self, topic: IdBytes) -> Self {
+    pub fn add_topic(&mut self, topic: IdBytes) -> &mut Self {
         self.topics.insert(topic);
         self
     }

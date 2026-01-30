@@ -81,10 +81,14 @@ struct Discovery {
 pub struct ConnectionEvent {
     /// The established connection
     pub connection: Connection,
-    /// Whether we initiated (client) or accepted (server)
-    pub client: bool,
     /// Remote peer's public key
     pub remote_public_key: IdBytes,
+    // TODO consider turning (client, topics) into an emun like
+    // `ConnectionKind { Client { topics: []}, Server };
+    /// Whether we initiated (client) or accepted (server)
+    pub client: bool,
+    /// Topics this peer was discovered on (empty for server connections)
+    pub topics: Vec<IdBytes>,
 }
 
 /// The main Hyperswarm instance
@@ -191,8 +195,9 @@ impl SwarmInner {
             let peer_info = self
                 .peers
                 .entry(pk)
-                .or_insert_with(|| PeerInfo::new(pk).with_topic(topic));
-            peer_info.add_relay_addresses(relay_addrs);
+                .or_insert_with(|| PeerInfo::new(pk))
+                .add_topic(topic)
+                .add_relay_addresses(relay_addrs);
 
             // Enqueue for connection if:
             if self.config.auto_connect     // Auto-connect enabled
@@ -221,9 +226,14 @@ impl SwarmInner {
             Ok(connection) => {
                 debug!(?pk, "connection succeeded");
 
-                if let Some(peer_info) = self.peers.get_mut(&pk) {
-                    peer_info.connected();
-                }
+                let topics: Vec<IdBytes> = self
+                    .peers
+                    .get_mut(&pk)
+                    .map(|peer_info| {
+                        peer_info.connected();
+                        peer_info.topics.iter().copied().collect()
+                    })
+                    .unwrap_or_default();
 
                 let add_result = self.connections.add(pk, true);
                 if add_result != AddResult::KeptExisting {
@@ -231,6 +241,7 @@ impl SwarmInner {
                         connection,
                         client: true,
                         remote_public_key: pk,
+                        topics,
                     });
                 }
             }
@@ -550,6 +561,7 @@ impl Stream for ConnectionStream {
                     connection,
                     client: false,
                     remote_public_key,
+                    topics: vec![], // No topics on server
                 })));
             }
             Poll::Ready(Some(Err(e))) => {
