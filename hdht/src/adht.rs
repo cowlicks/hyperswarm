@@ -213,13 +213,19 @@ impl Dht {
             .announce_clear(target, keypair, relay_addresses)
     }
 
-    pub fn listen(&self, keypair: Keypair) -> ServerFuture {
+    /// Get a `Stream` of `Connection`s. Does not `Announce`.
+    pub fn get_connection_stream(&self, keypair: Keypair) -> mpsc::Receiver<Result<Connection>> {
         let (tx, rx) = mpsc::channel(32);
-        let target = IdBytes(generic_hash(&*keypair.public));
-        let announcer = self.announce(target, keypair.clone(), vec![]);
         self.inner.write().unwrap().add_listening_key(keypair, tx);
+        rx
+    }
 
-        ServerFuture::new(rx, self.inner.clone(), announcer)
+    /// Announce ourselves and return a `Stream` of `Announce`s
+    pub fn listen(&self, keypair: Keypair) -> ServerFuture {
+        let target = IdBytes(generic_hash(&*keypair.public));
+        let announce = self.announce(target, keypair.clone(), vec![]);
+        let rx = self.get_connection_stream(keypair);
+        ServerFuture::new(rx, self.inner.clone(), announce)
     }
 
     /// Spawn a background task that drives this DHT's event loop.
