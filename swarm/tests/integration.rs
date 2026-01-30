@@ -216,3 +216,57 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     _ = join!(a, b);
     Ok(())
 }
+
+/// Test that ConnectionEvent contains the discovered topics for client connections
+#[tokio::test]
+async fn connection_event_has_topics() -> Result<()> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.bootstrap_addr().await?;
+
+    let topic = IdBytes::random();
+
+    let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    swarm_a.bootstrap().await?;
+    swarm_b.bootstrap().await?;
+
+    // Server joins topic
+    let mut server_conns = swarm_a.connections();
+    swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.flush().await?;
+
+    // Client joins topic - should discover server and auto-connect
+    let mut client_conns = swarm_b.connections();
+    swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.flush().await?;
+
+    // Both streams must be polled for auto-connect to complete
+    let client_task = tokio::spawn(async move {
+        let Some(Ok(conn_event)) = timeout!(client_conns.next(), 1000).unwrap() else {
+            panic!("Expected client connection");
+        };
+        assert!(conn_event.client, "should be a client connection");
+        assert!(
+            conn_event.topics.contains(&topic),
+            "connection event should contain the discovered topic, got {:?}",
+            conn_event.topics
+        );
+        wait!(100);
+    });
+
+    let server_task = tokio::spawn(async move {
+        let Some(Ok(conn_event)) = timeout!(server_conns.next(), 1000).unwrap() else {
+            panic!("Expected server connection");
+        };
+        assert!(!conn_event.client, "should be a server connection");
+        assert!(
+            conn_event.topics.is_empty(),
+            "server connection should have empty topics"
+        );
+        wait!(100);
+    });
+
+    _ = join!(client_task, server_task);
+    Ok(())
+}
