@@ -198,6 +198,14 @@ impl Connection {
     pub fn connect(&self, addr: SocketAddr, remote_id: u32) -> Result<(), Error> {
         w!(self).connect(addr, remote_id)
     }
+
+    /// Get the remote peer's static public key (from Noise handshake).
+    ///
+    /// For server-side connections (responder), this returns the initiator's public key.
+    /// For client-side connections (initiator), returns None (client already knows the server key).
+    pub fn get_remote_static(&self) -> Option<[u8; 32]> {
+        r!(self).handshake.get_remote_static()
+    }
 }
 
 impl Stream for Connection {
