@@ -159,7 +159,6 @@ High-level swarm providing topic-based peer discovery and automatic connection m
 
 ## Not Yet Implemented
 
-- [ ] `ConnectionEvent.remote_public_key` for server connections (currently placeholder)
 - [ ] Refresh cycle (re-lookup/re-announce every ~10min)
 - [ ] `suspend()` / `resume()` - Pause/resume network activity
 - [ ] `join_peer(pubkey)` / `leave_peer(pubkey)` - Explicit peer targeting
@@ -211,7 +210,7 @@ swarm.connections_count() -> usize
 - `peers_connect_and_exchange_messages` - Full connection + data exchange
 - `discovery_enqueues_peers_for_connection` - Auto-connect behavior
 - `auto_connect_establishes_connection` - End-to-end auto-connect
-- `connection_event_has_topics` - Verify topics populated for client connections
+- `connection_event_has_topics` - Verify topics and remote_public_key populated correctly
 
 **js.rs** - JS interop:
 - `rust_discovers_js_server` - Rust finds JS peer
@@ -222,24 +221,6 @@ swarm.connections_count() -> usize
 ---
 
 # Planned Work
-
-## ConnectionEvent Improvements
-
-### Add `remote_public_key` to Server Connections
-
-Currently placeholder `[0; 32]` for server connections.
-
-**Required changes:**
-1. **hypercore_handshake** (`../handshake/`):
-   - Add `get_remote_static() -> Option<[u8; 32]>` to `SecStream`
-   - Uses `snow::HandshakeState::get_remote_static()` internally
-
-2. **hyperdht**:
-   - After noise handshake, extract remote public key from Cipher
-   - Send `(Connection, PublicKey)` through channel
-
-3. **hyperswarm**:
-   - Update channel type, use actual key in `ConnectionEvent`
 
 ## Announcer (hyperdht)
 
@@ -300,7 +281,6 @@ impl Announcer {
 
 ## Next Steps
 
-1. **ConnectionEvent.remote_public_key** - Add `get_remote_static()` to hypercore_handshake
-2. **Announcer** - Implement automatic periodic re-announcing
-3. **Refresh cycle** - Re-lookup/re-announce every ~10min
-4. **suspend/resume** - Pause/resume network activity
+1. **Announcer** - Implement automatic periodic re-announcing
+2. **Refresh cycle** - Re-lookup/re-announce every ~10min
+3. **suspend/resume** - Pause/resume network activity

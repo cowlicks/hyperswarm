@@ -255,6 +255,7 @@ async fn connection_event_has_topics() -> Result<()> {
         wait!(100);
     });
 
+    let client_pub_key = swarm_b.public_key();
     let server_task = tokio::spawn(async move {
         let Some(Ok(conn_event)) = timeout!(server_conns.next(), 1000).unwrap() else {
             panic!("Expected server connection");
@@ -263,6 +264,11 @@ async fn connection_event_has_topics() -> Result<()> {
         assert!(
             conn_event.topics.is_empty(),
             "server connection should have empty topics"
+        );
+        // Server should know the client's public key from Noise handshake
+        assert_eq!(
+            conn_event.remote_public_key, client_pub_key,
+            "server should have client's public key"
         );
         wait!(100);
     });

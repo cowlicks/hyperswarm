@@ -547,10 +547,21 @@ impl Stream for ConnectionStream {
 
         match Pin::new(&mut self.server_rx).poll_recv(cx) {
             Poll::Ready(Some(Ok(connection))) => {
-                // For server connections, we need to track them
-                // Note: We don't have remote public key easily available here
-                // This is a limitation - we'd need to modify hdht to expose it
-                let remote_public_key = IdBytes([0; 32]); // Placeholder
+                // Get remote public key from Noise handshake (server learns client's key)
+                let remote_public_key =
+                    connection
+                        .get_remote_static()
+                        .map(IdBytes)
+                        .unwrap_or_else(|| {
+                            // In theory, the server should always have the remote's public key here
+                            // because it is sent with the first message (since we are the responder).
+                            // If initiator doesn't send it, we should have already errored.
+                            error!(
+                                ?connection,
+                                "Server connection without remote public key???"
+                            );
+                            panic!("Server connection without remote public key???")
+                        });
 
                 {
                     let mut guard = self.inner.write().unwrap();
