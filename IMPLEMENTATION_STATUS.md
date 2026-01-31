@@ -257,11 +257,23 @@ impl Announcer {
 
 ## API Comparison: Rust vs JavaScript
 
+There are some parts of the JavaScript API we don't implement because they don't make sense in a rust context. These usually have to do with lifecycle management.
+
+* `destroy` methods like `Hyperswarm.destroy`, `Hyperdht.destroy`, `DhtRpc.destroy`.
+  These are handled by simply dropping the value.
+  There are some cases (like `Hyperdht.destroy`) where there may extra work (like an unannounce query).
+  These can be done separately.
+
+* `suspend`/`resume` methods like dht-rpc's `Io.suspend`, hyperdht's `Announcer.suspend`, `Hyperswarm.suspend`.
+  We've implemented all async tasks using [structured concurrency](https://blog.yoshuawuyts.com/tree-structured-concurrency/),
+  so work only happens when task is polled.
+  There are no spawned background tasks.
+  So to `suspend`, just don't poll, and to resume, poll.
+
 ### What JS Has That Rust Doesn't
 
 | Feature | JS API | Status |
 |---------|--------|--------|
-| `suspend()` / `resume()` | Pause network | Not implemented |
 | `joinPeer()` / `leavePeer()` | Direct peer targeting | Not implemented |
 | `clear()` | Destroy all discoveries | Not implemented |
 | `stats` | Connection statistics | Not implemented |
@@ -283,4 +295,3 @@ impl Announcer {
 
 1. **Announcer** - Implement automatic periodic re-announcing
 2. **Refresh cycle** - Re-lookup/re-announce every ~10min
-3. **suspend/resume** - Pause/resume network activity
