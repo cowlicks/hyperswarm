@@ -17,9 +17,9 @@ use tokio::sync::{
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    BootstrapFuture, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
-    OutRequestBuilder, Peer, QueryArgs, QueryId, QueryNext, RequestMsgData, Rpc,
-    RpcDhtRequestFuture, generic_hash,
+    BootstrapFuture, Command, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes,
+    InResponse, InternalCommand, OutRequestBuilder, Peer, QueryArgs, QueryId, QueryNext,
+    RequestMsgData, Rpc, RpcDhtRequestFuture, generic_hash,
 };
 use futures::{Stream, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
@@ -187,6 +187,9 @@ impl Dht {
     }
     pub fn unannounce(&self, target: IdBytes, keypair: Keypair) -> Unannounce {
         self.inner.read().unwrap().unannounce(target, keypair)
+    }
+    pub fn ping(&self, peer: Peer) -> RpcDhtRequestFuture {
+        self.inner.read().unwrap().ping(peer)
     }
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         self.inner.read().unwrap().request(o)
@@ -881,6 +884,11 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
         }
     }
 
+    pub fn ping(&self, peer: Peer) -> RpcDhtRequestFuture {
+        self.rpc.request_from_builder(
+            OutRequestBuilder::new(peer, Command::Internal(InternalCommand::Ping))
+        )
+    }
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         self.rpc.request_from_builder(o)
     }
