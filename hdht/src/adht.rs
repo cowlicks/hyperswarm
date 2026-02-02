@@ -882,7 +882,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             query,
             target,
             keypair,
-            done: false.into(),
+            query_done: false.into(),
             pending_requests: Default::default(),
         }
     }
@@ -1216,62 +1216,88 @@ impl Future for Announce {
     type Output = Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Phase 1: Complete the query and queue commit requests
-        if !self.query_done.load(Relaxed) {
-            match Pin::new(&mut self.query).poll(cx) {
-                Poll::Ready(Ok(query_result)) => {
-                    for reply in query_result.closest_replies.iter() {
-                        let (Some(token), Some(responder_id)) =
-                            (reply.response.token, reply.response.id)
-                        else {
-                            warn!(
-                                tid = reply.tid(),
-                                "In Announce result.closest_replies a reply is missing:
-    token = [{:?}] or id = [{:?}]",
-                                reply.response.token,
-                                reply.response.id
-                            );
-                            continue;
-                        };
-                        let value = request_announce_or_unannounce_value(
-                            &self.keypair,
-                            self.target,
-                            &token,
-                            IdBytes(responder_id),
-                            &self.relay_addresses,
-                            &crate::crypto::namespace::ANNOUNCE,
-                        );
-                        let from_peer = Peer {
-                            id: Some(responder_id),
-                            addr: reply.peer.addr,
-                            referrer: None,
-                        };
-                        let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
-                            .target(self.target)
-                            .value(value)
-                            .token(token);
-                        self.pending_requests.push(self.rpc.request_from_builder(o));
-                    }
-                    self.query_done.store(true, Relaxed);
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+        loop {
+            match self.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(_))) => continue,
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e)),
+                Poll::Ready(None) => return Poll::Ready(Ok(())),
                 Poll::Pending => return Poll::Pending,
             }
         }
+    }
+}
 
-        // Phase 2: Wait for all commit requests to complete
+impl Stream for Announce {
+    type Item = Result<Option<LookupResponse>>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        //  Drive the query
+        if !self.query_done.load(Relaxed) {
+            match Pin::new(&mut self.query).poll_next(cx) {
+                Poll::Ready(Some(response)) => {
+                    return Poll::Ready(Some(LookupResponse::decode_response(response)));
+                }
+                // Query stream exhausted, get final result to prepare commits
+                Poll::Ready(None) => match Pin::new(&mut self.query).poll(cx) {
+                    Poll::Ready(Ok(query_result)) => {
+                        for reply in query_result.closest_replies.iter() {
+                            let (Some(token), Some(responder_id)) =
+                                (reply.response.token, reply.response.id)
+                            else {
+                                warn!(
+                                    tid = reply.tid(),
+                                    "In Announce result.closest_replies a reply is missing:
+    token = [{:?}] or id = [{:?}]",
+                                    reply.response.token,
+                                    reply.response.id
+                                );
+                                continue;
+                            };
+                            let value = request_announce_or_unannounce_value(
+                                &self.keypair,
+                                self.target,
+                                &token,
+                                IdBytes(responder_id),
+                                &self.relay_addresses,
+                                &crate::crypto::namespace::ANNOUNCE,
+                            );
+                            let from_peer = Peer {
+                                id: Some(responder_id),
+                                addr: reply.peer.addr,
+                                referrer: None,
+                            };
+                            let o = OutRequestBuilder::new(from_peer, crate::commands::ANNOUNCE)
+                                .target(self.target)
+                                .value(value)
+                                .token(token);
+                            self.pending_requests.push(self.rpc.request_from_builder(o));
+                        }
+                        self.query_done.store(true, Relaxed);
+                    }
+                    Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
+                    Poll::Pending => {}
+                },
+                Poll::Pending => {}
+            }
+        }
+
+        // Drive commit requests to completion
         match Pin::new(&mut self.pending_requests).poll_next(cx) {
             Poll::Ready(Some(Ok(res))) => {
                 trace!(tid = res.request.tid, "RX announce commit");
                 cx.waker().wake_by_ref();
             }
-            Poll::Ready(Some(Err(e))) => error!(error =? e, "Announce commit request error"),
+            Poll::Ready(Some(Err(e))) => {
+                error!(error =? e, "Announce commit request error");
+                cx.waker().wake_by_ref();
+            }
             Poll::Ready(None) => {
-                // All commits done
-                return Poll::Ready(Ok(()));
+                if self.query_done.load(Relaxed) {
+                    return Poll::Ready(None);
+                }
             }
             Poll::Pending => {}
-        }
+        };
         Poll::Pending
     }
 }
@@ -1282,7 +1308,7 @@ pub struct Unannounce {
     target: IdBytes,
     keypair: Keypair,
     pending_requests: FuturesUnordered<RpcDhtRequestFuture>,
-    done: AtomicBool,
+    query_done: AtomicBool,
 }
 
 impl Future for Unannounce {
@@ -1291,7 +1317,7 @@ impl Future for Unannounce {
     // Send a request for each response, push into FuturesUnordered.
     // poll FuturesUnordered for each poll call.
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if !&self.done.load(Relaxed) {
+        if !&self.query_done.load(Relaxed) {
             match Pin::new(&mut self.query).poll_next(cx) {
                 Poll::Ready(Some(resp)) => {
                     let (Some(token), Some(responder_id), commands::LOOKUP) =
@@ -1324,7 +1350,7 @@ impl Future for Unannounce {
                     self.pending_requests.push(req);
                 }
                 Poll::Ready(None) => {
-                    self.done.store(true, Relaxed);
+                    self.query_done.store(true, Relaxed);
                 }
                 Poll::Pending => {}
             }
@@ -1336,7 +1362,7 @@ impl Future for Unannounce {
             }
             Poll::Ready(Some(Err(e))) => error!(error =? e, "Unannounce commit request error"),
             Poll::Ready(None) => {
-                if self.done.load(Relaxed) {
+                if self.query_done.load(Relaxed) {
                     return Poll::Ready(Ok(()));
                 }
             }
