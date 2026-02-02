@@ -261,6 +261,15 @@ impl Dht {
     }
 }
 
+impl Clone for Dht {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            driver: None,
+        }
+    }
+}
+
 impl Drop for Dht {
     fn drop(&mut self) {
         if let Some(handle) = self.driver.take() {

@@ -28,12 +28,12 @@ async fn server_announces_client_discovers() -> Result<()> {
     // Swarm A: server - listens and announces on topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server_conns = swarm_a.connections();
-    swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
 
     // Swarm B: client - discovers peers on topic
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.join(topic, JoinOpts::Client);
     swarm_b.flush().await?;
 
     // B should have discovered A
@@ -56,17 +56,17 @@ async fn multiple_servers_discovered() -> Result<()> {
     // Create two servers announcing on same topic
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server_a = swarm_a.connections();
-    swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
 
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let _server_b = swarm_b.connections();
-    swarm_b.join(topic, JoinOpts::Server)?;
+    swarm_b.join(topic, JoinOpts::Server);
     swarm_b.flush().await?;
 
     // Client discovers
     let swarm_c = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    swarm_c.join(topic, JoinOpts::Client)?;
+    swarm_c.join(topic, JoinOpts::Client);
     swarm_c.flush().await?;
 
     // C should have found both A and B
@@ -93,7 +93,7 @@ async fn peers_connect_and_exchange_messages() -> Result<()> {
     swarm_a.bootstrap().await?;
     let mut server_conns = swarm_a.connections();
     let server_addr = swarm_a.local_addr()?;
-    swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
 
     // Swarm B: client - connects to A directly using known address and public key
@@ -143,7 +143,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     let swarm_a = Swarm::with_config(config_a).await?;
     swarm_a.bootstrap().await?;
     let _server_a = swarm_a.connections();
-    swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
 
     // Swarm B: client with auto-connect enabled (default)
@@ -152,7 +152,7 @@ async fn discovery_enqueues_peers_for_connection() -> Result<()> {
     swarm_b.bootstrap().await?;
 
     // Join as client - should auto-discover peers
-    swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.join(topic, JoinOpts::Client);
     swarm_b.flush().await?;
 
     // Should have discovered the server peer
@@ -179,14 +179,14 @@ async fn auto_connect_establishes_connection() -> Result<()> {
     swarm_b.bootstrap().await?;
 
     let mut server_conns = swarm_a.connections();
-    swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
 
     // Get connection stream to receive auto-connect events
     let mut client_conns = swarm_b.connections();
 
     // Join as client - should auto-discover and auto-connect
-    swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.join(topic, JoinOpts::Client);
     swarm_b.flush().await?;
 
     let a = tokio::spawn(async move {
@@ -233,12 +233,12 @@ async fn connection_event_has_topics() -> Result<()> {
 
     // Server joins topic
     let mut server_conns = swarm_a.connections();
-    swarm_a.join(topic, JoinOpts::Server)?;
+    swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
 
     // Client joins topic - should discover server and auto-connect
     let mut client_conns = swarm_b.connections();
-    swarm_b.join(topic, JoinOpts::Client)?;
+    swarm_b.join(topic, JoinOpts::Client);
     swarm_b.flush().await?;
 
     // Both streams must be polled for auto-connect to complete

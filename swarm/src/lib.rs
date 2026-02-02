@@ -15,18 +15,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dht_rpc::{Commit, IdBytes, Peer};
-use futures::{
-    Future, Stream,
-    stream::{FuturesUnordered, SelectAll},
-};
-use hyperdht::adht::{Announce, Dht, Lookup, LookupResponse, PeerHandshakeArgs};
+use dht_rpc::{IdBytes, Peer};
+use futures::{Future, Stream, stream::FuturesUnordered};
+use hyperdht::adht::{Dht, LookupResponse, PeerHandshakeArgs};
 use tokio::sync::mpsc;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, warn};
 
 mod config;
 mod connection_set;
 mod error;
+mod peer_discovery;
 mod peer_info;
 mod queue;
 mod retry;
@@ -34,6 +32,7 @@ mod retry;
 pub use config::SwarmConfig;
 pub use connection_set::{AddResult, ConnectionInfo, ConnectionSet};
 pub use error::{Error, Result};
+pub use peer_discovery::PeerDiscovery;
 pub use peer_info::{ConnectionState, PeerInfo, PeerOrigin, Priority, TrustLevel};
 pub use queue::{PeerQueue, QueuedPeer};
 pub use retry::{RetryEntry, RetryTimer};
@@ -65,17 +64,6 @@ impl JoinOpts {
     }
 }
 
-/// Tracks discovery state for a topic
-#[derive(Debug)]
-struct Discovery {
-    #[allow(dead_code)]
-    topic: IdBytes,
-    #[allow(dead_code)]
-    server: bool,
-    #[allow(dead_code)]
-    client: bool,
-}
-
 /// Event emitted when a connection is established
 #[derive(Debug)]
 pub struct ConnectionEvent {
@@ -104,17 +92,13 @@ struct SwarmInner {
     config: SwarmConfig,
     connections: ConnectionSet,
     peers: HashMap<IdBytes, PeerInfo>,
-    discoveries: HashMap<IdBytes, Discovery>,
+    discoveries: HashMap<IdBytes, PeerDiscovery>,
     /// Priority queue for connection scheduling
     queue: PeerQueue,
     /// Retry timer for failed connections
     retry_timer: RetryTimer,
     /// Channel sender for connection events
     connection_tx: mpsc::Sender<ConnectionEvent>,
-    /// Pending announce futures
-    pending_announces: FuturesUnordered<PendingAnnounce>,
-    /// Pending lookup streams
-    pending_lookups: SelectAll<PendingLookup>,
     /// Pending connection futures
     pending_connections: FuturesUnordered<PendingConnection>,
     waker: Option<Waker>,
@@ -138,23 +122,8 @@ impl Stream for SwarmInner {
         if let Poll::Ready(()) = self.auto_connect_job.poll_now(cx) {
             self.auto_connect_job();
         }
-        if let Poll::Ready(Some(res)) = Pin::new(&mut self.pending_announces).poll_next(cx) {
-            return Poll::Ready(Some(Ok(SwarmEvent::AnnounceComplete(res))));
-        }
 
-        while let Poll::Ready(Some((topic, result))) =
-            Pin::new(&mut self.pending_lookups).poll_next(cx)
-        {
-            match result {
-                Ok(Some(response)) => self.handle_lookup_response(topic, response),
-                Ok(None) => {
-                    trace!(?topic, "lookup complete");
-                }
-                Err(e) => {
-                    error!(?topic, ?e, "lookup error");
-                }
-            }
-        }
+        self.poll_discoveries(cx);
 
         while let Poll::Ready(Some((pk, result))) =
             Pin::new(&mut self.pending_connections).poll_next(cx)
@@ -173,6 +142,21 @@ impl SwarmInner {
     fn maybe_wake(&self) {
         if let Some(waker) = &self.waker {
             waker.wake_by_ref();
+        }
+    }
+    fn poll_discoveries(&mut self, cx: &mut Context<'_>) {
+        let mut events = Vec::new();
+        for (topic, discovery) in self.discoveries.iter_mut() {
+            while let Poll::Ready(Some(result)) = Pin::new(&mut *discovery).poll_next(cx) {
+                events.push((*topic, result));
+            }
+        }
+        for (topic, result) in events {
+            match result {
+                Ok(Some(response)) => self.handle_lookup_response(topic, response),
+                Ok(None) => {}
+                Err(e) => error!(?topic, ?e, "discovery error"),
+            }
         }
     }
     fn handle_lookup_response(&mut self, topic: IdBytes, response: LookupResponse) {
@@ -366,8 +350,6 @@ impl Swarm {
             queue: PeerQueue::new(),
             retry_timer: RetryTimer::new(),
             connection_tx,
-            pending_announces: Default::default(),
-            pending_lookups: Default::default(),
             pending_connections: Default::default(),
             waker: Default::default(),
             auto_connect_job: PeriodicJob::new(DEFAULT_AUTO_CONNECT_JOB_INTERVAL),
@@ -419,39 +401,11 @@ impl Swarm {
     }
 
     /// Join a topic for peer discovery
-    pub fn join(&self, topic: IdBytes, opts: JoinOpts) -> Result<()> {
+    pub fn join(&self, topic: IdBytes, opts: JoinOpts) {
         let mut inner = self.inner.write().unwrap();
-        let discovery = Discovery {
-            topic,
-            server: opts.server(),
-            client: opts.client(),
-        };
+        let discovery = PeerDiscovery::new(topic, opts, inner.dht.clone(), inner.keypair.clone());
         inner.discoveries.insert(topic, discovery);
-
-        if opts.client() {
-            let lookup = inner.dht.lookup(topic, Commit::No)?;
-            let pl = PendingLookup { topic, lookup };
-            inner.pending_lookups.push(pl);
-        };
-
-        if opts.server() {
-            // Announce  ourselves so we can be found
-            let self_topic = dht_rpc::generic_hash(&*inner.keypair.public).into();
-            let announce = PendingAnnounce::new(
-                topic,
-                inner.dht.announce(topic, inner.keypair.clone(), vec![]),
-            );
-            let self_ann = PendingAnnounce::new(
-                self_topic,
-                inner
-                    .dht
-                    .announce(self_topic, inner.keypair.clone(), vec![]),
-            );
-            inner.pending_announces.push(announce);
-            inner.pending_announces.push(self_ann);
-        };
-
-        Ok(())
+        inner.maybe_wake();
     }
 
     /// Leave a topic
@@ -607,31 +561,6 @@ impl Clone for Swarm {
     }
 }
 
-struct PendingAnnounce {
-    topic: IdBytes,
-    announce: Announce,
-}
-
-impl PendingAnnounce {
-    fn new(topic: IdBytes, announce: Announce) -> Self {
-        Self { topic, announce }
-    }
-}
-
-impl Future for PendingAnnounce {
-    type Output = Result<IdBytes>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Poll::Ready(res) = Pin::new(&mut self.announce).poll(cx) {
-            return Poll::Ready(match res {
-                Ok(_) => Ok(self.topic),
-                Err(e) => Err(e.into()),
-            });
-        }
-        Poll::Pending
-    }
-}
-
 pub struct FlushAnnouncesAndLookups {
     inner: Arc<RwLock<SwarmInner>>,
 }
@@ -642,27 +571,14 @@ impl Future for FlushAnnouncesAndLookups {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut inner = self.inner.write().unwrap();
         let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
-        if inner.pending_announces.is_empty() && inner.pending_lookups.is_empty() {
+        if inner
+            .discoveries
+            .values()
+            .all(|d| d.is_first_round_complete())
+        {
             return Poll::Ready(Ok(()));
         }
         Poll::Pending
-    }
-}
-
-struct PendingLookup {
-    topic: IdBytes,
-    lookup: Lookup,
-}
-
-impl Stream for PendingLookup {
-    type Item = (IdBytes, hyperdht::Result<Option<LookupResponse>>);
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.lookup).poll_next(cx) {
-            Poll::Ready(Some(result)) => Poll::Ready(Some((self.topic, result))),
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
 
@@ -700,7 +616,7 @@ mod tests {
         assert!(!swarm.has_topic(&topic));
         assert_eq!(swarm.topics_count(), 0);
 
-        swarm.join(topic, JoinOpts::Both).unwrap();
+        swarm.join(topic, JoinOpts::Both);
         assert!(swarm.has_topic(&topic));
         assert_eq!(swarm.topics_count(), 1);
 

@@ -83,7 +83,10 @@ impl PeerDiscovery {
         Box::new(if opts.server() {
             ActiveQuery::Announce(dht.announce(topic, keypair.clone(), vec![]))
         } else {
-            ActiveQuery::Lookup(dht.lookup(topic, Commit::No).expect("lookup creation failed"))
+            ActiveQuery::Lookup(
+                dht.lookup(topic, Commit::No)
+                    .expect("lookup creation failed"),
+            )
         })
     }
 
@@ -98,8 +101,11 @@ impl Stream for PeerDiscovery {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             match &mut self.state {
-                PeerDiscoveryState::Querying(query) => match Pin::new(query.as_mut()).poll_next(cx) {
-                    Poll::Ready(Some(result)) => return Poll::Ready(Some(result)),
+                PeerDiscoveryState::Querying(query) => match Pin::new(query.as_mut()).poll_next(cx)
+                {
+                    Poll::Ready(Some(result)) => {
+                        return Poll::Ready(Some(result));
+                    }
                     Poll::Ready(None) => {
                         self.first_round_complete = true;
                         let duration = Self::refresh_duration();
@@ -110,15 +116,13 @@ impl Stream for PeerDiscovery {
                 },
                 PeerDiscoveryState::Sleeping(timer) => match timer.as_mut().poll(cx) {
                     Poll::Ready(()) => {
-                        let query = Self::create_query(
-                            &self.dht,
-                            self.topic,
-                            &self.opts,
-                            &self.keypair,
-                        );
+                        let query =
+                            Self::create_query(&self.dht, self.topic, &self.opts, &self.keypair);
                         self.state = PeerDiscoveryState::Querying(query);
                     }
-                    Poll::Pending => return Poll::Pending,
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
                 },
             }
         }

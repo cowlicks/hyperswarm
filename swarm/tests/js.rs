@@ -32,7 +32,7 @@ await swarm.flush();  // Wait for announce to complete
 
     // Rust: Discover the JS peer
     let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    rust_swarm.join(topic.into(), JoinOpts::Client)?;
+    rust_swarm.join(topic.into(), JoinOpts::Client);
     rust_swarm.flush().await?;
 
     // Wait for discovery
@@ -54,7 +54,7 @@ async fn js_discovers_rust_server() -> Result<()> {
 
     // Rust: Create a swarm and announce on a topic
     let rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    rust_swarm.join(topic.into(), JoinOpts::Server)?;
+    rust_swarm.join(topic.into(), JoinOpts::Server);
     rust_swarm.flush().await?;
 
     // Wait for announce to propagate
@@ -110,7 +110,7 @@ await swarm.flush();  // Wait for announce to complete
 
     // Rust: Discover the JS peer
     let mut rust_swarm = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
-    rust_swarm.join(topic.into(), JoinOpts::Client)?;
+    rust_swarm.join(topic.into(), JoinOpts::Client);
     rust_swarm.flush().await?;
 
     tokio::spawn(async move {
@@ -164,7 +164,7 @@ await js_swarm.join(topic, {{ server: true, client: false }}).flushed();
     rust_swarm.bootstrap().await?;
 
     let mut connections = rust_swarm.connections();
-    rust_swarm.join(topic.into(), JoinOpts::Client)?;
+    rust_swarm.join(topic.into(), JoinOpts::Client);
     rust_swarm.flush().await?;
 
     // Wait for auto-connect
@@ -204,7 +204,7 @@ async fn js_swarm_connects_to_rust_swarm_exchanges_messages() -> Result<()> {
     rust_swarm.bootstrap().await?;
 
     let mut server_conns = rust_swarm.connections();
-    rust_swarm.join(topic.into(), JoinOpts::Both)?;
+    rust_swarm.join(topic.into(), JoinOpts::Server);
     rust_swarm.flush().await?;
 
     // JS: Create a hyperswarm client that joins topic
