@@ -106,6 +106,8 @@ struct SwarmInner {
     pending_connections: FuturesUnordered<PendingConnection>,
     waker: Option<Waker>,
     auto_connect_job: PeriodicJob,
+    /// The hyperdht server, created lazily on first join with server mode
+    server: Option<Server>,
 }
 
 pub enum SwarmEvent {
@@ -122,6 +124,9 @@ impl Stream for SwarmInner {
         if self.waker.is_none() {
             self.waker = Some(cx.waker().clone());
         }
+
+        self.poll_server(cx);
+
         if let Poll::Ready(()) = self.auto_connect_job.poll_now(cx) {
             self.auto_connect_job();
         }
@@ -141,6 +146,35 @@ impl Stream for SwarmInner {
 impl SwarmInner {
     fn name(&self) -> String {
         self.dht.name()
+    }
+    fn poll_server(&mut self, cx: &mut Context<'_>) {
+        let Some(server) = &mut self.server else {
+            return;
+        };
+        while let Poll::Ready(Some(result)) = Pin::new(&mut *server).poll_next(cx) {
+            match result {
+                Ok(connection) => {
+                    let remote_public_key =
+                        connection
+                            .get_remote_static()
+                            .map(IdBytes)
+                            .unwrap_or_else(|| {
+                                panic!("Server connection without remote public key")
+                            });
+                    debug!(?remote_public_key, "server connection accepted");
+                    self.connections.add(remote_public_key, false);
+                    let _ = self.connection_tx.try_send(ConnectionEvent {
+                        connection,
+                        client: false,
+                        remote_public_key,
+                        topics: vec![],
+                    });
+                }
+                Err(e) => {
+                    error!(?e, "server connection error");
+                }
+            }
+        }
     }
     fn maybe_wake(&self) {
         if let Some(waker) = &self.waker {
@@ -356,6 +390,7 @@ impl Swarm {
             pending_connections: Default::default(),
             waker: Default::default(),
             auto_connect_job: PeriodicJob::new(DEFAULT_AUTO_CONNECT_JOB_INTERVAL),
+            server: None,
         }));
 
         let swarm = Self {
@@ -406,6 +441,9 @@ impl Swarm {
     /// Join a topic for peer discovery
     pub fn join(&self, topic: IdBytes, opts: JoinOpts) {
         let mut inner = self.inner.write().unwrap();
+        if opts.server() && inner.server.is_none() {
+            inner.server = Some(inner.dht.listen(inner.keypair.clone()));
+        }
         let discovery = PeerDiscovery::new(topic, opts, inner.dht.clone(), inner.keypair.clone());
         inner.discoveries.insert(topic, discovery);
         inner.maybe_wake();
@@ -462,15 +500,9 @@ impl Swarm {
 
     /// Get a stream of connection events (both client & server).
     pub fn connections(&self) -> ConnectionStream {
-        let inner = self.inner.write().unwrap();
-
-        let keypair = inner.keypair.clone();
-        let server = inner.dht.listen(keypair);
-
         ConnectionStream {
             inner: self.inner.clone(),
-            client_rx: self.connection_rx.clone(),
-            server,
+            rx: self.connection_rx.clone(),
         }
     }
 }
@@ -484,62 +516,23 @@ impl Stream for Swarm {
     }
 }
 
-/// Stream that yields connection events (client and/or server)
+/// Stream that yields connection events (both client and server)
 pub struct ConnectionStream {
     inner: Arc<RwLock<SwarmInner>>,
-    /// Receiver for client (outgoing) connections
-    client_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<ConnectionEvent>>>,
-    /// Stream of incoming connections
-    server: Server,
+    /// Receiver for connection events (both client and server)
+    rx: Arc<tokio::sync::Mutex<mpsc::Receiver<ConnectionEvent>>>,
 }
 
 impl Stream for ConnectionStream {
     type Item = Result<ConnectionEvent>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         {
             let mut inner = self.inner.write().unwrap();
             _ = Pin::new(&mut *inner).poll_next(cx);
         }
 
-        match Pin::new(&mut self.server).poll_next(cx) {
-            Poll::Ready(Some(Ok(connection))) => {
-                // Get remote public key from Noise handshake (server learns client's key)
-                let remote_public_key =
-                    connection
-                        .get_remote_static()
-                        .map(IdBytes)
-                        .unwrap_or_else(|| {
-                            // In theory, the server should always have the remote's public key here
-                            // because it is sent with the first message (since we are the responder).
-                            // If initiator doesn't send it, we should have already errored.
-                            error!(
-                                ?connection,
-                                "Server connection without remote public key???"
-                            );
-                            panic!("Server connection without remote public key???")
-                        });
-
-                {
-                    let mut guard = self.inner.write().unwrap();
-                    guard.connections.add(remote_public_key, false);
-                }
-
-                return Poll::Ready(Some(Ok(ConnectionEvent {
-                    connection,
-                    client: false,
-                    remote_public_key,
-                    topics: vec![], // No topics on server
-                })));
-            }
-            Poll::Ready(Some(Err(e))) => {
-                return Poll::Ready(Some(Err(e.into())));
-            }
-            Poll::Ready(None) => {}
-            Poll::Pending => {}
-        }
-
-        if let Ok(mut rx) = self.client_rx.try_lock() {
+        if let Ok(mut rx) = self.rx.try_lock() {
             match rx.poll_recv(cx) {
                 Poll::Ready(Some(event)) => {
                     return Poll::Ready(Some(Ok(event)));
