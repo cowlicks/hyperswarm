@@ -60,46 +60,44 @@ impl Future for UnannounceOne {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             match &mut self.phase {
-                UnannounceOnePhase::FindingToken { request } => {
-                    match Pin::new(request).poll(cx) {
-                        Poll::Ready(Ok(resp)) => {
-                            let (Some(token), Some(responder_id)) =
-                                (resp.response.token, resp.response.id)
-                            else {
-                                debug!("UnannounceOne: missing token or id in FIND_PEER response");
-                                self.phase = UnannounceOnePhase::Done;
-                                return Poll::Ready(Err(()));
-                            };
-
-                            let value = request_announce_or_unannounce_value(
-                                &self.keypair,
-                                self.target,
-                                &token,
-                                IdBytes(responder_id),
-                                &[],
-                                &namespace::UNANNOUNCE,
-                            );
-                            let destination = Peer {
-                                id: Some(responder_id),
-                                addr: resp.peer.addr,
-                                referrer: None,
-                            };
-                            let o = OutRequestBuilder::new(destination, commands::UNANNOUNCE)
-                                .target(self.target)
-                                .value(value)
-                                .token(token);
-                            let request = self.rpc.request_from_builder(o);
-                            self.phase = UnannounceOnePhase::Sending { request };
-                            // Continue loop to poll the send.
-                        }
-                        Poll::Ready(Err(e)) => {
-                            debug!(?e, "UnannounceOne: FIND_PEER request failed");
+                UnannounceOnePhase::FindingToken { request } => match Pin::new(request).poll(cx) {
+                    Poll::Ready(Ok(resp)) => {
+                        let (Some(token), Some(responder_id)) =
+                            (resp.response.token, resp.response.id)
+                        else {
+                            debug!("UnannounceOne: missing token or id in FIND_PEER response");
                             self.phase = UnannounceOnePhase::Done;
                             return Poll::Ready(Err(()));
-                        }
-                        Poll::Pending => return Poll::Pending,
+                        };
+
+                        let value = request_announce_or_unannounce_value(
+                            &self.keypair,
+                            self.target,
+                            &token,
+                            IdBytes(responder_id),
+                            &[],
+                            &namespace::UNANNOUNCE,
+                        );
+                        let destination = Peer {
+                            id: Some(responder_id),
+                            addr: resp.peer.addr,
+                            referrer: None,
+                        };
+                        let o = OutRequestBuilder::new(destination, commands::UNANNOUNCE)
+                            .target(self.target)
+                            .value(value)
+                            .token(token);
+                        let request = self.rpc.request_from_builder(o);
+                        self.phase = UnannounceOnePhase::Sending { request };
+                        continue;
                     }
-                }
+                    Poll::Ready(Err(e)) => {
+                        debug!(?e, "UnannounceOne: FIND_PEER request failed");
+                        self.phase = UnannounceOnePhase::Done;
+                        return Poll::Ready(Err(()));
+                    }
+                    Poll::Pending => return Poll::Pending,
+                },
                 UnannounceOnePhase::Sending { request } => match Pin::new(request).poll(cx) {
                     Poll::Ready(Ok(_)) => {
                         trace!("UnannounceOne: UNANNOUNCE succeeded");
@@ -295,152 +293,139 @@ impl Announcer {
 
         loop {
             match &mut self.state {
-                AnnouncerState::LookingUp { query } => {
-                    match Pin::new(query).poll(cx) {
-                        Poll::Ready(Ok(query_result)) => {
-                            debug!(
-                                target = ?self.target,
-                                closest = query_result.closest_replies.len(),
-                                "LOOKUP complete, committing announces"
+                AnnouncerState::LookingUp { query } => match Pin::new(query).poll(cx) {
+                    Poll::Ready(Ok(query_result)) => {
+                        debug!(
+                            target = ?self.target,
+                            closest = query_result.closest_replies.len(),
+                            "LOOKUP complete, committing announces"
+                        );
+                        let pending = FuturesUnordered::new();
+                        let relay_addresses: Vec<SocketAddr> =
+                            self.server_relays[1].keys().copied().collect();
+
+                        for reply in query_result.closest_replies.iter() {
+                            let (Some(token), Some(responder_id)) =
+                                (reply.response.token, reply.response.id)
+                            else {
+                                warn!("Announce: closest reply missing token or id, skipping");
+                                continue;
+                            };
+                            let value = request_announce_or_unannounce_value(
+                                &self.keypair,
+                                self.target,
+                                &token,
+                                IdBytes(responder_id),
+                                &relay_addresses,
+                                &namespace::ANNOUNCE,
                             );
-                            let pending = FuturesUnordered::new();
-                            let relay_addresses: Vec<SocketAddr> =
-                                self.server_relays[1].keys().copied().collect();
-
-                            for reply in query_result.closest_replies.iter() {
-                                let (Some(token), Some(responder_id)) =
-                                    (reply.response.token, reply.response.id)
-                                else {
-                                    warn!("Announce: closest reply missing token or id, skipping");
-                                    continue;
-                                };
-                                let value = request_announce_or_unannounce_value(
-                                    &self.keypair,
-                                    self.target,
-                                    &token,
-                                    IdBytes(responder_id),
-                                    &relay_addresses,
-                                    &namespace::ANNOUNCE,
-                                );
-                                let peer = Peer {
-                                    id: Some(responder_id),
-                                    addr: reply.peer.addr,
-                                    referrer: None,
-                                };
-                                let o = OutRequestBuilder::new(peer, commands::ANNOUNCE)
-                                    .target(self.target)
-                                    .value(value)
-                                    .token(token);
-                                pending.push(self.rpc.request_from_builder(o));
-                            }
-
-                            if pending.is_empty() {
-                                warn!(target = ?self.target, "No valid closest replies for announce");
-                                self.start_unannounce_or_sleep();
-                            } else {
-                                self.state = AnnouncerState::Committing { pending };
-                            }
-                            // Continue loop.
+                            let peer = Peer {
+                                id: Some(responder_id),
+                                addr: reply.peer.addr,
+                                referrer: None,
+                            };
+                            let o = OutRequestBuilder::new(peer, commands::ANNOUNCE)
+                                .target(self.target)
+                                .value(value)
+                                .token(token);
+                            pending.push(self.rpc.request_from_builder(o));
                         }
-                        Poll::Ready(Err(e)) => {
-                            warn!(?e, target = ?self.target, "LOOKUP query failed");
+
+                        if pending.is_empty() {
+                            warn!(target = ?self.target, "No valid closest replies for announce");
                             self.start_unannounce_or_sleep();
-                            // Continue loop.
+                        } else {
+                            self.state = AnnouncerState::Committing { pending };
                         }
-                        Poll::Pending => return Poll::Pending,
                     }
-                }
+                    Poll::Ready(Err(e)) => {
+                        warn!(?e, target = ?self.target, "LOOKUP query failed");
+                        self.start_unannounce_or_sleep();
+                    }
+                    Poll::Pending => return Poll::Pending,
+                },
 
-                AnnouncerState::Committing { pending } => {
-                    match pending.poll_next_unpin(cx) {
-                        Poll::Ready(Some(Ok(resp))) => {
-                            trace!(
-                                peer = %resp.peer.addr,
-                                "Announce commit succeeded"
-                            );
-                            // Store this relay in the current generation.
-                            self.server_relays[2].insert(resp.peer.addr, resp.peer.clone());
-                            cx.waker().wake_by_ref();
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(Some(Err(e))) => {
-                            warn!(?e, "Announce commit failed");
-                            cx.waker().wake_by_ref();
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(None) => {
-                            // All commits done.
-                            debug!(
-                                target = ?self.target,
-                                relays = self.server_relays[2].len(),
-                                "Announce cycle complete"
-                            );
-                            self.start_unannounce_or_sleep();
-                            // Continue loop.
-                        }
-                        Poll::Pending => return Poll::Pending,
+                AnnouncerState::Committing { pending } => match pending.poll_next_unpin(cx) {
+                    Poll::Ready(Some(Ok(resp))) => {
+                        trace!(
+                            peer = %resp.peer.addr,
+                            "Announce commit succeeded"
+                        );
+                        // Store this relay in the current generation.
+                        self.server_relays[2].insert(resp.peer.addr, resp.peer.clone());
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
                     }
-                }
+                    Poll::Ready(Some(Err(e))) => {
+                        warn!(?e, "Announce commit failed");
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(None) => {
+                        // All commits done.
+                        debug!(
+                            target = ?self.target,
+                            relays = self.server_relays[2].len(),
+                            "Announce cycle complete"
+                        );
+                        self.start_unannounce_or_sleep();
+                        continue;
+                    }
+                    Poll::Pending => return Poll::Pending,
+                },
 
-                AnnouncerState::Unannouncing { futures } => {
-                    match futures.poll_next_unpin(cx) {
-                        Poll::Ready(Some(_)) => {
-                            // Individual unannounce done (success or failure).
-                            cx.waker().wake_by_ref();
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(None) => {
-                            // All unannounces done.
-                            self.finish_cycle();
-                            return Poll::Ready(());
-                        }
-                        Poll::Pending => return Poll::Pending,
+                AnnouncerState::Unannouncing { futures } => match futures.poll_next_unpin(cx) {
+                    Poll::Ready(Some(_)) => {
+                        // Individual unannounce done (success or failure).
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
                     }
-                }
+                    Poll::Ready(None) => {
+                        // All unannounces done.
+                        self.finish_cycle();
+                        return Poll::Ready(());
+                    }
+                    Poll::Pending => return Poll::Pending,
+                },
 
-                AnnouncerState::Sleeping { timer } => {
-                    match timer.as_mut().poll(cx) {
-                        Poll::Ready(()) => {
-                            self.iteration += 1;
-                            self.start_pinging();
-                            // Continue loop.
-                        }
-                        Poll::Pending => return Poll::Pending,
+                AnnouncerState::Sleeping { timer } => match timer.as_mut().poll(cx) {
+                    Poll::Ready(()) => {
+                        self.iteration += 1;
+                        self.start_pinging();
                     }
-                }
+                    Poll::Pending => return Poll::Pending,
+                },
 
                 AnnouncerState::Pinging {
                     pings,
                     active_count,
-                } => {
-                    match pings.poll_next_unpin(cx) {
-                        Poll::Ready(Some(Ok(_))) => {
-                            *active_count += 1;
-                            cx.waker().wake_by_ref();
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(Some(Err(_))) => {
-                            // Ping failed — don't increment active count.
-                            cx.waker().wake_by_ref();
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(None) => {
-                            // All pings resolved.
-                            let active = *active_count;
-                            if active < MIN_ACTIVE_RELAYS {
-                                debug!(
-                                    target = ?self.target,
-                                    active,
-                                    "Too few active relays, triggering refresh"
-                                );
-                                self.refreshing = true;
-                            }
-                            self.check_cycle_or_sleep();
-                            // Continue loop.
-                        }
-                        Poll::Pending => return Poll::Pending,
+                } => match pings.poll_next_unpin(cx) {
+                    Poll::Ready(Some(Ok(_))) => {
+                        *active_count += 1;
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
                     }
-                }
+                    Poll::Ready(Some(Err(_))) => {
+                        // Ping failed — don't increment active count.
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(None) => {
+                        // All pings resolved.
+                        let active = *active_count;
+                        if active < MIN_ACTIVE_RELAYS {
+                            debug!(
+                                target = ?self.target,
+                                active,
+                                "Too few active relays, triggering refresh"
+                            );
+                            self.refreshing = true;
+                        }
+                        self.check_cycle_or_sleep();
+                        // Continue loop.
+                    }
+                    Poll::Pending => return Poll::Pending,
+                },
             }
         }
     }
