@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    net::SocketAddr,
     pin::Pin,
     sync::{Arc, RwLock},
     task::{Context, Poll, Waker},
@@ -154,13 +155,10 @@ impl SwarmInner {
         while let Poll::Ready(Some(result)) = Pin::new(&mut *server).poll_next(cx) {
             match result {
                 Ok(connection) => {
-                    let remote_public_key =
-                        connection
-                            .get_remote_static()
-                            .map(IdBytes)
-                            .unwrap_or_else(|| {
-                                panic!("Server connection without remote public key")
-                            });
+                    let remote_public_key = connection
+                        .get_remote_static()
+                        .map(IdBytes)
+                        .unwrap_or_else(|| panic!("Server connection without remote public key"));
                     debug!(?remote_public_key, "server connection accepted");
                     self.connections.add(remote_public_key, false);
                     let _ = self.connection_tx.try_send(ConnectionEvent {
@@ -181,15 +179,24 @@ impl SwarmInner {
             waker.wake_by_ref();
         }
     }
-    fn poll_discoveries(&mut self, cx: &mut Context<'_>) {
-        let relay_addresses = self
-            .server
+    // TODO Doing a clone of these for every poll is bad. Fix when we implement
+    // PeerDiscovery sessions.
+    //
+    // We should have Server emit an  event when relay addresses are updated, then we can handle it
+    // and set them in each peer-discovery.
+    // Or better yet have a way peer-discovery's announce to get them directly from the Server.
+    // Currently we're just proxying them from Server -> Swarm -> PeerDiscovery.
+    fn get_relay_addresses(&self) -> Vec<SocketAddr> {
+        self.server
             .as_ref()
             .map(|s| s.relay_addresses())
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
+    fn poll_discoveries(&mut self, cx: &mut Context<'_>) {
+        let relay_addresses = self.get_relay_addresses();
         let mut events = Vec::new();
         for (topic, discovery) in self.discoveries.iter_mut() {
-            discovery.set_relay_addresses(relay_addresses.clone());
+            discovery.maybe_set_relay_addresses(&relay_addresses);
             while let Poll::Ready(Some(result)) = Pin::new(&mut *discovery).poll_next(cx) {
                 events.push((*topic, result));
             }
@@ -365,6 +372,20 @@ impl SwarmInner {
             };
         }
     }
+    fn join(&mut self, topic: IdBytes, opts: JoinOpts) {
+        if opts.server() && self.server.is_none() {
+            self.server = Some(self.dht.listen(self.keypair.clone()));
+        }
+        let discovery = PeerDiscovery::new(
+            topic,
+            opts,
+            self.dht.clone(),
+            self.keypair.clone(),
+            self.get_relay_addresses(),
+        );
+        self.discoveries.insert(topic, discovery);
+        self.maybe_wake();
+    }
 }
 
 impl Swarm {
@@ -446,13 +467,7 @@ impl Swarm {
 
     /// Join a topic for peer discovery
     pub fn join(&self, topic: IdBytes, opts: JoinOpts) {
-        let mut inner = self.inner.write().unwrap();
-        if opts.server() && inner.server.is_none() {
-            inner.server = Some(inner.dht.listen(inner.keypair.clone()));
-        }
-        let discovery = PeerDiscovery::new(topic, opts, inner.dht.clone(), inner.keypair.clone());
-        inner.discoveries.insert(topic, discovery);
-        inner.maybe_wake();
+        self.inner.write().unwrap().join(topic, opts);
     }
 
     /// Leave a topic

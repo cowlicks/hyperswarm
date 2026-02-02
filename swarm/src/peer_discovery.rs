@@ -1,4 +1,5 @@
 use std::{
+    net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -45,11 +46,18 @@ pub struct PeerDiscovery {
     keypair: Keypair,
     state: PeerDiscoveryState,
     first_round_complete: bool,
+    relay_addresses: Vec<SocketAddr>,
 }
 
 impl PeerDiscovery {
-    pub fn new(topic: IdBytes, opts: JoinOpts, dht: Dht, keypair: Keypair) -> Self {
-        let query = Self::create_query(&dht, topic, &opts, &keypair);
+    pub fn new(
+        topic: IdBytes,
+        opts: JoinOpts,
+        dht: Dht,
+        keypair: Keypair,
+        relay_addresses: Vec<SocketAddr>,
+    ) -> Self {
+        let query = Self::create_query(&dht, topic, &opts, &keypair, &relay_addresses);
         Self {
             topic,
             opts,
@@ -57,6 +65,7 @@ impl PeerDiscovery {
             keypair,
             state: PeerDiscoveryState::Querying(query),
             first_round_complete: false,
+            relay_addresses,
         }
     }
 
@@ -68,9 +77,22 @@ impl PeerDiscovery {
         self.first_round_complete
     }
 
+    /// If relay addresses have changed, update them for subsequent announce queries.
+    pub fn maybe_set_relay_addresses(&mut self, relay_addresses: &[SocketAddr]) {
+        if self.opts.server() && relay_addresses != self.relay_addresses {
+            self.relay_addresses = relay_addresses.to_vec();
+        }
+    }
+
     /// Restart the query immediately, aborting any sleep timer.
     pub fn refresh(&mut self) {
-        let query = Self::create_query(&self.dht, self.topic, &self.opts, &self.keypair);
+        let query = Self::create_query(
+            &self.dht,
+            self.topic,
+            &self.opts,
+            &self.keypair,
+            &self.relay_addresses,
+        );
         self.state = PeerDiscoveryState::Querying(query);
     }
 
@@ -79,9 +101,10 @@ impl PeerDiscovery {
         topic: IdBytes,
         opts: &JoinOpts,
         keypair: &Keypair,
+        relay_addresses: &[SocketAddr],
     ) -> Box<ActiveQuery> {
         Box::new(if opts.server() {
-            ActiveQuery::Announce(dht.announce(topic, keypair.clone(), vec![]))
+            ActiveQuery::Announce(dht.announce(topic, keypair.clone(), relay_addresses.to_vec()))
         } else {
             ActiveQuery::Lookup(
                 dht.lookup(topic, Commit::No)
@@ -116,8 +139,13 @@ impl Stream for PeerDiscovery {
                 },
                 PeerDiscoveryState::Sleeping(timer) => match timer.as_mut().poll(cx) {
                     Poll::Ready(()) => {
-                        let query =
-                            Self::create_query(&self.dht, self.topic, &self.opts, &self.keypair);
+                        let query = Self::create_query(
+                            &self.dht,
+                            self.topic,
+                            &self.opts,
+                            &self.keypair,
+                            &self.relay_addresses,
+                        );
                         self.state = PeerDiscoveryState::Querying(query);
                     }
                     Poll::Pending => {
