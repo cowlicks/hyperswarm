@@ -215,17 +215,14 @@ impl Dht {
             .announce_clear(target, keypair, relay_addresses)
     }
 
-    /// Get a `Stream` of `Connection`s. Does not `Announce`.
-    pub fn get_connection_stream(&self, keypair: Keypair) -> mpsc::Receiver<Result<Connection>> {
-        let (tx, rx) = mpsc::channel(32);
-        self.inner.write().unwrap().add_listening_key(keypair, tx);
-        rx
-    }
-
-    /// Announce ourselves and return a `Stream` of `Announce`s
+    /// Create a [`Server`] that announces on the given keypair and yields a [`Stream`] of
+    /// [`Connection`].
     pub fn listen(&self, keypair: Keypair) -> Server {
-        let rx = self.get_connection_stream(keypair.clone());
-
+        let (tx, rx) = mpsc::channel(32);
+        self.inner
+            .write()
+            .unwrap()
+            .add_listening_key(keypair.clone(), tx);
         Server::new(rx, keypair, self.inner.clone())
     }
 

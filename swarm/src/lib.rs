@@ -17,7 +17,10 @@ use std::{
 
 use dht_rpc::{IdBytes, Peer};
 use futures::{Future, Stream, stream::FuturesUnordered};
-use hyperdht::adht::{Dht, LookupResponse, PeerHandshakeArgs};
+use hyperdht::{
+    Server,
+    adht::{Dht, LookupResponse, PeerHandshakeArgs},
+};
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
@@ -462,12 +465,12 @@ impl Swarm {
         let inner = self.inner.write().unwrap();
 
         let keypair = inner.keypair.clone();
-        let server_rx = inner.dht.get_connection_stream(keypair);
+        let server = inner.dht.listen(keypair);
 
         ConnectionStream {
             inner: self.inner.clone(),
             client_rx: self.connection_rx.clone(),
-            server_rx,
+            server,
         }
     }
 }
@@ -486,8 +489,8 @@ pub struct ConnectionStream {
     inner: Arc<RwLock<SwarmInner>>,
     /// Receiver for client (outgoing) connections
     client_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<ConnectionEvent>>>,
-    /// Receiver for server (incoming) connections
-    server_rx: mpsc::Receiver<hyperdht::Result<Connection>>,
+    /// Stream of incoming connections
+    server: Server,
 }
 
 impl Stream for ConnectionStream {
@@ -499,7 +502,7 @@ impl Stream for ConnectionStream {
             _ = Pin::new(&mut *inner).poll_next(cx);
         }
 
-        match Pin::new(&mut self.server_rx).poll_recv(cx) {
+        match Pin::new(&mut self.server).poll_next(cx) {
             Poll::Ready(Some(Ok(connection))) => {
                 // Get remote public key from Noise handshake (server learns client's key)
                 let remote_public_key =
