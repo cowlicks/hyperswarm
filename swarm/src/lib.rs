@@ -182,8 +182,14 @@ impl SwarmInner {
         }
     }
     fn poll_discoveries(&mut self, cx: &mut Context<'_>) {
+        let relay_addresses = self
+            .server
+            .as_ref()
+            .map(|s| s.relay_addresses())
+            .unwrap_or_default();
         let mut events = Vec::new();
         for (topic, discovery) in self.discoveries.iter_mut() {
+            discovery.set_relay_addresses(relay_addresses.clone());
             while let Poll::Ready(Some(result)) = Pin::new(&mut *discovery).poll_next(cx) {
                 events.push((*topic, result));
             }

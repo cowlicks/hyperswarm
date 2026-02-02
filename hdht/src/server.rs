@@ -1,4 +1,5 @@
 use std::{
+    net::SocketAddr,
     pin::Pin,
     sync::{Arc, RwLock},
     task::{Context, Poll},
@@ -27,6 +28,11 @@ impl Server {
         let target = IdBytes(generic_hash(&*keypair.public));
         let announcer = Announcer::new(dht.read().unwrap().get_rpc(), keypair, target);
         Self { rx, dht, announcer }
+    }
+
+    /// Current relay addresses from the announcer (newest generation).
+    pub fn relay_addresses(&self) -> Vec<SocketAddr> {
+        self.announcer.relay_addresses()
     }
 }
 

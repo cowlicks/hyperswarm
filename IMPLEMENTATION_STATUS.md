@@ -100,11 +100,11 @@ DHT implementation that implements queries like lookup, announce, and unannounce
   - Accepts incoming peer handshakes via keypair registration
   - `Dht::listen(keypair)` returns a `Server` (Stream of incoming connections)
   - Drives both the announcer and connection acceptance in a single poll loop
+  - `Server::relay_addresses()` exposes the announcer's current relay addresses
 
 ## Not Yet Implemented
 
 - [ ] `on_peer_holepunch()` - NAT traversal (todo!())
-- [ ] Relay address announcement (include relay_addresses in announce)
 - [ ] Holepunching for NAT traversal
 
 ## Test Coverage (hdht/tests/)
@@ -159,13 +159,23 @@ High-level swarm providing topic-based peer discovery and automatic connection m
 
 ### Connection Management
 - [x] `Swarm::connections()` - Stream of both client and server connections
-  - Registers keypair for incoming connections
   - Returns `ConnectionStream` yielding `ConnectionEvent`
 - [x] `Swarm::connect(pubkey)` - Connect to peer by public key
 - [x] `Swarm::peer_handshake(pubkey, addr)` - Direct connection to address
 - [x] `ConnectionEvent` - Contains connection, client flag, remote_public_key, topics
 - [x] `ConnectionSet` - Track connections with duplicate resolution
 - [x] Auto-connect to discovered peers (via `pending_connections`)
+
+### Server Integration
+- [x] hyperdht `Server` created lazily on first `join()` with server mode
+  - One server per swarm, stored in `SwarmInner`
+  - Drives `Announcer` (self-announces `hash(publicKey)` on the DHT)
+  - Accepts incoming peer connections, routed through `connection_tx`
+  - Polled as part of `SwarmInner`'s event loop (structured concurrency)
+- [x] Relay address propagation to per-topic announces
+  - `Server::relay_addresses()` exposes the announcer's current relays
+  - `SwarmInner::poll_discoveries()` feeds relay addresses into each `PeerDiscovery` before polling
+  - `PeerDiscovery` includes relay addresses in `dht.announce()` calls for each topic
 
 ### Peer Tracking
 - [x] `PeerInfo` - Track peer state, priority, topics, relay addresses
@@ -182,11 +192,19 @@ High-level swarm providing topic-based peer discovery and automatic connection m
 
 ## Not Yet Implemented
 
-- [ ] Self-announce via Server/Announcer (so peers can findPeer(hash(publicKey)))
+- [ ] `PeerDiscoverySession` - Handle returned from `join()` allowing per-session control
+  - In JS, `join()` returns a `PeerDiscoverySession` that wraps the underlying `PeerDiscovery`
+  - Multiple sessions can exist per topic (each with its own client/server flags)
+  - `PeerDiscovery` ref-counts client/server sessions (`_clientSessions`, `_serverSessions`)
+  - Session `.refresh()` updates flags and triggers re-query if client/server mode changed
+  - Session `.flushed()` waits for the current refresh round to complete
+  - Session `.destroy()` decrements ref-counts; when last session destroyed, topic is left
+  - When `_serverSessions` drops to 0, triggers unannounce via refresh
 - [ ] `join_peer(pubkey)` / `leave_peer(pubkey)` - Explicit peer targeting
 - [ ] `max_peers` limit (default: 64)
 - [ ] Stats tracking (connects attempted/opened/closed)
 - [ ] Firewall callback
+- [ ] Unannounce on leave/drop
 
 ## Public API
 
@@ -282,6 +300,5 @@ There are some parts of the JavaScript API we don't implement because they don't
 
 ## Next Steps
 
-1. **Self-announce in swarm** - Wire Server/Announcer into Swarm so `join(Server)` self-announces on `hash(publicKey)`
+1. **Unannounce on leave/drop** - When leaving server mode or dropping the swarm, send unannounce
 2. **Holepunching** - NAT traversal via `on_peer_holepunch()`
-3. **Relay address announcement** - Include relay_addresses in announce values
