@@ -16,6 +16,9 @@ Hyperdht builds on dht-rpc, it provides an interface for making announcements ab
 and creating peer-to-peer connections.
 Hyperswarm builds on hyperdht. It provides a simple interface to automatically connect to other peers interested in a "topic".
 
+## Current implementation status
+
+See ./IMPLEMENTATION_STATUS.md for the current status of the Rust implementation.
 
 ## Building and testing
 
