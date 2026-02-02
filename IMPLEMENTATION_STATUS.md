@@ -57,9 +57,8 @@ DHT implementation that implements queries like lookup, announce, and unannounce
 - [x] `Dht::announce_clear(topic, keypair)` - Clear and re-announce
 - [x] `Dht::connect(pubkey)` - Connect to peer by public key
 - [x] `Dht::peer_handshake(args)` - Low-level connection to address
-- [x] `Dht::listen(keypair)` - Listen for incoming connections (returns `ServerFuture`)
-- [x] `Dht::start_listening(keypair)` - Register for connections without blocking on announce
-- [x] `Dht::get_connection_stream(keypair)` - Get connection receiver only
+- [x] `Dht::listen(keypair)` - Listen for incoming connections (returns `Server`)
+- [x] `impl Clone for Dht` - Shares inner state, allows multiple handles
 - [x] `Dht::drive()` - Spawn background task to poll DHT (abort on drop)
 - [x] `impl Stream for Dht` - Poll for DHT events
 
@@ -85,12 +84,28 @@ DHT implementation that implements queries like lookup, announce, and unannounce
 - [x] Announce/lookup interop both directions
 - [x] Relay interop (RS→RS→JS, RS→JS→JS)
 
+### Announcer
+- [x] `Announcer` struct - Automatic periodic re-announcing for server mode
+  - Holds own `Rpc` clone, performs all DHT operations directly
+  - LOOKUP → ANNOUNCE commits → UNANNOUNCE retired relays → sleep/ping cycle
+  - Three-generation relay tracking for graceful relay rotation
+  - ~5 min cycle (100 iterations × 3s sleep), pings relays for health
+  - Triggers refresh when active relays drop below 3
+  - `Announcer::new(rpc, keypair, target)`, `.refresh()`, `.target()`, `.relay_addresses()`
+  - Structured concurrency: poll to drive, stop polling to suspend, drop to stop
+
+### Server
+- [x] `Server` struct - Listens for incoming connections and maintains self-announcement
+  - Wraps `Announcer` to keep `hash(publicKey)` announced on the DHT
+  - Accepts incoming peer handshakes via keypair registration
+  - `Dht::listen(keypair)` returns a `Server` (Stream of incoming connections)
+  - Drives both the announcer and connection acceptance in a single poll loop
+
 ## Not Yet Implemented
 
 - [ ] `on_peer_holepunch()` - NAT traversal (todo!())
 - [ ] Relay address announcement (include relay_addresses in announce)
 - [ ] Holepunching for NAT traversal
-- [ ] `Announcer` - Automatic periodic re-announcing (see plan below)
 
 ## Test Coverage (hdht/tests/)
 
@@ -128,11 +143,19 @@ High-level swarm providing topic-based peer discovery and automatic connection m
 ### Topic Discovery
 - [x] `JoinOpts` - Client/Server/Both modes
 - [x] `Swarm::join(topic, opts)` - Join topic for discovery
-  - Client mode: starts lookup, discovers peers
-  - Server mode: announces on topic AND self-announces on hash(pubkey)
-- [x] `Swarm::leave(topic)` - Leave a topic
+  - Creates a `PeerDiscovery` that runs lookup (client) or announce (server)
+- [x] `Swarm::leave(topic)` - Leave a topic (drops PeerDiscovery, stops query)
 - [x] `Swarm::has_topic()` / `Swarm::topics_count()`
-- [x] `Swarm::flush()` - Wait for pending announces/lookups
+- [x] `Swarm::flush()` - Wait for all discoveries to complete first round
+
+### PeerDiscovery
+- [x] `PeerDiscovery` struct - Manages discovery lifecycle for a single topic
+  - State machine: Querying (Lookup or Announce) → Sleeping → Querying (refresh)
+  - Automatic refresh every ~10 min + random jitter
+  - `PeerDiscovery::new(topic, opts, dht, keypair)`
+  - `.refresh()` - Restart query immediately
+  - `.is_first_round_complete()` - Used by flush()
+  - `impl Stream` yielding `LookupResponse` items continuously across refresh cycles
 
 ### Connection Management
 - [x] `Swarm::connections()` - Stream of both client and server connections
@@ -153,14 +176,13 @@ High-level swarm providing topic-based peer discovery and automatic connection m
 
 ### Internal Plumbing
 - [x] `SwarmInner` with `impl Stream` for event loop
-- [x] `pending_announces` / `pending_lookups` - FuturesUnordered
+- [x] `discoveries: HashMap<IdBytes, PeerDiscovery>` - polled each tick
 - [x] `handle_lookup_response()` - Process discovered peers
 - [x] `auto_connect_job()` - Periodic connection attempts
 
 ## Not Yet Implemented
 
-- [ ] Refresh cycle (re-lookup/re-announce every ~10min)
-- [ ] `suspend()` / `resume()` - Pause/resume network activity
+- [ ] Self-announce via Server/Announcer (so peers can findPeer(hash(publicKey)))
 - [ ] `join_peer(pubkey)` / `leave_peer(pubkey)` - Explicit peer targeting
 - [ ] `max_peers` limit (default: 64)
 - [ ] Stats tracking (connects attempted/opened/closed)
@@ -179,13 +201,13 @@ swarm.keypair() -> Keypair
 swarm.local_addr() -> Result<SocketAddr>
 
 // Discovery
-swarm.join(topic, JoinOpts::Client)?;   // lookup peers
-swarm.join(topic, JoinOpts::Server)?;   // announce self
-swarm.join(topic, JoinOpts::Both)?;     // both
+swarm.join(topic, JoinOpts::Client);    // lookup peers
+swarm.join(topic, JoinOpts::Server);    // announce self
+swarm.join(topic, JoinOpts::Both);      // both
 swarm.leave(&topic);
 swarm.has_topic(&topic) -> bool
 swarm.topics_count() -> usize
-swarm.flush().await?;                   // wait for pending ops
+swarm.flush().await?;                   // wait for first discovery round
 
 // Connections
 let mut conns = swarm.connections();    // ConnectionStream
@@ -222,39 +244,6 @@ swarm.connections_count() -> usize
 
 # Planned Work
 
-## Announcer (hyperdht)
-
-Automatic periodic re-announcing for server mode. See JS `hyperdht/lib/announcer.js`.
-
-### Behavior
-
-- **Lifecycle:** `start()`, `stop()`, `suspend()`, `resume()`, `refresh()`
-- **Background loop:** ~5 min cycle, ping relays, re-announce if needed
-- **Three-generation relay tracking:** detect relay churn, unannounce from removed
-
-### Proposed API
-
-```rust
-pub struct Announcer {
-    dht: Arc<RwLock<DhtInner>>,
-    keypair: Keypair,
-    target: IdBytes,
-    server_relays: [HashMap<SocketAddr, Peer>; 3],
-    // ...
-}
-
-impl Announcer {
-    pub fn new(dht, keypair) -> Self;
-    pub async fn start(&mut self) -> Result<()>;
-    pub async fn stop(&mut self) -> Result<()>;
-    pub async fn suspend(&mut self) -> Result<()>;
-    pub fn resume(&mut self);
-    pub fn refresh(&self);
-}
-```
-
----
-
 ## API Comparison: Rust vs JavaScript
 
 There are some parts of the JavaScript API we don't implement because they don't make sense in a rust context. These usually have to do with lifecycle management.
@@ -278,7 +267,7 @@ There are some parts of the JavaScript API we don't implement because they don't
 | `clear()` | Destroy all discoveries | Not implemented |
 | `stats` | Connection statistics | Not implemented |
 | `firewall` callback | Filter connections | Not implemented |
-| `Announcer` | Auto re-announce | Planned |
+| `Announcer` | Auto re-announce | Done (hyperdht) |
 
 ### What Rust Has That JS Doesn't
 
@@ -293,5 +282,6 @@ There are some parts of the JavaScript API we don't implement because they don't
 
 ## Next Steps
 
-1. **Announcer** - Implement automatic periodic re-announcing
-2. **Refresh cycle** - Re-lookup/re-announce every ~10min
+1. **Self-announce in swarm** - Wire Server/Announcer into Swarm so `join(Server)` self-announces on `hash(publicKey)`
+2. **Holepunching** - NAT traversal via `on_peer_holepunch()`
+3. **Relay address announcement** - Include relay_addresses in announce values
