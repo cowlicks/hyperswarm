@@ -13,7 +13,6 @@
 
 use std::{
     array::TryFromSliceError,
-    fmt,
     net::{AddrParseError, SocketAddr, SocketAddrV4},
     sync::Arc,
 };
@@ -37,7 +36,6 @@ mod crypto;
 mod next_router;
 mod persistent;
 mod server;
-mod store;
 
 pub mod adht;
 pub mod announcer;
@@ -55,10 +53,6 @@ pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
     "node2.hyperdht.org:49737",
     "node3.hyperdht.org:49737",
 ];
-
-pub(crate) const ERR_INVALID_INPUT: usize = 7;
-pub(crate) const ERR_INVALID_SEQ: usize = 11;
-pub(crate) const ERR_SEQ_MUST_EXCEED_CURRENT: usize = 13;
 
 pub mod commands {
     use dht_rpc::{Command, ExternalCommand};
@@ -168,39 +162,6 @@ impl PeerHandshakeResponse {
             client_address,
         }
     }
-}
-
-/// Represents the response received from a peer
-#[derive(Debug)]
-pub struct PeerResponseItem<T: fmt::Debug> {
-    /// Address of the peer this response came from
-    pub peer: SocketAddr,
-    /// The identifier of the `peer` if included in the response
-    pub peer_id: Option<IdBytes>,
-    /// The value the `peer` provided
-    pub value: T,
-}
-
-/// Result of a [`HyperDht::lookup`] query.
-#[derive(Debug, Clone)]
-pub struct Lookup {
-    /// The hash to lookup
-    pub topic: IdBytes,
-    /// The gathered responses
-    pub peers: Vec<Peers>,
-}
-
-/// A Response to a query request from a peer
-#[derive(Debug, Clone)]
-pub struct Peers {
-    /// The DHT node that is returning this data
-    pub node: SocketAddr,
-    /// The id of the `peer` if available
-    pub peer_id: Option<IdBytes>,
-    /// List of peers that announced the topic hash
-    pub peers: Vec<SocketAddr>,
-    /// List of LAN peers that announced the topic hash
-    pub local_peers: Vec<SocketAddr>,
 }
 
 pub fn request_announce_or_unannounce_value(

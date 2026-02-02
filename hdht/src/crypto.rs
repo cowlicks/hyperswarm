@@ -3,33 +3,14 @@ use std::{
     ops::Deref,
 };
 
-use blake2::VarBlake2b;
 use compact_encoding::{CompactEncoding, write_array};
 use libsodium_sys::{
     crypto_sign_BYTES, crypto_sign_PUBLICKEYBYTES, crypto_sign_SECRETKEYBYTES,
     crypto_sign_SEEDBYTES, crypto_sign_keypair, crypto_sign_seed_keypair,
 };
 
-use crate::{cenc::AnnounceRequestValue, dht_proto::Mutable};
+use crate::cenc::AnnounceRequestValue;
 use ::dht_rpc::IdBytes;
-
-/// VALUE_MAX_SIZE + packet overhead (i.e. the key etc.)
-/// should be less than the network MTU, normally 1400 bytes
-pub const VALUE_MAX_SIZE: usize = 1000;
-
-const SALT_SEG: &[u8; 6] = b"4:salt";
-const SEQ_SEG: &[u8; 6] = b"3:seqi";
-const V_SEG: &[u8; 3] = b"1:v";
-
-/// hash the `val` with a key size of U32 and put it into [`IdBytes`]
-pub fn hash_id(val: &[u8]) -> IdBytes {
-    use blake2::digest::{Update, VariableOutput};
-    let mut key = [0; 32];
-    let mut hasher = VarBlake2b::new(32).unwrap();
-    hasher.update(val);
-    hasher.finalize_variable(|res| key.copy_from_slice(res));
-    key.into()
-}
 
 type PublicKey2Bytes = [u8; crypto_sign_PUBLICKEYBYTES as usize];
 
@@ -138,41 +119,7 @@ impl Deref for Signature2 {
     }
 }
 
-pub fn signable(value: &[u8], salt: Option<&Vec<u8>>, seq: u64) -> Result<Vec<u8>, ()> {
-    let cap = SEQ_SEG.len() + 3 + V_SEG.len() + 3 + value.len();
-
-    let mut s = if let Some(salt) = salt {
-        if salt.len() > 64 {
-            return Err(());
-        }
-        let mut s = Vec::with_capacity(cap + SALT_SEG.len() + 3 + salt.len());
-        s.extend_from_slice(SALT_SEG.as_ref());
-        s.extend_from_slice(format!("{}:", salt.len()).as_bytes());
-        s.extend_from_slice(salt.as_slice());
-        s
-    } else {
-        Vec::with_capacity(cap)
-    };
-
-    s.extend_from_slice(SEQ_SEG.as_ref());
-    s.extend_from_slice(format!("{}e", seq).as_bytes());
-    s.extend_from_slice(V_SEG.as_ref());
-    s.extend_from_slice(format!("{}:", value.len()).as_bytes());
-    s.extend_from_slice(value);
-
-    Ok(s)
-}
-
-pub fn signable_mutable(mutable: &Mutable) -> Result<Vec<u8>, ()> {
-    if let Some(ref val) = mutable.value {
-        signable(val, mutable.salt.as_ref(), mutable.seq.unwrap_or_default())
-    } else {
-        Err(())
-    }
-}
-
-/// taken from
-/// https://github.com/cowlicks/hyperdht/blob/eecdf3669744e88ec2fceb851cedf5274a106c94/test/print_ns.js#L2
+/// Generated from the [original JavaScript code]( https://github.com/cowlicks/hyperdht/blob/eecdf3669744e88ec2fceb851cedf5274a106c94/test/print_ns.js#L2)
 pub mod namespace {
     macro_rules! const_hex_decode {
         ($arg:expr) => {{
@@ -310,28 +257,5 @@ mod test {
         let x: &[&[u8]] = &[b"yolo", b"wassup", b"howdy"];
         let res = generic_hash_batch(x);
         assert_eq!(res, expected);
-    }
-
-    #[test]
-    fn signable_test() {
-        let mutable = Mutable {
-            value: Some(b"value".to_vec()),
-            signature: None,
-            seq: None,
-            salt: None,
-        };
-        let sign = signable_mutable(&mutable).unwrap();
-
-        assert_eq!(
-            sign.as_slice(),
-            &[
-                51, 58, 115, 101, 113, 105, 48, 101, 49, 58, 118, 53, 58, 118, 97, 108, 117, 101
-            ][..]
-        );
-
-        assert_eq!(
-            String::from_utf8(sign).unwrap().as_str(),
-            "3:seqi0e1:v5:value"
-        )
     }
 }
