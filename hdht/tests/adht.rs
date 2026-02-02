@@ -33,7 +33,7 @@ async fn rsrs_server_tx_first() -> Result<()> {
     a.bootstrap().await?;
     b.bootstrap().await?;
 
-    let mut a_server = a.listen(keypair.clone()).await?;
+    let mut a_server = a.listen(keypair.clone());
 
     let server = tokio::spawn(async move {
         let mut conn = a_server.next().await.unwrap().unwrap();
@@ -80,7 +80,7 @@ async fn rsrs_client_tx_first() -> Result<()> {
     a.bootstrap().await?;
     b.bootstrap().await?;
 
-    let mut a_server = a.listen(keypair.clone()).await?;
+    let mut a_server = a.listen(keypair.clone());
 
     //let server_conn_fut = async move {
     let server = tokio::spawn(async move {
@@ -397,7 +397,7 @@ secret_key.resolve([...kp.secretKey]);
         public: PublicKey::from(pub_key),
         secret,
     };
-    let mut server = dht.listen(keypair).await?;
+    let mut server = dht.listen(keypair);
 
     let x = tokio::spawn(async move {
         let mut conn = server.next().await.unwrap().unwrap();
@@ -522,7 +522,7 @@ async fn rsrsrs_relay_connection_flow() -> Result<()> {
 
     let server_keypair = Keypair::default();
 
-    let mut server_listener = server.listen(server_keypair.clone()).await?;
+    let mut server_listener = server.listen(server_keypair.clone());
 
     // Setup relay node - intermediary (doesn't have server's keypair)
     tokio::spawn(async move {
@@ -572,7 +572,7 @@ async fn relay_handlers_basic() -> Result<()> {
     let server = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let server_keypair = Keypair::default();
     server.bootstrap().await?;
-    let _server_listener = server.listen(server_keypair.clone()).await?;
+    let _server_listener = server.listen(server_keypair.clone());
 
     // Setup relay node
     let relay = Dht::with_config(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;

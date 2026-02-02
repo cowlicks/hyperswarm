@@ -14,7 +14,7 @@ use futures::stream::FuturesUnordered;
 use tokio::time::{Duration, Sleep};
 use tracing::{debug, trace, warn};
 
-use crate::{commands, crypto::namespace, request_announce_or_unannounce_value, Keypair};
+use crate::{Keypair, commands, crypto::namespace, request_announce_or_unannounce_value};
 
 const SLEEP_INTERVAL: Duration = Duration::from_secs(3);
 const SLEEPS_PER_CYCLE: usize = 100; // 100 * 3s = ~5 min
@@ -84,11 +84,10 @@ impl Future for UnannounceOne {
                                 addr: resp.peer.addr,
                                 referrer: None,
                             };
-                            let o =
-                                OutRequestBuilder::new(destination, commands::UNANNOUNCE)
-                                    .target(self.target)
-                                    .value(value)
-                                    .token(token);
+                            let o = OutRequestBuilder::new(destination, commands::UNANNOUNCE)
+                                .target(self.target)
+                                .value(value)
+                                .token(token);
                             let request = self.rpc.request_from_builder(o);
                             self.phase = UnannounceOnePhase::Sending { request };
                             // Continue loop to poll the send.
@@ -101,21 +100,19 @@ impl Future for UnannounceOne {
                         Poll::Pending => return Poll::Pending,
                     }
                 }
-                UnannounceOnePhase::Sending { request } => {
-                    match Pin::new(request).poll(cx) {
-                        Poll::Ready(Ok(_)) => {
-                            trace!("UnannounceOne: UNANNOUNCE succeeded");
-                            self.phase = UnannounceOnePhase::Done;
-                            return Poll::Ready(Ok(()));
-                        }
-                        Poll::Ready(Err(e)) => {
-                            debug!(?e, "UnannounceOne: UNANNOUNCE request failed");
-                            self.phase = UnannounceOnePhase::Done;
-                            return Poll::Ready(Err(()));
-                        }
-                        Poll::Pending => return Poll::Pending,
+                UnannounceOnePhase::Sending { request } => match Pin::new(request).poll(cx) {
+                    Poll::Ready(Ok(_)) => {
+                        trace!("UnannounceOne: UNANNOUNCE succeeded");
+                        self.phase = UnannounceOnePhase::Done;
+                        return Poll::Ready(Ok(()));
                     }
-                }
+                    Poll::Ready(Err(e)) => {
+                        debug!(?e, "UnannounceOne: UNANNOUNCE request failed");
+                        self.phase = UnannounceOnePhase::Done;
+                        return Poll::Ready(Err(()));
+                    }
+                    Poll::Pending => return Poll::Pending,
+                },
                 UnannounceOnePhase::Done => {
                     return Poll::Ready(Err(()));
                 }
@@ -219,7 +216,9 @@ impl Announcer {
     /// Start a new LOOKUP query for the announce cycle.
     fn start_lookup(&mut self) {
         self.rotate_relays();
-        let query = self.rpc.query(QueryArgs::new(commands::LOOKUP, self.target));
+        let query = self
+            .rpc
+            .query(QueryArgs::new(commands::LOOKUP, self.target));
         self.state = AnnouncerState::LookingUp { query };
     }
 
@@ -261,10 +260,7 @@ impl Announcer {
     fn start_pinging(&mut self) {
         let pings = FuturesUnordered::new();
         for peer in self.server_relays[2].values() {
-            let o = OutRequestBuilder::new(
-                peer.clone(),
-                Command::Internal(InternalCommand::Ping),
-            );
+            let o = OutRequestBuilder::new(peer.clone(), Command::Internal(InternalCommand::Ping));
             pings.push(self.rpc.request_from_builder(o));
         }
         if pings.is_empty() {
@@ -315,9 +311,7 @@ impl Announcer {
                                 let (Some(token), Some(responder_id)) =
                                     (reply.response.token, reply.response.id)
                                 else {
-                                    warn!(
-                                        "Announce: closest reply missing token or id, skipping"
-                                    );
+                                    warn!("Announce: closest reply missing token or id, skipping");
                                     continue;
                                 };
                                 let value = request_announce_or_unannounce_value(
@@ -344,9 +338,7 @@ impl Announcer {
                                 warn!(target = ?self.target, "No valid closest replies for announce");
                                 self.start_unannounce_or_sleep();
                             } else {
-                                self.state = AnnouncerState::Committing {
-                                    pending,
-                                };
+                                self.state = AnnouncerState::Committing { pending };
                             }
                             // Continue loop.
                         }
@@ -359,9 +351,7 @@ impl Announcer {
                     }
                 }
 
-                AnnouncerState::Committing {
-                    pending,
-                } => {
+                AnnouncerState::Committing { pending } => {
                     match pending.poll_next_unpin(cx) {
                         Poll::Ready(Some(Ok(resp))) => {
                             trace!(
@@ -369,8 +359,7 @@ impl Announcer {
                                 "Announce commit succeeded"
                             );
                             // Store this relay in the current generation.
-                            self.server_relays[2]
-                                .insert(resp.peer.addr, resp.peer.clone());
+                            self.server_relays[2].insert(resp.peer.addr, resp.peer.clone());
                             cx.waker().wake_by_ref();
                             return Poll::Pending;
                         }

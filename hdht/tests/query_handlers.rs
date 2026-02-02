@@ -7,6 +7,7 @@ use std::{net::SocketAddr, time::Duration};
 use dht_rpc::{Commit, DhtConfig, IdBytes, generic_hash};
 use futures::StreamExt;
 use hyperdht::{Keypair, adht::Dht};
+use rusty_nodejs_repl::wait;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -95,7 +96,13 @@ async fn rs_swarm_find_peer() -> Result<()> {
     let client = &tn.nodes[1];
 
     let keypair = Keypair::default();
-    let _listener = server.listen(keypair.clone()).await?;
+    let mut _listener = server.listen(keypair.clone());
+    tokio::spawn(async move {
+        loop {
+            wait!(10);
+            _ = _listener.next().await;
+        }
+    });
 
     // Wait for announce to propagate
     tokio::time::sleep(Duration::from_millis(100)).await;

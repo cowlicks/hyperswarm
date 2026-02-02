@@ -17,16 +17,16 @@ use tokio::sync::{
 
 use compact_encoding::CompactEncoding;
 use dht_rpc::{
-    BootstrapFuture, Command, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes,
-    InResponse, InternalCommand, OutRequestBuilder, Peer, QueryArgs, QueryId, QueryNext,
-    RequestMsgData, Rpc, RpcDhtRequestFuture, generic_hash,
+    BootstrapFuture, Commit, CustomCommandRequest, DhtConfig, ExternalCommand, IdBytes, InResponse,
+    OutRequestBuilder, Peer, QueryArgs, QueryId, QueryNext, RequestMsgData, Rpc,
+    RpcDhtRequestFuture, commands::PING, generic_hash,
 };
 use futures::{Stream, stream::FuturesUnordered};
 use hypercore_handshake::Cipher;
 use tracing::{error, info, instrument, trace, warn};
 
 use crate::{
-    DEFAULT_BOOTSTRAP, Error, Keypair, Result,
+    DEFAULT_BOOTSTRAP, Error, Keypair, Result, Server,
     cenc::{
         AnnounceRequestValue, HandshakeSteps, NoisePayload, NoisePayloadBuilder,
         PeerHandshakePayload, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
@@ -37,7 +37,6 @@ use crate::{
     next_router::{StreamIdMaker, connection::Connection},
     persistent::{MAX_RECORDS_PER_TOPIC, PeerRecordCache, PeerRouter, RouterEntry},
     request_announce_or_unannounce_value,
-    server::ServerFuture,
 };
 
 #[derive(Debug)]
@@ -224,11 +223,10 @@ impl Dht {
     }
 
     /// Announce ourselves and return a `Stream` of `Announce`s
-    pub fn listen(&self, keypair: Keypair) -> ServerFuture {
-        let target = IdBytes(generic_hash(&*keypair.public));
-        let announce = self.announce(target, keypair.clone(), vec![]);
-        let rx = self.get_connection_stream(keypair);
-        ServerFuture::new(rx, self.inner.clone(), announce)
+    pub fn listen(&self, keypair: Keypair) -> Server {
+        let rx = self.get_connection_stream(keypair.clone());
+
+        Server::new(rx, keypair, self.inner.clone())
     }
 
     /// Spawn a background task that drives this DHT's event loop.
@@ -324,6 +322,11 @@ impl DhtInner {
             peer_router: PeerRouter::new(),
         })
     }
+    /// Get underlying [`Rpc`]
+    pub(crate) fn get_rpc(&self) -> Rpc {
+        self.rpc.clone()
+    }
+
     pub fn name(&self) -> String {
         self.rpc.name()
     }
@@ -885,9 +888,8 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
     }
 
     pub fn ping(&self, peer: Peer) -> RpcDhtRequestFuture {
-        self.rpc.request_from_builder(
-            OutRequestBuilder::new(peer, Command::Internal(InternalCommand::Ping))
-        )
+        self.rpc
+            .request_from_builder(OutRequestBuilder::new(peer, PING))
     }
     pub fn request(&self, o: OutRequestBuilder) -> RpcDhtRequestFuture {
         self.rpc.request_from_builder(o)

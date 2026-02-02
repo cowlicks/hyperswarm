@@ -40,13 +40,14 @@ mod server;
 mod store;
 
 pub mod adht;
+pub mod announcer;
 
 pub use crypto::{
     Keypair, PublicKey, make_signable_announce_or_unannounce, namespace,
     sign_announce_or_unannounce,
 };
 pub use next_router::connection::Connection;
-pub use server::{Server, ServerFuture};
+pub use server::Server;
 
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [

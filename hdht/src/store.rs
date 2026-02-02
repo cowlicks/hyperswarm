@@ -120,7 +120,11 @@ impl Store {
         }
     }
 
-    pub fn query_mut(&mut self, mut query: CommandQuery, mutable: &Mutable) -> CommandQueryResponse {
+    pub fn query_mut(
+        &mut self,
+        mut query: CommandQuery,
+        mutable: &Mutable,
+    ) -> CommandQueryResponse {
         let key = StorageKey::Mutable(Self::get_mut_key(mutable, &query.target));
         if let Some(val) = self.inner.get(&key).and_then(StorageEntry::as_mutable)
             && val.seq.unwrap_or_default() >= mutable.seq.unwrap_or_default()
