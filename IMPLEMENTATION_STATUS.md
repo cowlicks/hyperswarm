@@ -43,7 +43,7 @@ rpc.id() -> IdBytes;
 
 # hyperdht (hdht/)
 
-DHT implementation with peer discovery, connection establishment, and query handling.
+DHT implementation that implements queries like lookup, announce, and unannounce. It facilitates finding and connecting to peers and establishing encrypted Noise streams.
 
 ## Completed ✓
 
