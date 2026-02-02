@@ -28,9 +28,6 @@ use tokio::sync::oneshot::error::RecvError;
 
 use crate::cenc::HandshakeSteps;
 
-mod dht_proto {
-    include!(concat!(env!("OUT_DIR"), "/dht_pb.rs"));
-}
 mod cenc;
 mod crypto;
 mod next_router;

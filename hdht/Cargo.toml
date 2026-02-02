@@ -6,19 +6,12 @@ edition = "2024"
 [dependencies]
 dht-rpc = { path = "../rpc" }
 rand = "0.7.3"
-bytes = "0.5.5"
-prost = "0.6.1"
 arrayvec = "0.5.1"
-sha2 = "0.9.1"
 uint = "0.8.3"
 futures = "0.3.5"
 wasm-timer = "0.2.4"
 fnv = "1.0.7"
-ed25519-dalek = "1.0.0-pre.4"
-blake2 = "0.9.0"
-lru = "0.5.3"
 smallvec = "1.4.1"
-either = "1.5.3"
 thiserror = "1.0.68"
 libsodium-sys-stable = "1.21.2"
 derive_builder = "0.20.2"
@@ -35,9 +28,6 @@ version = "2.2.0"
 
 [dependencies.udx]
 version = "0.2.0"
-
-[build-dependencies]
-prost-build = "0.6.1"
 
 [dev-dependencies]
 async-process = "2.2.1"
