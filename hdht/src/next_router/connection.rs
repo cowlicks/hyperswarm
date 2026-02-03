@@ -206,6 +206,16 @@ impl Connection {
     pub fn get_remote_static(&self) -> Option<[u8; 32]> {
         r!(self).handshake.get_remote_static()
     }
+
+    /// Get the handshake hash.
+    ///
+    /// This is a unique identifier for this encrypted session, the same on both sides.
+    /// Used for capability verification in hypercore replication.
+    ///
+    /// Returns `None` until the handshake is complete.
+    pub fn handshake_hash(&self) -> Option<Vec<u8>> {
+        r!(self).handshake.handshake_hash().map(|h| h.to_vec())
+    }
 }
 
 impl Stream for Connection {
