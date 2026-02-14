@@ -52,9 +52,9 @@ impl PublicKey {
 
 #[derive(Debug, Clone)]
 pub struct Keypair {
-    /// The public half of this keypair.
+    /// The public key
     pub public: PublicKey,
-    /// The secret half of this keypair.
+    /// The secret key. Note: The secret key contains secret & public. First 32 bytes is secret, next 32 bytes is public.
     pub secret: [u8; crypto_sign_SECRETKEYBYTES as usize],
 }
 
@@ -75,6 +75,13 @@ impl Default for Keypair {
 }
 
 impl Keypair {
+    // Returns (secret_key, public_key)
+    pub fn to_snow_secret_and_public_parts(&self) -> ([u8; 32], [u8; 32]) {
+        (
+            self.secret[..32].try_into().expect("[..32].len() == 32"),
+            self.public.0,
+        )
+    }
     pub fn from_seed(seed: [u8; crypto_sign_SEEDBYTES as usize]) -> Self {
         let mut public = [0; crypto_sign_PUBLICKEYBYTES as usize];
         let mut secret = [0; crypto_sign_SECRETKEYBYTES as usize];

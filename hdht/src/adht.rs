@@ -22,7 +22,7 @@ use dht_rpc::{
     RpcDhtRequestFuture, commands::PING, generic_hash,
 };
 use futures::{Stream, stream::FuturesUnordered};
-use hypercore_handshake::Cipher;
+use hypercore_handshake::{Cipher, snow_keypair_from_secret_and_public};
 use tracing::{error, info, instrument, trace, warn};
 
 use crate::{
@@ -679,10 +679,12 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             .build()?
             .to_encoded_bytes()?;
 
+        let (secret, public) = keypair.to_snow_secret_and_public_parts();
+        let snow_keypair = snow_keypair_from_secret_and_public(secret, public);
         // Create responder cipher with same prologue as initiator
         let mut hs = Cipher::resp_from_private_with_prologue(
             None,
-            &keypair.secret[..32],
+            &snow_keypair,
             &namespace::PEER_HANDSHAKE,
         )?;
 
