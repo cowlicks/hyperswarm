@@ -130,9 +130,18 @@ impl Sink<Vec<u8>> for ConnectionInner {
         Pin::new(&mut self.handshake).poll_close(cx)
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Connection {
     pub inner: Arc<RwLock<ConnectionInner>>,
+}
+
+impl std::fmt::Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.inner.try_read() {
+            Ok(x) => f.debug_struct("Connection").field("inner", &x).finish(),
+            Err(_) => f.debug_struct("Connection").field("inner", &()).finish(),
+        }
+    }
 }
 
 macro_rules! w {
