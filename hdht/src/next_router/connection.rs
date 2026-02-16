@@ -9,7 +9,7 @@ use std::{
 use async_compat::Compat;
 use dht_rpc::Rpc;
 use futures::{Sink, Stream};
-use hypercore_handshake::{Cipher, CipherEvent, CipherIo};
+use hypercore_handshake::{Cipher, CipherEvent, CipherIo, CipherTrait};
 use udx::HalfOpenStreamHandle;
 use uint24le_framing::Uint24LELengthPrefixedFraming;
 
@@ -257,5 +257,24 @@ impl Sink<Vec<u8>> for Connection {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner.write().unwrap().handshake).poll_close(cx)
+    }
+}
+
+impl CipherTrait for Connection {
+    fn remote_public_key(&self) -> Option<[u8; hypercore_handshake::state_machine::PUBLIC_KEYLEN]> {
+        self.inner.read().unwrap().handshake.get_remote_static()
+    }
+
+    fn local_public_key(&self) -> Option<[u8; hypercore_handshake::state_machine::PUBLIC_KEYLEN]> {
+        self.inner.read().unwrap().handshake.get_local_public_key()
+    }
+
+    fn handshake_hash(&self) -> Option<Vec<u8>> {
+        self.inner
+            .read()
+            .unwrap()
+            .handshake
+            .handshake_hash()
+            .map(|h| h.to_vec())
     }
 }

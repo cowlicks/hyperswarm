@@ -1,9 +1,15 @@
 //! Integration tests for hyperswarm
 
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 use dht_rpc::IdBytes;
-use futures::{SinkExt, StreamExt, join};
+use futures::{Sink, SinkExt, Stream, StreamExt, join};
 use hypercore_handshake::CipherEvent;
-use hyperswarm::{DhtConfig, JoinOpts, Swarm, SwarmConfig};
+use hyperdht::Connection;
+use hyperswarm::{DhtConfig, Error, JoinOpts, Swarm, SwarmConfig};
 use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
 
 macro_rules! timeout {
@@ -274,5 +280,174 @@ async fn connection_event_has_topics() -> Result<()> {
     });
 
     _ = join!(client_task, server_task);
+    Ok(())
+}
+
+async fn two_connected_swarms() -> Result<(Testnet, (Swarm, Swarm))> {
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.bootstrap_addr().await?;
+
+    let topic = IdBytes::random();
+
+    let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    swarm_a.bootstrap().await?;
+    swarm_b.bootstrap().await?;
+
+    // Server joins topic
+    swarm_a.join(topic, JoinOpts::Server);
+    swarm_a.flush().await?;
+
+    // Client joins topic - should discover server and auto-connect
+    swarm_b.join(topic, JoinOpts::Client);
+    swarm_b.flush().await?;
+    Ok((tn, (swarm_a, swarm_b)))
+}
+pub struct MessageCipher(pub Connection);
+
+impl Stream for MessageCipher {
+    type Item = Vec<u8>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match Pin::new(&mut self.0).poll_next(cx) {
+                Poll::Ready(Some(CipherEvent::Message(data))) => return Poll::Ready(Some(data)),
+                Poll::Ready(Some(CipherEvent::HandshakePayload(_))) => continue,
+                Poll::Ready(Some(CipherEvent::ErrStuff(_))) => continue,
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+impl Sink<Vec<u8>> for MessageCipher {
+    type Error = std::io::Error;
+
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_ready(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Vec<u8>) -> std::result::Result<(), Self::Error> {
+        Pin::new(&mut self.0).start_send(item)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_close(cx)
+    }
+}
+
+/// just doing the same thincg as hypercore_protocol's 'basic_protocol' test
+#[tokio::test]
+async fn protocol() -> Result<()> {
+    use hypercore_protocol::{Event, Message, Protocol, schema};
+    let (mut _tn, (swarm_i, swarm_r)) = two_connected_swarms().await?;
+
+    let key = [3u8; 32];
+    let i = tokio::spawn(async move {
+        // get connection event
+        let mut cstream = swarm_i.connections();
+        let conn_event = cstream.next().await.unwrap().unwrap();
+
+        let is_initiator = true;
+        // plug into Protocol
+        let mut p = Protocol::new(Box::new(conn_event.connection), is_initiator);
+
+        // get some events from protocol?
+        assert!(matches!(p.next().await.unwrap()?, Event::Handshake(_)));
+        p.open(key).await?;
+        // NB: this is required. We need to a 'wake' in Protocol somewhere. k
+        // that will trigger after the responder does an open
+        wait!(1000);
+        let Event::Channel(mut chan) = p.next().await.unwrap()? else {
+            todo!()
+        };
+        chan.send(Message::Want(schema::Want {
+            start: 0,
+            length: 5,
+        }))
+        .await?;
+        let pres = tokio::spawn(async move {
+            assert!(matches!(p.next().await.unwrap().unwrap(), Event::Close(_)));
+            println!("init RX close");
+            //  TODO can't drop proto yet or the "Close" message will never get to the responder
+            _ = timeout!(p.next(), 1000);
+        });
+        let cev = chan.next().await;
+        assert!(matches!(
+            cev.unwrap(),
+            Message::Want(schema::Want {
+                start: 10,
+                length: 3
+            })
+        ));
+        println!("init got chan message");
+        chan.close().await?;
+        println!("init sent close ");
+        pres.await.unwrap();
+        println!("init done close ");
+        assert!(chan.closed());
+
+        Ok::<_, Error>(())
+    });
+
+    let r = tokio::spawn(async move {
+        // get connection event
+        let mut cstream = swarm_r.connections();
+        let conn_event = cstream.next().await.unwrap().unwrap();
+
+        let is_initiator = false;
+        let mut p = Protocol::new(Box::new(conn_event.connection), is_initiator);
+
+        // get some events from protocol?
+        assert!(matches!(p.next().await.unwrap()?, Event::Handshake(_)));
+        assert!(matches!(p.next().await.unwrap()?, Event::DiscoveryKey(_)));
+
+        p.open(key).await?;
+        let Event::Channel(mut chan) = p.next().await.unwrap()? else {
+            todo!()
+        };
+        chan.send(Message::Want(schema::Want {
+            start: 10,
+            length: 3,
+        }))
+        .await?;
+        let pres = tokio::spawn(async move {
+            assert!(matches!(p.next().await.unwrap().unwrap(), Event::Close(_)));
+            println!("resp RX close");
+        });
+        let cev = chan.next().await;
+        assert!(matches!(
+            cev.unwrap(),
+            Message::Want(schema::Want {
+                start: 0,
+                length: 5
+            })
+        ));
+        println!("resp got chan message");
+        pres.await.unwrap();
+        assert!(chan.closed());
+
+        Ok::<_, Error>(())
+    });
+
+    let (ires, rres) = join!(i, r);
+    ires??;
+    rres??;
+
     Ok(())
 }
