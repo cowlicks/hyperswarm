@@ -363,9 +363,8 @@ async fn protocol() -> Result<()> {
         let mut cstream = swarm_i.connections();
         let conn_event = cstream.next().await.unwrap().unwrap();
 
-        let is_initiator = true;
         // plug into Protocol
-        let mut p = Protocol::new(Box::new(conn_event.connection), is_initiator);
+        let mut p = Protocol::new(Box::new(conn_event.connection));
 
         // get some events from protocol?
         assert!(matches!(p.next().await.unwrap()?, Event::Handshake(_)));
@@ -410,8 +409,7 @@ async fn protocol() -> Result<()> {
         let mut cstream = swarm_r.connections();
         let conn_event = cstream.next().await.unwrap().unwrap();
 
-        let is_initiator = false;
-        let mut p = Protocol::new(Box::new(conn_event.connection), is_initiator);
+        let mut p = Protocol::new(Box::new(conn_event.connection));
 
         // get some events from protocol?
         assert!(matches!(p.next().await.unwrap()?, Event::Handshake(_)));
