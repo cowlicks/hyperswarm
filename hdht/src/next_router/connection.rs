@@ -265,7 +265,7 @@ impl CipherTrait for Connection {
         self.inner.read().unwrap().handshake.get_remote_static()
     }
 
-    fn local_public_key(&self) -> Option<[u8; hypercore_handshake::state_machine::PUBLIC_KEYLEN]> {
+    fn local_public_key(&self) -> [u8; hypercore_handshake::state_machine::PUBLIC_KEYLEN] {
         self.inner.read().unwrap().handshake.get_local_public_key()
     }
 
@@ -276,5 +276,8 @@ impl CipherTrait for Connection {
             .handshake
             .handshake_hash()
             .map(|h| h.to_vec())
+    }
+    fn is_initiator(&self) -> bool {
+        self.inner.read().unwrap().handshake.is_initiator()
     }
 }
