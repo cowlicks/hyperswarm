@@ -19,7 +19,11 @@ path = "../utils"
 test_utils = { path = "../test_utils" }
 tokio = { version = "1.41.0", features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+hypercore = { path = "../../core" }
 
 [dev-dependencies.hypercore_handshake]
 #hypercore_handshake = { path = "../../handshake" }
 version = "0.4.0"
+
+[dev-dependencies.hypercore-protocol]
+path = "../../protocol/"

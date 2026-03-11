@@ -12,6 +12,8 @@ use hyperdht::Connection;
 use hyperswarm::{DhtConfig, Error, JoinOpts, Swarm, SwarmConfig};
 use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
 
+use hypercore::{HypercoreBuilder, PartialKeypair, Storage};
+
 macro_rules! timeout {
     ($fut:expr, $ms:expr) => {{
         let connection_result =
@@ -23,6 +25,91 @@ macro_rules! timeout {
         out
     }};
 }
+
+#[tokio::test]
+async fn replicate_with_hypercore() -> Result<()> {
+    let mut writer = HypercoreBuilder::new(Storage::new_memory().await.unwrap())
+        .build()
+        .await
+        .unwrap();
+    //for chunk in data {
+    //    writer.append(chunk).await.unwrap();
+    //}
+    let public_key = writer.key_pair().public;
+    let reader = HypercoreBuilder::new(Storage::new_memory().await.unwrap())
+        .key_pair(PartialKeypair {
+            public: public_key,
+            secret: None,
+        })
+        .build()
+        .await
+        .unwrap();
+
+    let mut tn = Testnet::new().await?;
+    let bs_addr = tn.bootstrap_addr().await?;
+
+    let topic = IdBytes::random();
+
+    let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+    let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
+
+    swarm_a.bootstrap().await?;
+    swarm_b.bootstrap().await?;
+
+    let mut server_conns = swarm_a.connections();
+    swarm_a.join(topic, JoinOpts::Server);
+    swarm_a.flush().await?;
+
+    // Get connection stream to receive auto-connect events
+    let mut client_conns = swarm_b.connections();
+
+    // Join as client - should auto-discover and auto-connect
+    swarm_b.join(topic, JoinOpts::Client);
+    swarm_b.flush().await?;
+
+    let a = tokio::spawn(async move {
+        let Some(Ok(client_event)) = timeout!(client_conns.next()).unwrap() else {
+            todo!()
+        };
+        let client_conn = client_event.connection;
+        let replicator = writer.replicate(client_conn);
+        tokio::spawn(async move {
+            replicator.await;
+            dbg!();
+        });
+        writer.append(b"hello").await?;
+
+        wait!(100);
+        Ok::<_, hypercore::HypercoreError>(())
+    });
+    let b = tokio::spawn(async move {
+        let Some(Ok(server_event)) = timeout!(server_conns.next(), 1000).unwrap() else {
+            todo!()
+        };
+        let server_conn = server_event.connection;
+        let replicator = reader.replicate(server_conn);
+        tokio::spawn(async move {
+            replicator.await;
+            dbg!();
+        });
+        loop {
+            let block = reader.get(0).await.unwrap();
+            match block {
+                Some(b) => {
+                    dbg!(&b);
+                    assert_eq!(b, b"hello");
+                    break;
+                }
+                None => {}
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Ok::<_, hypercore::HypercoreError>(())
+    });
+    _ = join!(a, b);
+    Ok(())
+}
+
 /// Server announces and client discovers via lookup
 #[tokio::test]
 async fn server_announces_client_discovers() -> Result<()> {
