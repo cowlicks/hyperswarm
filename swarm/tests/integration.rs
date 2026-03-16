@@ -59,25 +59,17 @@ async fn replicate_with_hypercore() -> Result<()> {
     swarm_b.flush().await?;
 
     let writer_rep = tokio::spawn(writer.replicator().with_connection_stream(a_conns));
-    let reader_rep = tokio::spawn(reader.replicator().with_connection_stream(b_conns));
+    reader.attach_replicator(reader.replicator().with_connection_stream(b_conns));
 
     writer.append(b"hello").await?;
 
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if reader.info().contiguous_length >= 1 {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for replication");
-
-    assert_eq!(reader.get(0).await.unwrap(), Some(b"hello".to_vec()));
+    let block = tokio::time::timeout(std::time::Duration::from_secs(5), reader.get(0))
+        .await
+        .expect("timed out waiting for replication")
+        .unwrap();
+    assert_eq!(block, Some(b"hello".to_vec()));
 
     writer_rep.abort();
-    reader_rep.abort();
     Ok(())
 }
 
