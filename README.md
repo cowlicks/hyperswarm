@@ -12,19 +12,20 @@ The Kademlia implementation and logic is copied from [libp2-kad](https://github.
 
 This is basically done. Using it in hyperdht is driving further changes.
 * [x] implement all query and request logic
-* [ ] Rename `AsyncRpcDht` to `Rpc`. Don't export `RpcDht`
+* [x] Rename `AsyncRpcDht` to `Rpc`. Don't export `RpcDht`
 
 ### hyperdht
 
-* [ ] Remove `HyperDht` and `HyperDhtInner` in favor of `Dht`
+* [x] Remove `HyperDht` and `HyperDhtInner` in favor of `Dht`
 * [x] Implement `Dht.connect`.
-* [ ] Add support for relayed connections to `Dht.connect`. See [here](https://github.com/holepunchto/hyperdht/blob/main/docs/handshake.md) for more info.
-* [ ] Add "server" functionality, allowing Rust to receive connections from JS hyperdht. JS docs [here](https://github.com/holepunchto/hyperdht?tab=readme-ov-file#await-serverlistenkeypair)
+* [x] Add support for relayed connections to `Dht.connect`. See [here](https://github.com/holepunchto/hyperdht/blob/main/docs/handshake.md) for more info.
+* [x] Add "server" functionality, allowing Rust to receive connections from JS hyperdht. JS docs [here](https://github.com/holepunchto/hyperdht?tab=readme-ov-file#await-serverlistenkeypair)
 
 ### hyperswarm
 
-* [ ] finish hyperedht client & server modes
-* [ ] implement `swarm.join`
+* [x] finish hyperedht client & server modes
+* [x] implement `swarm.join`
+
 ## License
 
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or
