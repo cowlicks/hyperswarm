@@ -556,13 +556,23 @@ impl Stream for ConnectionStream {
         if let Ok(mut rx) = self.rx.try_lock() {
             match rx.poll_recv(cx) {
                 Poll::Ready(Some(event)) => {
+                    debug!("[swarm] ConnectionStream yielding connection event");
                     return Poll::Ready(Some(Ok(event)));
                 }
                 Poll::Ready(None) => {
+                    debug!("[swarm] ConnectionStream ended (sender dropped)");
                     return Poll::Ready(None);
                 }
-                Poll::Pending => {}
+                Poll::Pending => {
+                    debug!(
+                        "[swarm] ConnectionStream pending (no connection yet), queue_len={}, pending_conns={}",
+                        self.inner.read().unwrap().queue.len(),
+                        self.inner.read().unwrap().pending_connections.len()
+                    );
+                }
             }
+        } else {
+            debug!("[swarm] ConnectionStream try_lock failed");
         }
 
         Poll::Pending
