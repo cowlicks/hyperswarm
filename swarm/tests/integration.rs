@@ -9,6 +9,7 @@ use dht_rpc::IdBytes;
 use futures::{Sink, SinkExt, Stream, StreamExt, join};
 use hypercore_handshake::CipherEvent;
 use hyperdht::Connection;
+use hyperdht::adht::Dht;
 use hyperswarm::{DhtConfig, Error, JoinOpts, Swarm, SwarmConfig};
 use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
 
@@ -28,8 +29,6 @@ macro_rules! timeout {
 
 #[tokio::test]
 async fn replicate_with_hypercore() -> Result<()> {
-    let mut tn = Testnet::new().await?;
-    let bs_addr = tn.bootstrap_addr().await?;
     let topic = IdBytes::random();
 
     let mut writer = HypercoreBuilder::new(Storage::new_memory().await.unwrap())
@@ -38,10 +37,24 @@ async fn replicate_with_hypercore() -> Result<()> {
         .unwrap();
     let public_key = writer.key_pair().public;
     let reader = HypercoreBuilder::new(Storage::new_memory().await.unwrap())
-        .key_pair(PartialKeypair { public: public_key, secret: None })
+        .key_pair(PartialKeypair {
+            public: public_key,
+            secret: None,
+        })
         .build()
         .await
         .unwrap();
+
+    // Dedicated Rust bootstrap node — no JS testnet needed.
+    // A 3rd routing node is required: in a 2-node DHT the announce is stored at the peer
+    // (swarm_b), so swarm_b's own lookup (which queries swarm_a) would find nothing.
+    let mut bs = Dht::with_config(DhtConfig::default().empty_bootstrap_nodes()).await?;
+    let bs_addr = bs.local_addr()?;
+    let bs_task = tokio::spawn(async move {
+        loop {
+            let _ = bs.next().await;
+        }
+    });
 
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
@@ -50,8 +63,12 @@ async fn replicate_with_hypercore() -> Result<()> {
     r2?;
 
     // Grab connection streams before joining so no events are missed.
-    let a_conns = swarm_a.connections().filter_map(|r| async move { r.ok().map(|e| e.connection) });
-    let b_conns = swarm_b.connections().filter_map(|r| async move { r.ok().map(|e| e.connection) });
+    let a_conns = swarm_a
+        .connections()
+        .filter_map(|r| async move { r.ok().map(|e| e.connection) });
+    let b_conns = swarm_b
+        .connections()
+        .filter_map(|r| async move { r.ok().map(|e| e.connection) });
 
     swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
@@ -70,6 +87,7 @@ async fn replicate_with_hypercore() -> Result<()> {
     assert_eq!(block, Some(b"hello".to_vec()));
 
     writer_rep.abort();
+    bs_task.abort();
     Ok(())
 }
 
