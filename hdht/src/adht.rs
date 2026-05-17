@@ -562,34 +562,21 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
         from_peer: &Peer,
         php: PeerHandshakePayload,
     ) -> Result<()> {
-        // If no relay address is known, respond with closer nodes to help routing
-        // TODO expose getting closer nodes later
-        let Some(relay_address) = php.relay_address else {
-            /*
-            // TODO: Check if we have a relay registered in state for this target
-            // For now, return closer nodes to help DHT routing
+        // Prefer explicit relay_address from payload; fall back to peer_router entry.
+        let forward_to: SocketAddr = if let Some(addr) = php.relay_address {
+            addr.into()
+        } else {
             let target = request
                 .target
                 .ok_or_else(|| Error::PeerHandshakeFailed("FROM_CLIENT missing target".into()))?;
-
-            let closer_nodes = self
-                .rpc
-                .inner
-                .lock()
-                .unwrap()
-                .closer_nodes(IdBytes::from(target), K_VALUE as usize);
-
-            // Respond with no value but with closer nodes
-            self.rpc.respond(
-                request,
-                None,               // No value
-                Some(closer_nodes), // Help client route
-                from_peer,
-            )?;
-
-            return Ok(());
-            */
-            todo!()
+            let Some(entry) = self.peer_router.get(&IdBytes(target)) else {
+                // No route known
+                // TODO this should respond with closer nodes
+                self.rpc.respond(request, None, None, from_peer)?;
+                return Ok(());
+            };
+            // Reply with relay of closer node
+            entry.relay
         };
 
         // TODO this should be cleaned up  when SocketAddr/SocketAddrV4 is handled
@@ -607,7 +594,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
 
         let o = OutRequestBuilder::from_request(request.clone())
             .value(relay_payload.to_vec())
-            .peer(Peer::from(SocketAddr::from(relay_address)));
+            .peer(Peer::from(SocketAddr::from(forward_to)));
         self.rpc.request2(o)?;
         Ok(())
     }
