@@ -327,6 +327,10 @@ impl Rpc {
         self.inner.lock().unwrap().reply_command(resp)
     }
 
+    pub fn closer_nodes(&self, key: IdBytes) -> Vec<Peer> {
+        self.inner.lock().unwrap().closer_nodes(key, K_VALUE.into())
+    }
+
     // TODO Error on timeout
     pub fn bootstrap(&self) -> BootstrapFuture {
         let (tx, rx) = oneshot::channel();
