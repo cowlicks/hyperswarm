@@ -59,6 +59,7 @@ async fn replicate_with_hypercore() -> Result<()> {
     let swarm_a = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let swarm_b = Swarm::new(DhtConfig::default().add_bootstrap_node(bs_addr)).await?;
     let (r1, r2) = tokio::join!(swarm_a.bootstrap(), swarm_b.bootstrap());
+
     r1?;
     r2?;
 
@@ -70,12 +71,15 @@ async fn replicate_with_hypercore() -> Result<()> {
         .connections()
         .filter_map(|r| async move { r.ok().map(|e| e.connection) });
 
+    // both swarms join the topic, and connect to the bootstrap node
     swarm_a.join(topic, JoinOpts::Server);
     swarm_a.flush().await?;
     swarm_b.join(topic, JoinOpts::Client);
     swarm_b.flush().await?;
 
+    // writer runs in the background to drive replication
     let writer_rep = tokio::spawn(writer.replicator().with_connection_stream(a_conns));
+    // reader attaches replicator to drive replication forward when it calls `.get(..).await`
     reader.attach_replicator(reader.replicator().with_connection_stream(b_conns));
 
     writer.append(b"hello").await?;
