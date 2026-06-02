@@ -3,7 +3,6 @@ use std::{pin::Pin, time::Duration};
 use futures::task::{Context, Poll};
 use wasm_timer::{Delay, Instant};
 
-/// Periodic job.
 #[derive(Debug)]
 pub struct PeriodicJob {
     pub interval: Duration,

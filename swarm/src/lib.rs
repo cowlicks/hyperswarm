@@ -44,7 +44,7 @@ pub use retry::{RetryEntry, RetryTimer};
 // Re-export from dependencies
 pub use dht_rpc::{DhtConfig, IdBytes as Topic};
 pub use hyperdht::{Connection, Keypair, PublicKey, adht::ConnectFuture};
-use utils::PeriodicJob;
+use dht_rpc::PeriodicJob;
 
 const DEFAULT_AUTO_CONNECT_JOB_INTERVAL: Duration = Duration::from_millis(100);
 // TODO when we need more options, turn JoinOpts into a struct and make this enum a field.

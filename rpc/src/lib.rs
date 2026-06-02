@@ -20,9 +20,11 @@ mod message;
 mod query;
 mod stateobserver;
 mod stream;
+mod periodic_job;
 mod util;
 
 pub use crate::{
+    periodic_job::PeriodicJob,
     cenc::generic_hash,
     commit::Commit,
     io::{InResponse, OutRequestBuilder},
@@ -69,7 +71,6 @@ use crate::{
 };
 use compact_encoding::EncodingError;
 use tokio::sync::oneshot::{self, Receiver, Sender, error::RecvError};
-use utils::PeriodicJob;
 
 use self::{
     io::{IoConfig, IoHandler, IoHandlerEvent},
