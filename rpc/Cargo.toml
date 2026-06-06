@@ -3,11 +3,11 @@ name = "dht-rpc"
 edition = "2024"
 description = "rust implementation of the DHT powering the hyperswarm stack"
 version = "0.1.0"
-authors = ["Matthias Seitz <matthias.seitz@tum.de>"]
+authors = ["Blake Griffith <hyperswarm@cowlicks.website>"]
 license = "MIT"
 readme = "README.md"
-documentation = "https://docs.rs/hyperswarm-dht/"
-repository = "https://github.com/mattsse/hyperswarm-dht"
+documentation = "https://docs.rs/dht-rpc/"
+repository = "https://github.com/cowlicks/hyperswarm"
 keywords = ["dat", "peer-to-peer", "networking"]
 categories = ["network-programming", "asynchronous"]
 
