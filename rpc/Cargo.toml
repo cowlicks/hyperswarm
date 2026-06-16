@@ -2,7 +2,7 @@
 name = "dht-rpc"
 edition = "2024"
 description = "rust implementation of the DHT powering the hyperswarm stack"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Blake Griffith <hyperswarm@cowlicks.website>"]
 license = "MIT"
 readme = "README.md"
