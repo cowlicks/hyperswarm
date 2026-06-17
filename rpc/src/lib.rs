@@ -17,18 +17,18 @@ mod constants;
 mod io;
 mod kbucket;
 mod message;
+mod periodic_job;
 mod query;
 mod stateobserver;
 mod stream;
-mod periodic_job;
 mod util;
 
 pub use crate::{
-    periodic_job::PeriodicJob,
     cenc::generic_hash,
     commit::Commit,
     io::{InResponse, OutRequestBuilder},
     message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
+    periodic_job::PeriodicJob,
     query::{CommandQuery, CommandQueryResponse, QueryId, QueryResult},
 };
 
