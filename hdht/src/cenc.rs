@@ -7,6 +7,7 @@ use compact_encoding::{
     take_array, vec_encoded_size_for_fixed_sized_elements, write_array,
 };
 use std::net::{SocketAddrV4, SocketAddrV6};
+use tracing::error;
 
 const UDX_INFO_VERSION: usize = 1;
 const UDX_INFO_DEFAULT_SEQ: usize = 0;
@@ -593,6 +594,9 @@ impl CompactEncoding for NoisePayload {
         // error. But maybe not a kind we currently have in compact_encoding. Maybe a new:
         // IncompatibleVersion error should be added.
         if version != NOISE_PAYLOAD_VERSION {
+            error!(
+                "Received unexpected NOISE_PAYLOAD_VERSION = [{version}]. We expected [{NOISE_PAYLOAD_VERSION}]"
+            );
             return Ok((
                 Self {
                     version,
@@ -748,7 +752,7 @@ mod test {
         announce
             .peer
             .public_key
-            .verify(announce.signature, &signable)
+            .verify(&announce.signature, &signable)
             .unwrap();
         Ok(())
     }

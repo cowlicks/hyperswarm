@@ -1,12 +1,10 @@
 //! these really belong in udx's integration tests
-mod common;
 
-use common::Result;
 use rusty_nodejs_repl::Repl;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use udx::{UdxSocket, UdxStream};
 
-use crate::common::js::make_repl;
+use test_utils::{Result, make_repl};
 
 struct UdxStuff {
     socket: UdxSocket,

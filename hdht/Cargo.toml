@@ -6,19 +6,12 @@ edition = "2024"
 [dependencies]
 dht-rpc = { path = "../rpc" }
 rand = "0.7.3"
-bytes = "0.5.5"
-prost = "0.6.1"
 arrayvec = "0.5.1"
-sha2 = "0.9.1"
 uint = "0.8.3"
 futures = "0.3.5"
 wasm-timer = "0.2.4"
 fnv = "1.0.7"
-ed25519-dalek = "1.0.0-pre.4"
-blake2 = "0.9.0"
-lru = "0.5.3"
 smallvec = "1.4.1"
-either = "1.5.3"
 thiserror = "1.0.68"
 libsodium-sys-stable = "1.21.2"
 derive_builder = "0.20.2"
@@ -28,16 +21,13 @@ async-compat = "0.2.1"
 
 [dependencies.tokio]
 version = "1.41.0"
-features = ["rt", "net", "sync"]
+features = ["rt", "net", "sync", "time"]
 
 [dependencies.compact-encoding]
-version = "2.1.0"
+version = "2.2.0"
 
 [dependencies.udx]
-version = "0.1.0"
-
-[build-dependencies]
-prost-build = "0.6.1"
+version = "0.2.0"
 
 [dev-dependencies]
 async-process = "2.2.1"
@@ -46,13 +36,15 @@ serde_json = "1.0.135"
 tempfile = "3.10.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
+[dev-dependencies.test_utils]
+path = "../test_utils"
 
 [dev-dependencies.rusty_nodejs_repl]
 features = [ "serde" , "integration_utils"]
 version = "0.2.2"
 
 [dependencies.hypercore_handshake]
-version = "0.3.0"
+version = "0.6.0"
 
 [dependencies.uint24le_framing]
 version = "0.2.0"

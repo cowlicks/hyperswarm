@@ -1,14 +1,9 @@
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, task::Waker};
+use std::{net::SocketAddr, sync::Arc, task::Waker};
 
-use crate::{
-    IdBytes, RequestMsgDataInner, Result,
-    cenc::validate_id,
-    futreqs::{RequestFuture, RequestSender, new_request_channel},
-};
+use crate::{IdBytes, Result, cenc::validate_id};
 use fnv::FnvHashMap;
 use futures::{
     Sink, Stream,
-    channel::mpsc,
     task::{Context, Poll},
 };
 use rand::Rng;
@@ -19,13 +14,13 @@ use std::{
     sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
-use tokio::sync::oneshot;
+use tokio::sync::oneshot::{self, Receiver, Sender};
 use tracing::{error, trace};
 use wasm_timer::Instant;
 
 use super::{
     Command, Peer, QueryAndTid,
-    cenc::{generic_hash, generic_hash_with_key, ipv4},
+    cenc::{generic_hash, generic_hash_with_key},
     message::{MsgData, ReplyMsgData, RequestMsgData},
     query::QueryId,
     stateobserver::Observer,
@@ -34,8 +29,6 @@ use super::{
 };
 
 const ROTATE_INTERVAL: u64 = 300_000;
-
-const IO_TX_RX_CHANNEL_DEFAULT_SIZE: usize = 1024;
 
 pub type Tid = u16;
 
@@ -80,7 +73,10 @@ impl Secrets {
     }
 
     pub fn token(&self, peer: &Peer, secret_index: usize) -> Result<[u8; 32]> {
-        generic_hash_with_key(&ipv4(&peer.addr)?.octets()[..], &self.secrets[secret_index])
+        generic_hash_with_key(
+            &peer.socketv4()?.ip().octets()[..],
+            &self.secrets[secret_index],
+        )
     }
 }
 
@@ -126,6 +122,7 @@ pub struct OutRequestBuilder {
     peer: Peer,
     command: Command,
     tid: Option<u16>,
+    id: Option<[u8; 32]>,
     query_id: Option<QueryId>,
     token: Option<[u8; 32]>,
     target: Option<IdBytes>,
@@ -141,6 +138,18 @@ macro_rules! setter {
     };
 }
 impl OutRequestBuilder {
+    pub fn from_request(req: RequestMsgData) -> Self {
+        Self {
+            peer: req.to.clone(),
+            command: req.command,
+            tid: Some(req.tid),
+            id: req.id,
+            query_id: None,
+            token: req.token,
+            target: req.target.map(IdBytes::from),
+            value: req.value,
+        }
+    }
     pub fn new(peer: Peer, command: Command) -> Self {
         Self {
             peer,
@@ -150,7 +159,12 @@ impl OutRequestBuilder {
             token: None,
             target: None,
             value: None,
+            id: None,
         }
+    }
+    pub fn peer(mut self, peer: Peer) -> Self {
+        self.peer = peer;
+        self
     }
     setter!(tid, u16);
     setter!(query_id, QueryId);
@@ -162,21 +176,21 @@ impl OutRequestBuilder {
 /// OutMessage contains outgoing messages data, including local metadata for managing messages
 #[derive(Debug)]
 pub enum OutMessage {
-    Request((Option<QueryId>, RequestMsgData)),
-    Reply((Option<oneshot::Sender<()>>, ReplyMsgData)),
+    Request((Option<QueryId>, RequestMsgData, Option<Sender<()>>)),
+    Reply((Option<Sender<()>>, ReplyMsgData)),
 }
 
 impl OutMessage {
-    fn to(&self) -> Peer {
+    fn into_sendable(self) -> (MsgData, SocketAddr, Option<Sender<()>>) {
         match self {
-            OutMessage::Request((_, x)) => x.to.clone(),
-            OutMessage::Reply((_, x)) => x.to.clone(),
-        }
-    }
-    fn msg_data(&self) -> MsgData {
-        match self {
-            OutMessage::Request((_, x)) => MsgData::Request(x.clone()),
-            OutMessage::Reply((_, x)) => MsgData::Reply(x.clone()),
+            OutMessage::Request((_query_id, msg, tx)) => {
+                let dest = SocketAddr::from(&msg.to);
+                (MsgData::Request(msg), dest, tx)
+            }
+            OutMessage::Reply((tx, msg)) => {
+                let dest = SocketAddr::from(&msg.to);
+                (MsgData::Reply(msg), dest, tx)
+            }
         }
     }
 }
@@ -193,46 +207,6 @@ struct InflightRequest {
 }
 
 #[derive(Debug)]
-struct InflightRequestFuture {
-    /// The message send
-    message: RequestMsgData,
-    sender: RequestSender<Arc<InResponse>>,
-    // Identifier for the query this request is used with
-    query_id: Option<QueryId>,
-}
-
-type MessageChannelItem = (
-    RequestSender<Arc<InResponse>>,
-    (Option<QueryId>, RequestMsgDataInner),
-);
-
-/// A channel that can be used to send messages.
-#[derive(Debug)]
-pub struct MessageSender {
-    tx: mpsc::Sender<MessageChannelItem>,
-}
-
-impl MessageSender {
-    fn new(tx: mpsc::Sender<MessageChannelItem>) -> Self {
-        Self { tx }
-    }
-    /// Sends a message to IoHandler. Get a future back witch will resolve with the result
-    pub fn send(
-        &mut self,
-        msg: (Option<QueryId>, RequestMsgDataInner),
-    ) -> Result<RequestFuture<Arc<InResponse>>> {
-        let (result_tx, result_rx) = new_request_channel();
-        self.tx
-            .try_send((result_tx, msg))
-            .map(|_| result_rx)
-            .map_err(|e| {
-                error!("Got an eror sending into MessageSender channel: {e:?}");
-                crate::Error::RequestChannelSendError()
-            })
-    }
-}
-
-#[derive(Debug)]
 pub struct IoHandler {
     id: Observer<IdBytes>,
     ephemeral: bool,
@@ -243,37 +217,29 @@ pub struct IoHandler {
     pending_flush: Option<OutMessage>,
     /// Sent requests we currently wait for a response
     pending_recv: FnvHashMap<Tid, InflightRequest>,
-    // inflight futures
-    inflight: BTreeMap<Tid, InflightRequestFuture>,
     secrets: Secrets,
     tid: AtomicU16,
-    /// sender / reciever handles to recieve messages to send through
-    txrx: (
-        mpsc::Sender<MessageChannelItem>,
-        mpsc::Receiver<MessageChannelItem>,
-    ),
     stream_waker: Option<Waker>,
+    name: String,
 }
 
 impl IoHandler {
-    pub fn new(
-        id: Observer<IdBytes>,
-        message_stream: MessageDataStream,
-        _config: IoConfig,
-    ) -> Self {
+    pub fn new(id: Observer<IdBytes>, message_stream: MessageDataStream, config: IoConfig) -> Self {
         Self {
             id,
-            ephemeral: true,
+            ephemeral: config.ephemeral,
             message_stream,
             pending_send: Default::default(),
             pending_flush: None,
             pending_recv: Default::default(),
-            inflight: Default::default(),
-            secrets: Default::default(),
+            secrets: config.secrets,
             tid: AtomicU16::new(rand::thread_rng().r#gen()),
-            txrx: mpsc::channel(IO_TX_RX_CHANNEL_DEFAULT_SIZE),
             stream_waker: Default::default(),
+            name: random_name(),
         }
+    }
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn is_ephemeral(&self) -> bool {
@@ -299,7 +265,7 @@ impl IoHandler {
         self.tid.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn enqueue_reply(&mut self, msg: ReplyMsgData, tx: Option<oneshot::Sender<()>>) {
+    pub fn enqueue_reply(&mut self, msg: ReplyMsgData, tx: Option<Sender<()>>) {
         self.pending_send.push_back(OutMessage::Reply((tx, msg)));
         self.maybe_wake();
     }
@@ -314,9 +280,10 @@ impl IoHandler {
             token,
             target,
             value,
+            id,
         }: OutRequestBuilder,
     ) -> QueryAndTid {
-        let id = (!self.ephemeral).then(|| self.id().0);
+        let id = id.or_else(|| (!self.ephemeral).then(|| self.id().0));
         let tid = tid.unwrap_or_else(|| self.new_tid());
         self.enqueue_request((
             query_id,
@@ -329,6 +296,7 @@ impl IoHandler {
                 target: target.map(|x| x.into()),
                 value,
             },
+            None,
         ));
         (query_id, tid)
     }
@@ -355,17 +323,18 @@ impl IoHandler {
                 target: target.map(|x| x.0),
                 value,
             },
+            None,
         ));
         (query_id, tid)
     }
 
-    pub fn enqueue_request(&mut self, msg: (Option<QueryId>, RequestMsgData)) {
+    pub fn enqueue_request(&mut self, msg: (Option<QueryId>, RequestMsgData, Option<Sender<()>>)) {
         self.pending_send.push_back(OutMessage::Request(msg));
         self.maybe_wake();
     }
     pub fn error(
         &mut self,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         error: usize,
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
@@ -396,15 +365,47 @@ impl IoHandler {
         self.enqueue_reply(msg, None)
     }
 
+    pub fn request2(
+        &mut self,
+        OutRequestBuilder {
+            query_id,
+            tid,
+            peer,
+            command,
+            token,
+            target,
+            value,
+            id,
+        }: OutRequestBuilder,
+    ) -> crate::Result<Receiver<()>> {
+        let (tx, rx) = oneshot::channel();
+        let id = id.or_else(|| (!self.ephemeral).then(|| self.id().0));
+        let tid = tid.unwrap_or_else(|| self.new_tid());
+        self.enqueue_request((
+            query_id,
+            RequestMsgData {
+                tid,
+                command,
+                id,
+                token,
+                target: target.map(|t| t.into()),
+                value,
+                to: peer,
+            },
+            Some(tx),
+        ));
+        Ok(rx)
+    }
+
     pub fn response(
         &mut self,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
-        peer: Peer,
-    ) -> crate::Result<oneshot::Receiver<()>> {
+        peer: &Peer,
+    ) -> crate::Result<Receiver<()>> {
         let id = (!self.ephemeral).then(|| self.id().0);
-        let token = Some(self.token(&peer, 1)?);
+        let token = Some(self.token(peer, 1)?);
         let (tx, rx) = oneshot::channel();
         self.enqueue_reply(
             ReplyMsgData {
@@ -421,23 +422,7 @@ impl IoHandler {
         Ok(rx)
     }
 
-    pub fn create_sender(&mut self) -> MessageSender {
-        let tx = self.txrx.0.clone();
-        MessageSender::new(tx)
-    }
-
     fn on_response(&mut self, recv: ReplyMsgData, peer: Peer) -> IoHandlerEvent {
-        if let Some(InflightRequestFuture {
-            message: request,
-            sender,
-            query_id,
-        }) = self.inflight.remove(&recv.tid)
-        {
-            let tid = request.tid;
-            let msg = Arc::new(InResponse::new(Box::new(request), recv, peer, query_id));
-            let _ = sender.send(msg);
-            return IoHandlerEvent::ChanneledResponse(tid);
-        }
         if let Some(req) = self.pending_recv.remove(&recv.tid) {
             return IoHandlerEvent::InResponse(Arc::new(InResponse::new(
                 Box::new(req.message),
@@ -456,89 +441,93 @@ impl IoHandler {
         let peer = Peer::from(&rinfo);
         match msg {
             MsgData::Request(req) => {
-                trace!(tid = req.tid, command =% req.command, "RX:Request");
+                trace!(name=self.name(), tid = req.tid, command =% req.command, from =? peer.addr, "RX:Request");
                 IoHandlerEvent::InRequest { message: req, peer }
             }
             MsgData::Reply(rep) => {
-                trace!(tid = rep.tid, "RX:Reply");
+                trace!(name = self.name(), tid = rep.tid, from =? peer.addr, "RX:Reply");
                 self.on_response(rep, peer)
             }
         }
     }
 
-    pub fn start_send_next_fut_no_id(
-        &mut self,
-        query_id: Option<QueryId>,
-        data: RequestMsgDataInner,
-    ) -> crate::Result<RequestFuture<Arc<InResponse>>> {
-        let tid = self.new_tid();
-        let id = self.id().0;
-        let msg = RequestMsgData::from_ids_and_inner_data(tid, Some(id), data);
-        self.start_send_next_fut((query_id, msg))
-    }
-
-    pub fn start_send_next_fut_no_id_with_tx(
-        &mut self,
-        (sender, (query_id, data)): MessageChannelItem,
-    ) -> crate::Result<()> {
-        let tid = self.new_tid();
-        let id = self.id().0;
-        let full_req = RequestMsgData::from_ids_and_inner_data(tid, Some(id), data);
-        self.inner_send(&OutMessage::Request((query_id, full_req.clone())))?;
-        let inflight_req = InflightRequestFuture {
-            message: full_req,
-            sender,
-            query_id,
+    fn poll_send(&mut self, cx: &mut Context<'_>) -> Option<IoHandlerEvent> {
+        let msg = match self.pending_flush.take() {
+            Some(m) => m,
+            None => match self.pending_send.pop_front() {
+                Some(m) => m,
+                None => {
+                    return match Sink::poll_flush(Pin::new(&mut self.message_stream), cx) {
+                        Poll::Ready(_e) => None,
+                        Poll::Pending => {
+                            cx.waker().wake_by_ref();
+                            None
+                        }
+                    };
+                }
+            },
         };
-        self.inflight.insert(tid, inflight_req);
-        Ok(())
-    }
-
-    pub fn start_send_next_fut(
-        &mut self,
-        msg: (Option<QueryId>, RequestMsgData),
-    ) -> crate::Result<RequestFuture<Arc<InResponse>>> {
-        let tid = msg.1.tid;
-        self.inner_send(&OutMessage::Request(msg.clone()))?;
-        let (sender, reciever) = new_request_channel();
-        let inflight_req = InflightRequestFuture {
-            message: msg.1,
-            sender,
-            query_id: msg.0,
-        };
-        self.inflight.insert(tid, inflight_req);
-        Ok(reciever)
-    }
-
-    fn start_send_next(&mut self) -> crate::Result<()> {
-        if self.pending_flush.is_none()
-            && let Some(msg) = self.pending_send.pop_front()
-        {
-            self.inner_send(&msg)?;
+        if !Sink::poll_ready(Pin::new(&mut self.message_stream), cx).is_ready() {
             self.pending_flush = Some(msg);
-            self.maybe_wake();
+            return None;
         }
-        Ok(())
+        let out = match &msg {
+            OutMessage::Request((query_id, message, _tx)) => {
+                let tid = message.tid;
+                self.pending_recv.insert(
+                    message.tid,
+                    InflightRequest {
+                        message: message.clone(),
+                        timestamp: Instant::now(),
+                        query_id: *query_id,
+                    },
+                );
+                IoHandlerEvent::OutRequest { tid }
+            }
+            OutMessage::Reply((_tx, message)) => {
+                let peer = message.to.clone();
+                IoHandlerEvent::OutResponse {
+                    message: message.clone(),
+                    peer,
+                }
+            }
+        };
+
+        let (msg, socket, tx) = msg.into_sendable();
+        match &msg {
+            MsgData::Request(m) => {
+                trace!(name=self.name(), tid = m.tid, cmd =% m.command, to=?socket, "TX:Request")
+            }
+            MsgData::Reply(m) => trace!(name = self.name(), tid = m.tid, to=?socket, "TX:Reply"),
+        }
+        if let Err(e) = Sink::start_send(Pin::new(&mut self.message_stream), (msg, socket)) {
+            error!(error =? e, "start_send error");
+            todo!()
+        }
+        _ = Sink::poll_flush(Pin::new(&mut self.message_stream), cx);
+        if let Some(tx) = tx {
+            _ = tx.send(());
+        }
+
+        if !self.pending_send.is_empty() {
+            cx.waker().wake_by_ref();
+        }
+        Some(out)
     }
 
-    fn inner_send(&mut self, msg: &OutMessage) -> crate::Result<()> {
-        let addr = SocketAddr::from(&msg.to());
-        match msg {
-            OutMessage::Request(r) => trace!(tid = r.1.tid, command =% r.1.command, "TX:Request"),
-            OutMessage::Reply((_, r)) => trace!(tid = r.tid, "TX:Reply"),
-        }
-        Sink::start_send(Pin::new(&mut self.message_stream), (msg.msg_data(), addr))
-    }
     fn maybe_wake(&mut self) {
         if let Some(w) = self.stream_waker.take() {
             w.wake()
         }
     }
 }
-#[derive(Debug, Clone, Default)]
+
+#[derive(Debug, Default)]
 pub struct IoConfig {
-    pub rotation: Option<Duration>,
-    pub secrets: Option<([u8; 32], [u8; 32])>,
+    pub secrets: Secrets,
+    /// When true, the node won't expose its ID to remote peers.
+    /// Defaults to false (non-ephemeral).
+    pub ephemeral: bool,
 }
 
 impl Stream for IoHandler {
@@ -548,51 +537,8 @@ impl Stream for IoHandler {
         let pin = self.get_mut();
         _ = pin.stream_waker.insert(cx.waker().clone());
 
-        while let Poll::Ready(Some((tx, msg))) = Stream::poll_next(Pin::new(&mut pin.txrx.1), cx) {
-            if let Err(e) = pin.start_send_next_fut_no_id_with_tx((tx, msg)) {
-                error!("Error sending message = {e:?}");
-            }
-        }
-        // queue in the next message if not currently flushing
-        // moves msg pending_flush = pending_send[0]
-        // and sends it
-        if let Err(err) = pin.start_send_next() {
-            let out = IoHandlerEvent::OutSocketErr { err };
-            trace!("{out:#?}");
+        if let Some(out) = pin.poll_send(cx) {
             return Poll::Ready(Some(out));
-        }
-
-        // flush the message
-        if let Some(ev) = pin.pending_flush.take() {
-            if Sink::poll_ready(Pin::new(&mut pin.message_stream), cx).is_ready() {
-                return match ev {
-                    OutMessage::Request((query_id, message)) => {
-                        let tid = message.tid;
-                        pin.pending_recv.insert(
-                            message.tid,
-                            InflightRequest {
-                                message,
-                                timestamp: Instant::now(),
-                                query_id,
-                            },
-                        );
-                        let out = IoHandlerEvent::OutRequest { tid };
-                        Poll::Ready(Some(out))
-                    }
-                    OutMessage::Reply((tx, message)) => {
-                        // Signal that the response has been flushed
-                        if let Some(tx) = tx {
-                            let _ = tx.send(());
-                        }
-                        let peer = message.to.clone();
-                        let out = IoHandlerEvent::OutResponse { message, peer };
-                        trace!("{out:#?}");
-                        Poll::Ready(Some(out))
-                    }
-                };
-            } else {
-                pin.pending_flush = Some(ev);
-            }
         }
 
         // read from socket
@@ -604,7 +550,7 @@ impl Stream for IoHandler {
             }
             Poll::Ready(Some(Err(err))) => {
                 let out = IoHandlerEvent::InSocketErr { err };
-                error!("{out:#?}");
+                error!(name = pin.name(), "{out:#?}");
                 return Poll::Ready(Some(out));
             }
             _ => {}
@@ -683,6 +629,19 @@ impl std::fmt::Display for IoHandlerEvent {
     }
 }
 
+/// return a Random String, 5 letters long containing only the letters a-zA-Z.
+pub fn random_name() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut rng = rand::thread_rng();
+    (0..5)
+        .map(|_| {
+            let idx = rng.gen_range(0, CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod test {
     use crate::{InternalCommand, stateobserver::State, thirty_two_random_bytes};
@@ -696,7 +655,7 @@ mod test {
         IoHandler::new(view, message_stream, Default::default())
     }
     #[tokio::test]
-    async fn foo() -> crate::Result<()> {
+    async fn test_iohandler_to_iohandler_messaging() -> crate::Result<()> {
         let mut a = new_io();
         let mut b = new_io();
 
@@ -712,7 +671,7 @@ mod test {
             value: None,
         };
         let query_id = Some(QueryId(42));
-        a.enqueue_request((query_id, msg.clone()));
+        a.enqueue_request((query_id, msg.clone(), None));
         a.next().await;
         let IoHandlerEvent::InRequest { message: res, .. } = b.next().await.unwrap() else {
             panic!()

@@ -1,12 +1,8 @@
 use std::{pin::Pin, time::Duration};
 
-use futures::{
-    Future,
-    task::{Context, Poll},
-};
+use futures::task::{Context, Poll};
 use wasm_timer::{Delay, Instant};
 
-/// Periodic job.
 #[derive(Debug)]
 pub struct PeriodicJob {
     pub interval: Duration,
@@ -18,6 +14,16 @@ impl PeriodicJob {
         Self {
             interval,
             inner: Delay::new(interval),
+        }
+    }
+
+    pub fn poll_now(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        if let Poll::Ready(Ok(_)) = Delay::poll(Pin::new(&mut self.inner), cx) {
+            let deadline = Instant::now() + self.interval;
+            self.inner = Delay::new_at(deadline);
+            Poll::Ready(())
+        } else {
+            Poll::Pending
         }
     }
 

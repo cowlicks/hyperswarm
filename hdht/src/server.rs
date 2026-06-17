@@ -1,22 +1,38 @@
 use std::{
+    net::SocketAddr,
     pin::Pin,
     sync::{Arc, RwLock},
     task::{Context, Poll},
 };
 
+use dht_rpc::{IdBytes, generic_hash};
 use futures::Stream;
 use tokio::sync::mpsc;
 
-use crate::{Result, adht::DhtInner, next_router::connection::Connection};
+use crate::{
+    Keypair, Result, adht::DhtInner, announcer::Announcer, next_router::connection::Connection,
+};
 
 pub struct Server {
     rx: mpsc::Receiver<Result<Connection>>,
     dht: Arc<RwLock<DhtInner>>,
+    announcer: Announcer,
 }
 
 impl Server {
-    pub fn new(rx: mpsc::Receiver<Result<Connection>>, dht: Arc<RwLock<DhtInner>>) -> Self {
-        Self { rx, dht }
+    pub fn new(
+        rx: mpsc::Receiver<Result<Connection>>,
+        keypair: Keypair,
+        dht: Arc<RwLock<DhtInner>>,
+    ) -> Self {
+        let target = IdBytes(generic_hash(&*keypair.public));
+        let announcer = Announcer::new(dht.read().unwrap().get_rpc(), keypair, target);
+        Self { rx, dht, announcer }
+    }
+
+    /// Current relay addresses from the announcer (newest generation).
+    pub fn relay_addresses(&self) -> Vec<SocketAddr> {
+        self.announcer.relay_addresses()
     }
 }
 
@@ -24,15 +40,8 @@ impl Stream for Server {
     type Item = Result<Connection>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Poll the DHT to drive the event loop and flush any pending responses
-        while Pin::new(&mut *self.dht.write().unwrap())
-            .poll_next(cx)
-            .is_ready()
-        {
-            // keep loopin
-        }
-
-        // Check for new connections
+        _ = Pin::new(&mut *self.dht.write().unwrap()).poll_next(cx);
+        _ = Pin::new(&mut self.announcer).poll_next(cx);
         Pin::new(&mut self.rx).poll_recv(cx)
     }
 }

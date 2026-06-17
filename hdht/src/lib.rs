@@ -6,14 +6,13 @@
     redundant_lifetimes,
     unsafe_code,
     non_local_definitions,
-    //clippy::needless_pass_by_value, // TODO
+    clippy::needless_pass_by_value,
     clippy::needless_pass_by_ref_mut,
     clippy::enum_glob_use
 )]
 
 use std::{
     array::TryFromSliceError,
-    fmt,
     net::{AddrParseError, SocketAddr, SocketAddrV4},
     sync::Arc,
 };
@@ -24,25 +23,26 @@ use cenc::{
     RelayThroughInfoBuilderError, UdxInfoBuilderError,
 };
 use compact_encoding::{CompactEncoding, EncodingError};
-use dht_rpc::{IdBytes, InResponse, RequestFutureError, RpcInnerBuilderError};
+use dht_rpc::{IdBytes, InResponse, RpcInnerBuilderError};
 use tokio::sync::oneshot::error::RecvError;
 
 use crate::cenc::HandshakeSteps;
 
-mod dht_proto {
-    include!(concat!(env!("OUT_DIR"), "/dht_pb.rs"));
-}
 mod cenc;
 mod crypto;
 mod next_router;
+mod persistent;
 mod server;
-mod store;
 
 pub mod adht;
+pub mod announcer;
 
 pub use crypto::{
-    Keypair, make_signable_announce_or_unannounce, namespace, sign_announce_or_unannounce,
+    Keypair, PublicKey, make_signable_announce_or_unannounce, namespace,
+    sign_announce_or_unannounce,
 };
+pub use next_router::connection::Connection;
+pub use server::Server;
 
 /// The publicly available hyperswarm DHT addresses
 pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
@@ -50,10 +50,6 @@ pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
     "node2.hyperdht.org:49737",
     "node3.hyperdht.org:49737",
 ];
-
-pub(crate) const ERR_INVALID_INPUT: usize = 7;
-pub(crate) const ERR_INVALID_SEQ: usize = 11;
-pub(crate) const ERR_SEQ_MUST_EXCEED_CURRENT: usize = 13;
 
 pub mod commands {
     use dht_rpc::{Command, ExternalCommand};
@@ -107,8 +103,6 @@ pub enum Error {
     Ipv6NotSupported,
     #[error("Invalid Signature")]
     InvalidSignature(i32),
-    #[error("Future Request error")]
-    FutureRequestFailed(#[from] RequestFutureError),
     #[error("Error building PeerHandshakePayload: {0}")]
     PeerHandshakePayloadBuilder(#[from] PeerHandshakePayloadBuilderError),
     #[error("Error building UdxInfo: {0}")]
@@ -126,6 +120,12 @@ pub enum Error {
     /// Failed to connect
     #[error("Failed to connect")]
     ConnectionFailed,
+    /// Received bad request from a peer
+    // TODO maybe make multiple variants that can pass up the error
+    #[error("Received bad data from a peer: {0}")]
+    BadMsgFromPeer(String),
+    #[error("Failed to decode message from peer data from a peer: {0}")]
+    EncodingErrorFromPeer(EncodingError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -141,7 +141,6 @@ impl From<EncodingError> for Error {
 pub struct PeerHandshakeResponse {
     noise: Vec<u8>,
     relayed: bool,
-    #[expect(unused)]
     server_address: SocketAddrV4,
     #[expect(unused)]
     client_address: SocketAddrV4,
@@ -160,39 +159,6 @@ impl PeerHandshakeResponse {
             client_address,
         }
     }
-}
-
-/// Represents the response received from a peer
-#[derive(Debug)]
-pub struct PeerResponseItem<T: fmt::Debug> {
-    /// Address of the peer this response came from
-    pub peer: SocketAddr,
-    /// The identifier of the `peer` if included in the response
-    pub peer_id: Option<IdBytes>,
-    /// The value the `peer` provided
-    pub value: T,
-}
-
-/// Result of a [`HyperDht::lookup`] query.
-#[derive(Debug, Clone)]
-pub struct Lookup {
-    /// The hash to lookup
-    pub topic: IdBytes,
-    /// The gathered responses
-    pub peers: Vec<Peers>,
-}
-
-/// A Response to a query request from a peer
-#[derive(Debug, Clone)]
-pub struct Peers {
-    /// The DHT node that is returning this data
-    pub node: SocketAddr,
-    /// The id of the `peer` if available
-    pub peer_id: Option<IdBytes>,
-    /// List of peers that announced the topic hash
-    pub peers: Vec<SocketAddr>,
-    /// List of LAN peers that announced the topic hash
-    pub local_peers: Vec<SocketAddr>,
 }
 
 pub fn request_announce_or_unannounce_value(
@@ -231,13 +197,13 @@ fn decode_peer_handshake_response(resp: &Arc<InResponse>) -> Result<Arc<PeerHand
     let server_address = if let Some(x) = hs.peer_address {
         x
     } else {
-        resp.request.to.ipv4_addr()?
+        *resp.request.to.socketv4()?
     };
 
     Ok(Arc::new(PeerHandshakeResponse::new(
         hs.noise,
         hs.peer_address.is_some(),
         server_address,
-        resp.response.to.ipv4_addr()?,
+        *resp.response.to.socketv4()?,
     )))
 }

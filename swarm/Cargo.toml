@@ -1,0 +1,26 @@
+[package]
+name = "hyperswarm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hyperdht = { path = "../hdht" }
+dht-rpc = { path = "../rpc" }
+tokio = { version = "1.41.0", features = ["rt", "net", "sync"] }
+futures = "0.3.5"
+thiserror = "1.0.68"
+tracing = "0.1.41"
+rand = "0.7.3"
+
+[dev-dependencies]
+test_utils = { path = "../test_utils" }
+tokio = { version = "1.41.0", features = ["rt-multi-thread", "macros", "time"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+hypercore = { path = "../../core" }
+
+[dev-dependencies.hypercore_handshake]
+version = "0.6.0"
+#path = "../../handshake/"
+
+[dev-dependencies.hypercore-protocol]
+path = "../../protocol/"

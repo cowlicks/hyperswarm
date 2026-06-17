@@ -3,5 +3,7 @@
 members = [
   "hdht",
   "rpc",
+  "swarm",
+  "test_utils"
 ]
 resolver = "2"

@@ -90,7 +90,7 @@ impl Router {
                 .expect("TODO response SHOULD have udx_info")
                 .id as u32;
 
-            conn.connect(resp.request.to.addr, udx_remote_id, np)?;
+            conn.connect(resp.request.to.addr, udx_remote_id)?;
             Ok(conn)
         } else {
             Err(Error::PeerHandshakeFailed(
@@ -106,7 +106,7 @@ impl Router {
         tid: Tid,
         remote_public_key: [u8; 32],
         local_addrs4: Option<Vec<SocketAddrV4>>,
-        socket: UdxSocket,
+        socket: &UdxSocket,
     ) -> Result<Vec<u8>, Error> {
         let mut hs =
             Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;

@@ -1,27 +1,24 @@
-[submodule "js/dht-rpc"]
-	path = js/dht-rpc
-	url = git@github.com:cowlicks/dht-rpc.git
-	branch = rust-changes
-[submodule "hdht/tests/common/js/hyperdht"]
-	path = hdht/tests/common/js/hyperdht
+[submodule "test_utils/js/hyperdht"]
+	path = test_utils/js/hyperdht
 	url = git@github.com:cowlicks/hyperdht.git
 	branch = rust-changes
-[submodule "hdht/tests/common/js/rpc"]
-	path = hdht/tests/common/js/rpc
+[submodule "test_utils/js/rpc"]
+	path = test_utils/js/rpc
 	url = git@github.com:cowlicks/dht-rpc.git
-	branch = rs-hyperswarm-hdht-tests-changes
-[submodule "hdht/tests/common/js/sodium-native"]
-	path = hdht/tests/common/js/sodium-native
+	branch = rust-changes
+[submodule "test_utils/js/sodium-native"]
+	path = test_utils/js/sodium-native
 	url = git@github.com:cowlicks/sodium-native.git
 	branch = rust-changes
-[submodule "hdht/tests/common/js/noise-handshake"]
-	path = hdht/tests/common/js/noise-handshake
+[submodule "test_utils/js/noise-handshake"]
+	path = test_utils/js/noise-handshake
 	url = git@github.com:holepunchto/noise-handshake.git
 	branch = rust-changes
-[submodule "hdht/tests/common/js/udx-native"]
-	path = hdht/tests/common/js/udx-native
+[submodule "test_utils/js/udx-native"]
+	path = test_utils/js/udx-native
 	url = git@github.com:cowlicks/udx-native.git
 	branch = rust-changes
-[submodule "hdht/tests/common/js/hyperswarm"]
-	path = hdht/tests/common/js/hyperswarm
-	url = git@github.com:holepunchto/hyperswarm.git
+[submodule "test_utils/js/hyperswarm"]
+	path = test_utils/js/hyperswarm
+	url = git@github.com:cowlicks/hyperswarmjs.git
+	branch = rust-changes

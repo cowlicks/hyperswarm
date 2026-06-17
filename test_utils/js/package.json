@@ -11,6 +11,7 @@
     "noise-curve-ed": "^2.0.0",
     "dht-rpc": "file:./rpc",
     "hyperdht": "file:./hyperdht",
+    "hyperswarm": "file:./hyperswarm",
     "noise-handshake": "file:./noise-handshake",
     "random-access-file": "^4.0.7",
     "random-access-memory": "^6.2.1",

@@ -1,5 +1,0 @@
-{
-  "dependencies": {
-    "dht-rpc": "./dht-rpc"
-  }
-}

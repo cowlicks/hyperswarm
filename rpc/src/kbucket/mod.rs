@@ -296,7 +296,7 @@ where
     ///
     /// The number of nodes between the local node and the target are
     /// calculated by backtracking from the target towards the local key.
-    pub fn count_nodes_between(&mut self, target: &IdBytes) -> usize {
+    pub fn count_nodes_between(&self, target: &IdBytes) -> usize {
         let local_key = self.local_key;
         let distance = target.distance(local_key.as_ref());
         let mut iter = ClosestBucketsIter::new(distance).take_while(|i| i.get() != 0);

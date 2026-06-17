@@ -4,21 +4,20 @@
     //missing_debug_implementations, // TODO
     //missing_docs, // TODO
     redundant_lifetimes,
-    //unsafe_code, // TODO
+    unsafe_code,
     non_local_definitions,
-    //clippy::needless_pass_by_value, // TODO
-    //clippy::needless_pass_by_ref_mut, // TODO
+    clippy::needless_pass_by_value,
+    clippy::needless_pass_by_ref_mut,
     clippy::enum_glob_use
 )]
 
 mod cenc;
 mod commit;
 mod constants;
-mod futreqs;
 mod io;
-mod jobs;
 mod kbucket;
 mod message;
+mod periodic_job;
 mod query;
 mod stateobserver;
 mod stream;
@@ -27,9 +26,9 @@ mod util;
 pub use crate::{
     cenc::generic_hash,
     commit::Commit,
-    futreqs::Error as RequestFutureError,
     io::{InResponse, OutRequestBuilder},
     message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
+    periodic_job::PeriodicJob,
     query::{CommandQuery, CommandQueryResponse, QueryId, QueryResult},
 };
 
@@ -65,7 +64,6 @@ use rand::{
 use crate::{
     cenc::validate_id,
     commit::{CommitMessage, Progress},
-    jobs::PeriodicJob,
     kbucket::{
         Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,
     },
@@ -122,8 +120,6 @@ pub enum Error {
     RequestRequiresToField,
     #[error("Ipv6 not supported")]
     Ipv6NotSupported,
-    #[error("Request failed with: {0}")]
-    RequestFailed(#[from] RequestFutureError),
     #[error("Error trying to send message to IoHandler")]
     RequestChannelSendError(),
     #[error("Error building request. Missing field: {0}")]
@@ -268,7 +264,6 @@ pub struct RpcInner {
     // TODO use message passing to update id's in IoHandler
     #[builder(default = "State::new(IdBytes::from(thirty_two_random_bytes()))")]
     pub id: State<IdBytes>,
-    ephemeral: bool,
     pub(crate) kbuckets: KBucketsTable<Node>,
     pub io: IoHandler,
     bootstrap_job: PeriodicJob,
@@ -298,6 +293,10 @@ pub struct Rpc {
 }
 
 impl Rpc {
+    pub fn name(&self) -> String {
+        self.inner.lock().unwrap().io.name().to_string()
+    }
+
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
             inner: Arc::new(Mutex::new(RpcInner::with_config(config).await?)),
@@ -327,6 +326,10 @@ impl Rpc {
     }
     pub fn reply_command(&self, resp: CommandQueryResponse) {
         self.inner.lock().unwrap().reply_command(resp)
+    }
+
+    pub fn closer_nodes(&self, key: IdBytes) -> Vec<Peer> {
+        self.inner.lock().unwrap().closer_nodes(key, K_VALUE.into())
     }
 
     // TODO Error on timeout
@@ -386,12 +389,18 @@ impl Rpc {
         // Create a future that polls RpcDht for events and waits for the response
         RpcDhtRequestFuture::new(self.inner.clone(), tid, rx)
     }
+    pub fn request2(
+        &self,
+        o: OutRequestBuilder,
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
+        self.inner.lock().unwrap().io.request2(o)
+    }
     pub fn respond(
         &self,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         value: Option<Vec<u8>>,
         closer_nodes: Option<Vec<Peer>>,
-        peer: Peer,
+        peer: &Peer,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
         self.inner
             .lock()
@@ -411,20 +420,14 @@ impl Rpc {
         .await
     }
 
-    pub fn query_next(
-        &self,
-        command: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> QueryNext {
+    pub fn query(&self, args: QueryArgs) -> QueryNext {
         const QUERY_STREAM_CHANNEL_SIZE: usize = 1024;
         let (parts_tx, parts_rx) = mpsc::channel(QUERY_STREAM_CHANNEL_SIZE);
         let (result_tx, result_rx) = oneshot::channel();
 
         {
             let mut inner = self.inner.lock().unwrap();
-            let qid = inner.query(command, target, value, commit);
+            let qid = inner.query(args);
             inner.store_qid_stream_sender(qid, parts_tx);
             inner.store_qid_sender(qid, result_tx);
         };
@@ -443,6 +446,39 @@ impl Stream for Rpc {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut inner = self.inner.lock().unwrap();
         Stream::poll_next(Pin::new(&mut *inner), cx)
+    }
+}
+
+#[derive(Debug)]
+pub struct QueryArgs {
+    command: Command,
+    target: IdBytes,
+    value: Option<Vec<u8>>,
+    commit: Option<Commit>,
+    closest_nodes: Option<Vec<Peer>>,
+}
+
+impl QueryArgs {
+    pub fn new(command: Command, target: IdBytes) -> Self {
+        Self {
+            command,
+            target,
+            value: None,
+            commit: None,
+            closest_nodes: None,
+        }
+    }
+    pub fn value(mut self, value: Vec<u8>) -> Self {
+        self.value = Some(value);
+        self
+    }
+    pub fn commit(mut self, value: Commit) -> Self {
+        self.commit = Some(value);
+        self
+    }
+    pub fn closest_nodes(mut self, value: Vec<Peer>) -> Self {
+        self.closest_nodes = Some(value);
+        self
     }
 }
 
@@ -567,7 +603,6 @@ pub struct DhtConfig {
     pub bootstrap_interval: Duration,
     pub ping_interval: Duration,
     pub connection_idle_timeout: Duration,
-    pub ephemeral: bool,
     pub adaptive: bool,
     pub bootstrap_nodes: Vec<SocketAddr>,
     pub socket: Option<MessageDataStream>,
@@ -583,7 +618,6 @@ impl Default for DhtConfig {
             ping_interval: Duration::from_secs(40),
             bootstrap_interval: Duration::from_secs(320),
             connection_idle_timeout: Duration::from_secs(10),
-            ephemeral: false,
             adaptive: false,
             bootstrap_nodes: Vec::new(),
             socket: None,
@@ -629,18 +663,9 @@ impl DhtConfig {
         self
     }
 
-    /// Set ephemeral: true so other peers do not add us to the peer list,
-    /// simply bootstrap.
-    ///
-    /// An ephemeral dht node won't expose its id to remote peers, hence being
-    /// ignored.
-    pub fn ephemeral(mut self) -> Self {
-        self.ephemeral = true;
-        self
-    }
-
+    /// Set `ephemeral` value. When `true` this node won't expose its `id` to remote peer, so other peers do not add us to the peer list.
     pub fn set_ephemeral(mut self, ephemeral: bool) -> Self {
-        self.ephemeral = ephemeral;
+        self.io_config.ephemeral = ephemeral;
         self
     }
 }
@@ -674,7 +699,6 @@ impl RpcInner {
         loop {
             // Drain queued events first.
             if let Some(event) = pin.queued_events.pop_front() {
-                trace!("{event:#?}");
                 cx.waker().wake_by_ref();
                 return Poll::Ready(Some(event));
             }
@@ -682,13 +706,11 @@ impl RpcInner {
             // Look for a sent/received message
             loop {
                 if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
-                    debug!("RpcDht got IoHandlerEvent::{event}");
                     if let Ok(Some(e)) = pin.inject_event(event) {
                         cx.waker().wake_by_ref();
                         return Poll::Ready(Some(e));
                     }
                     if let Some(event) = pin.queued_events.pop_front() {
-                        trace!("emit queue event: {event:?}");
                         return Poll::Ready(Some(event));
                     }
                 } else {
@@ -698,7 +720,7 @@ impl RpcInner {
                             // TODO add all commit handlers
                             match cev {
                                 E::AutoStart((_, _)) => {
-                                    let tids = pin.default_commit(query.clone());
+                                    let tids = pin.default_commit(&query);
                                     query.write().unwrap().commit =
                                         C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
                                 }
@@ -764,11 +786,11 @@ impl RpcInner {
                                 "QueryPoolEvent::Finished. Query::id = {:?}",
                                 q.try_read().map(|x| x.id)
                             );
-                            let event = pin.query_finished(q);
+                            let event = pin.query_finished(&q);
                             return Poll::Ready(Some(event));
                         }
                         QueryPoolEvent::Timeout(q) => {
-                            let event = pin.query_timeout(q);
+                            let event = pin.query_timeout(&q);
                             trace!("{event:#?}");
                             return Poll::Ready(Some(event));
                         }
@@ -809,7 +831,6 @@ impl RpcInner {
 
         let mut dht = Self {
             id,
-            ephemeral: config.ephemeral,
             kbuckets: KBucketsTable::new(local_id, config.kbucket_pending_timeout),
             io,
             bootstrap_job: PeriodicJob::new(config.bootstrap_interval),
@@ -832,7 +853,7 @@ impl RpcInner {
     }
 
     pub fn is_ephemeral(&self) -> bool {
-        self.ephemeral
+        self.io.is_ephemeral()
     }
 
     /// Returns the local address that this listener is bound to.
@@ -870,24 +891,31 @@ impl RpcInner {
         self.bootstrapped
     }
 
-    #[instrument(skip(self, value))]
-    pub fn query(
-        &mut self,
-        cmd: Command,
-        target: IdBytes,
-        value: Option<Vec<u8>>,
-        commit: Commit,
-    ) -> QueryId {
+    #[instrument(skip(self, args))]
+    pub fn query(&mut self, args: QueryArgs) -> QueryId {
+        // Use routing table peers for QueryTable (commit tracking)
         let peers = self
             .kbuckets
-            .closest(&target)
+            .closest(&args.target)
             .take(usize::from(K_VALUE))
             .map(|e| PeerId::new(e.node.value.addr, e.node.key))
             .collect::<Vec<_>>();
 
-        let bootstrap_nodes: Vec<Peer> = self.bootstrap_nodes.iter().map(Peer::from).collect();
-        self.queries
-            .add_stream(cmd, peers, target, value, bootstrap_nodes, commit)
+        // Use closest_nodes if provided, otherwise fall back to bootstrap_nodes
+        let bootstrap: Vec<Peer> = args
+            .closest_nodes
+            .unwrap_or_else(|| self.bootstrap_nodes.iter().map(Peer::from).collect());
+
+        let commit = args.commit.unwrap_or(Commit::No);
+
+        self.queries.add_stream(
+            args.command,
+            peers,
+            args.target,
+            args.value,
+            bootstrap,
+            commit,
+        )
     }
 
     pub fn request(&mut self, req: OutRequestBuilder) -> Tid {
@@ -938,7 +966,8 @@ impl RpcInner {
             }
             IoHandlerEvent::InMessageErr { .. } => {}
             IoHandlerEvent::InSocketErr { .. } => {}
-            IoHandlerEvent::InResponseBadRequestId { .. } => {
+            IoHandlerEvent::InResponseBadRequestId { message, peer } => {
+                warn!(msg =? message, peer =? peer, "Bad Response ID");
                 // received a response that did not match any issued requests
                 //self.remove_node(&peer);
                 todo!()
@@ -953,7 +982,7 @@ impl RpcInner {
                 todo!()
             }
             IoHandlerEvent::ChanneledResponse(tid) => {
-                trace!(msg.id = tid, "Passed io response through channel")
+                trace!(tid = tid, "Passed io response through channel")
             }
         }
         Ok(None)
@@ -1024,10 +1053,10 @@ impl RpcInner {
 
         match request.command {
             Command::Internal(cmd) => match cmd {
-                InternalCommand::Ping => self.on_ping(request, &peer),
-                InternalCommand::FindNode => self.on_find_node(request, peer),
-                InternalCommand::PingNat => self.on_ping_nat(request, peer),
-                InternalCommand::DownHint => self.on_down_hint(request, peer),
+                InternalCommand::Ping => self.on_ping(&request, &peer),
+                InternalCommand::FindNode => self.on_find_node(&request, &peer),
+                InternalCommand::PingNat => self.on_ping_nat(&request, peer),
+                InternalCommand::DownHint => self.on_down_hint(&request, peer),
             },
             Command::External(command) => {
                 return Ok(Some(RpcEvent::CustomRequest(CustomCommandRequest {
@@ -1098,7 +1127,7 @@ impl RpcInner {
         value: Option<Vec<u8>>,
         token: Option<[u8; 32]>,
         has_closer_nodes: bool,
-        request: RequestMsgData,
+        request: &RequestMsgData,
         peer: &Peer,
     ) {
         let closer_nodes: Vec<Peer> = match (has_closer_nodes, request.target) {
@@ -1118,11 +1147,11 @@ impl RpcInner {
     }
 
     /// Handle a ping request
-    fn on_ping(&mut self, msg: RequestMsgData, peer: &Peer /* peer who sent ping */) {
+    fn on_ping(&mut self, msg: &RequestMsgData, peer: &Peer /* peer who sent ping */) {
         let msg = ReplyMsgData {
             tid: msg.tid,
             to: peer.clone(),
-            id: (!self.ephemeral).then(|| self.id.get().0),
+            id: (!self.is_ephemeral()).then(|| self.id.get().0),
             token: self.io.token(peer, 1).ok(),
             closer_nodes: vec![],
             error: 0,
@@ -1134,7 +1163,7 @@ impl RpcInner {
     /// Handle an incoming find peers request.
     ///
     /// Reply only if the remote provided a target to get the closest nodes for.
-    fn on_find_node(&mut self, request: RequestMsgData, peer: Peer) {
+    fn on_find_node(&mut self, request: &RequestMsgData, peer: &Peer) {
         // TODO same as 582
         let closer_nodes: Vec<Peer> = match request.target {
             Some(t) => self.closer_nodes(IdBytes::from(t), usize::from(K_VALUE)),
@@ -1147,8 +1176,8 @@ impl RpcInner {
         self.io.reply(ReplyMsgData {
             tid: request.tid,
             to: peer.clone(),
-            id: (!self.ephemeral).then(|| self.id.get().0),
-            token: self.io.token(&peer, 1).ok(),
+            id: (!self.is_ephemeral()).then(|| self.id.get().0),
+            token: self.io.token(peer, 1).ok(),
             closer_nodes,
             error: 0,
             value: None,
@@ -1164,7 +1193,7 @@ impl RpcInner {
             .collect::<Vec<_>>()
         //PeersEncoding::encode(&nodes)
     }
-    fn on_down_hint(&mut self, request: RequestMsgData, peer: Peer) {
+    fn on_down_hint(&mut self, request: &RequestMsgData, peer: Peer) {
         match &request.value {
             None => {
                 // TODO emit an event about this
@@ -1230,7 +1259,7 @@ impl RpcInner {
                     tid: request.tid,
                     token: self.io.token(&peer, 1).ok(),
                     to: peer,
-                    id: (!self.ephemeral).then(|| self.id.get().0),
+                    id: (!self.is_ephemeral()).then(|| self.id.get().0),
                     closer_nodes: vec![],
                     error: 0,
                     value: None,
@@ -1239,7 +1268,7 @@ impl RpcInner {
         };
     }
 
-    fn on_ping_nat(&mut self, request: RequestMsgData, mut peer: Peer) {
+    fn on_ping_nat(&mut self, request: &RequestMsgData, mut peer: Peer) {
         let port = match &request.value {
             Some(port_buf) => {
                 if port_buf.len() < 2 {
@@ -1265,7 +1294,7 @@ impl RpcInner {
         self.io.reply(ReplyMsgData {
             tid: request.tid,
             to: peer,
-            id: (!self.ephemeral).then(|| self.id.get().0),
+            id: (!self.is_ephemeral()).then(|| self.id.get().0),
             token,
             closer_nodes: vec![],
             error: 0,
@@ -1296,7 +1325,7 @@ impl RpcInner {
         self.enque_stream_event(RpcEvent::ResponseResult(Ok(ResponseOk::Pong(peer))));
     }
 
-    fn default_commit(&mut self, query: Arc<RwLock<Query>>) -> Vec<Tid> {
+    fn default_commit(&mut self, query: &Arc<RwLock<Query>>) -> Vec<Tid> {
         let q = query.read().unwrap();
         q.closest_replies
             .iter()
@@ -1381,7 +1410,7 @@ impl RpcInner {
 
     /// Handles a finished query.
     #[instrument(skip_all)]
-    fn query_finished(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
+    fn query_finished(&mut self, query: &Arc<RwLock<Query>>) -> RpcEvent {
         let is_find_node = matches!(
             query.read().unwrap().command(),
             Command::Internal(InternalCommand::FindNode)
@@ -1445,7 +1474,7 @@ impl RpcInner {
         }
     }
     /// Handles a query that timed out.
-    fn query_timeout(&mut self, query: Arc<RwLock<Query>>) -> RpcEvent {
+    fn query_timeout(&mut self, query: &Arc<RwLock<Query>>) -> RpcEvent {
         self.query_finished(query)
     }
 
@@ -1573,11 +1602,8 @@ impl Peer {
     /// Encoded size of a peer: 4 bytes for a Ipv4Addr and 2 bytes for a u16.
     const ENCODED_SIZE: usize = 6;
 
-    pub fn ipv4_addr(&self) -> Result<SocketAddrV4> {
-        match self.addr {
-            SocketAddr::V4(socket_addr_v4) => Ok(socket_addr_v4),
-            SocketAddr::V6(_socket_addr_v6) => Err(Error::Ipv6NotSupported),
-        }
+    pub fn socketv4(&self) -> Result<&SocketAddrV4> {
+        socket_into_v4(&self.addr)
     }
     pub fn new(addr: SocketAddr) -> Self {
         Self {
@@ -1763,4 +1789,11 @@ pub fn fill_random_bytes(dest: &mut [u8]) {
     };
     let mut rng = StdRng::from_rng(OsRng).unwrap();
     rng.fill_bytes(dest)
+}
+
+fn socket_into_v4(addr: &SocketAddr) -> Result<&SocketAddrV4> {
+    let SocketAddr::V4(addr) = &addr else {
+        return Err(Error::Ipv6NotSupported);
+    };
+    Ok(addr)
 }

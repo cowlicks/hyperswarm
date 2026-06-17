@@ -1,9 +1,5 @@
-mod common;
-
-use common::{Result, setup::Testnet};
-use dht_rpc::{Commit, DhtConfig, Peer, commands};
-
-use crate::common::log;
+use dht_rpc::{DhtConfig, Peer, QueryArgs, commands};
+use test_utils::{Result, Testnet, log};
 
 macro_rules! rpc_setup {
     () => {{
@@ -37,7 +33,7 @@ outputJson([...pub_key]);
 ",
         )
         .await?;
-    let sport: usize = tn
+    let port: usize = tn
         .repl
         .json_run_tcp("outputJson(server.dht.io.serverSocket._port)")
         .await?;
@@ -52,7 +48,7 @@ outputJson([...pub_key]);
     //let x = rpc.request(command, Some(idbytes), None, destination, None).await?;
     //let command = commands::DOWN_HINT;
     let command = commands::PING;
-    let addr = format!("127.0.0.1:{sport}");
+    let addr = format!("127.0.0.1:{port}");
     let destination: Peer = addr.parse()?;
     let x = rpc.request(command, None, None, destination, None).await?;
     assert_eq!(x.request.command, command);
@@ -79,11 +75,10 @@ outputJson([...pub_key]);
 ",
         )
         .await?;
-    let sport: usize = tn
+    let _port: usize = tn
         .repl
         .json_run_tcp("outputJson(server.dht.io.serverSocket._port)")
         .await?;
-    println!("SPORT {sport}");
     // For FIND_NODE test
     let idbytes: Vec<u8> = tn
         .repl
@@ -92,10 +87,7 @@ outputJson([...pub_key]);
     let idbytes: [u8; 32] = idbytes.try_into().unwrap();
     let command = hyperdht::commands::FIND_PEER;
     log();
-    let x = rpc
-        .query_next(command, idbytes.into(), None, Commit::No)
-        .await?;
-    dbg!(&x);
+    let _x = rpc.query(QueryArgs::new(command, idbytes.into())).await?;
     //assert_eq!(x.request.command, command);
     Ok(())
 }

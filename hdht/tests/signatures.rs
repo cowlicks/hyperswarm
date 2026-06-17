@@ -1,11 +1,9 @@
 //! Given some known good values (they came from adding `console.log(...)` in JS hyperdht)
 //! Check that the signature RS creates from values is verified by JS
 //! And likewise JS signature is verified by RS
-use common::{Result, js::make_repl};
 use dht_rpc::IdBytes;
 use rusty_nodejs_repl::Repl;
-
-mod common;
+use test_utils::{Result, make_repl};
 
 const VALUE: &[u8] = &[
     5, 206, 205, 109, 15, 42, 98, 66, 107, 27, 31, 54, 201, 136, 155, 42, 245, 234, 210, 154, 31,
