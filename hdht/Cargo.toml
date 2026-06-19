@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-dht-rpc = { path = "../rpc" }
+dht-rpc = { path = "../rpc", version = "0.0.2" }
 rand = "0.7.3"
 arrayvec = "0.5.1"
 uint = "0.8.3"
