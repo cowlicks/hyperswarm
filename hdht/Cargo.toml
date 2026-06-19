@@ -2,6 +2,14 @@
 name = "hyperdht"
 version = "0.1.0"
 edition = "2024"
+description = "Rust implementation of hyperdht, peer announcements and connections on top of dht-rpc"
+authors = ["Blake Griffith <hyperswarm@cowlicks.website>"]
+license = "MIT"
+readme = "README.md"
+documentation = "https://docs.rs/hyperdht/"
+repository = "https://github.com/cowlicks/hyperswarm"
+keywords = ["dat", "peer-to-peer", "networking"]
+categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 dht-rpc = { path = "../rpc", version = "0.0.2" }
