@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hyperdht = { path = "../hdht" }
-dht-rpc = { path = "../rpc" }
+hyperdht = { path = "../hdht", version = "0.1.1" }
+dht-rpc = { path = "../rpc", version = "0.0.2"}
 tokio = { version = "1.41.0", features = ["rt", "net", "sync"] }
 futures = "0.3.5"
 thiserror = "1.0.68"
