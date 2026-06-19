@@ -76,7 +76,6 @@ impl PeerRecordCache {
 #[derive(Debug, Clone)]
 pub struct RouterEntry {
     /// The relay address (who sent us this announcement)
-    #[expect(unused)]
     pub relay: SocketAddr,
     /// The encoded peer record
     pub record: Vec<u8>,

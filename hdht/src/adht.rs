@@ -594,7 +594,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
 
         let o = OutRequestBuilder::from_request(request.clone())
             .value(relay_payload.to_vec())
-            .peer(Peer::from(SocketAddr::from(forward_to)));
+            .peer(Peer::from(forward_to));
         self.rpc.request2(o)?;
         Ok(())
     }
