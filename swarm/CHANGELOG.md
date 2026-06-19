@@ -15,5 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+
+
+## [0.1.0] - 2026-06-19
+
+### Added
+
+### Changed
+
+### Removed
+
 <!-- next-url -->
 [Unreleased]: https://github.com/cowlicks/hyperswarm/compare/hyperswarm-v0.1.0...HEAD
+[0.1.0]: https://github.com/cowlicks/hyperswarm/compare/hyperswarm-v0.1.0...hyperswarm-v0.1.0
