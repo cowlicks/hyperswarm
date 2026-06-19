@@ -2,6 +2,14 @@
 name = "hyperswarm"
 version = "0.1.0"
 edition = "2024"
+description = "Rust implementation of hyperswarm, topic-based peer discovery on top of hyperdht"
+authors = ["Blake Griffith <hyperswarm@cowlicks.website>"]
+license = "MIT"
+readme = "README.md"
+documentation = "https://docs.rs/hyperswarm/"
+repository = "https://github.com/cowlicks/hyperswarm"
+keywords = ["dat", "peer-to-peer", "networking"]
+categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 hyperdht = { path = "../hdht", version = "0.1.1" }
