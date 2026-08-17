@@ -24,11 +24,11 @@ rand = "0.7.3"
 test_utils = { path = "../test_utils" }
 tokio = { version = "1.41.0", features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-hypercore = { path = "../../core" }
+hypercore = { version = "0.17.0-alpha.1" }
 
 [dev-dependencies.hypercore_handshake]
 version = "0.6.0"
 #path = "../../handshake/"
 
 [dev-dependencies.hypercore-protocol]
-path = "../../protocol/"
+version = "0.7.2"
