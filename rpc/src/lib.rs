@@ -258,6 +258,42 @@ fn thirty_two_random_bytes() -> [u8; 32] {
 
 pub(crate) type QueryAndTid = (Option<QueryId>, Tid);
 
+/// The wakers of everything currently polling one [`RpcInner`].
+///
+/// A node is normally polled from more than one place at once: its own queries and
+/// requests each drive the state machine, and so does whoever consumes [`Rpc`] as a
+/// `Stream`. Only the poller that touched the socket last is registered with it, so an
+/// event has to wake all of them or it lands on a task that isn't the one waiting for it.
+#[derive(Debug, Default)]
+struct Wakers(Vec<Waker>);
+
+impl Wakers {
+    fn register(&mut self, waker: &Waker) {
+        if self.0.iter().any(|w| w.will_wake(waker)) {
+            return;
+        }
+        self.0.push(waker.clone());
+    }
+
+    /// A woken task re-registers the next time it polls, so waking drains the set.
+    fn wake_all(&mut self) {
+        for waker in self.0.drain(..) {
+            waker.wake()
+        }
+    }
+
+    /// Wake everyone but the caller, which is about to check for itself anyway. Waking it
+    /// too would just schedule a poll that finds what this one already found.
+    fn wake_others(&mut self, current: &Waker) {
+        let (caller, others): (Vec<_>, Vec<_>) =
+            self.0.drain(..).partition(|w| w.will_wake(current));
+        self.0 = caller;
+        for waker in others {
+            waker.wake()
+        }
+    }
+}
+
 #[derive(Debug, derive_builder::Builder)]
 #[builder(pattern = "owned")]
 pub struct RpcInner {
@@ -274,14 +310,14 @@ pub struct RpcInner {
     // TODO remove me
     #[expect(unused)]
     commands: HashSet<usize>,
-    /// Queued events to return when being polled.
+    /// Events waiting to be handed to whoever polls [`Rpc`] as a `Stream`.
     queued_events: VecDeque<RpcEvent>,
     #[builder(field(ty = "Vec<SocketAddr>"))]
     bootstrap_nodes: Vec<SocketAddr>,
     bootstrapped: bool,
     down_hints_in_progress: Vec<(u16, IdBytes, Instant)>,
     pending_requests: BTreeMap<Tid, Sender<Arc<InResponse>>>,
-    stream_waker: Option<Waker>,
+    wakers: Wakers,
     pending_queries: BTreeMap<QueryId, Sender<Arc<QueryResult>>>,
     pending_bootstrap: Option<Sender<Arc<Bootstrapped>>>,
     pending_query_streams: BTreeMap<QueryId, mpsc::Sender<Arc<InResponse>>>,
@@ -495,7 +531,7 @@ impl Stream for QueryNext {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         {
             let mut inner = self.inner.lock().unwrap();
-            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+            Pin::new(&mut *inner).poll_engine(cx);
         }
         Pin::new(&mut self.parts_rx).poll_next(cx)
     }
@@ -506,7 +542,7 @@ impl Future for QueryNext {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         {
             let mut inner = self.inner.lock().unwrap();
-            let _ = Stream::poll_next(Pin::new(&mut *inner), cx);
+            Pin::new(&mut *inner).poll_engine(cx);
         }
         Pin::new(&mut self.result_rx)
             .poll(cx)
@@ -516,10 +552,11 @@ impl Future for QueryNext {
 
 macro_rules! future_poller {
     ($self:expr, $cx:expr) => {{
-        // First, try to poll the response future
+        // Drive the node so our reply can arrive. Events it turns up stay queued for the
+        // `Stream` consumer - they are not ours to take.
         {
             let mut inner = $self.inner.lock().unwrap();
-            let _ = Stream::poll_next(Pin::new(&mut *inner), $cx);
+            Pin::new(&mut *inner).poll_engine($cx);
         }
         Pin::new(&mut $self.rx).poll($cx).map_err(Error::RecvError)
     }};
@@ -681,10 +718,18 @@ impl RpcInner {
         self.pending_query_streams.insert(qid, tx);
     }
 
-    fn poll_next_inner(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<RpcEvent>> {
+    /// Drive the state machine forward, queueing anything it produces.
+    ///
+    /// Events are pushed onto [`RpcInner::queued_events`] rather than returned, because
+    /// there are two kinds of caller: the `Stream` impl, which wants the events, and the
+    /// query, request and bootstrap futures, which only need the state machine to move.
+    /// Handing an event to one of the latter would drop it - and a dropped
+    /// [`RpcEvent::CustomRequest`] is an incoming request that never gets answered.
+    fn poll_engine(self: Pin<&mut Self>, cx: &mut Context<'_>) {
         let pin = self.get_mut();
         let now = Instant::now();
-        _ = pin.stream_waker.insert(cx.waker().clone());
+        pin.wakers.register(cx.waker());
+        let queued_before = pin.queued_events.len();
 
         if let Poll::Ready(()) = pin.bootstrap_job.poll(cx, now)
             && pin.kbuckets.iter().count() < 20
@@ -696,125 +741,110 @@ impl RpcInner {
         if let Poll::Ready(()) = pin.ping_job.poll(cx, now) {
             pin.ping_some();
         }
+
         loop {
-            // Drain queued events first.
-            if let Some(event) = pin.queued_events.pop_front() {
-                cx.waker().wake_by_ref();
-                return Poll::Ready(Some(event));
+            // Look for a sent/received message
+            if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
+                if let Ok(Some(e)) = pin.inject_event(event) {
+                    pin.queued_events.push_back(e);
+                }
+                continue;
             }
 
-            // Look for a sent/received message
-            loop {
-                if let Poll::Ready(Some(event)) = Stream::poll_next(Pin::new(&mut pin.io), cx) {
-                    if let Ok(Some(e)) = pin.inject_event(event) {
-                        cx.waker().wake_by_ref();
-                        return Poll::Ready(Some(e));
-                    }
-                    if let Some(event) = pin.queued_events.pop_front() {
-                        return Poll::Ready(Some(event));
-                    }
-                } else {
-                    match pin.queries.poll(now, cx.waker().clone()) {
-                        QueryPoolEvent::Commit((query, cev)) => {
-                            use commit::{Commit as C, CommitEvent as E, Progress as P};
-                            // TODO add all commit handlers
-                            match cev {
-                                E::AutoStart((_, _)) => {
-                                    let tids = pin.default_commit(&query);
-                                    query.write().unwrap().commit =
-                                        C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
-                                }
-                                E::CustomStart((tx_commit_messages, _)) => {
-                                    return Poll::Ready(Some(RpcEvent::ReadyToCommit {
-                                        query,
-                                        tx_commit_messages,
-                                    }));
-                                }
-                                E::SendRequests((commits, _)) => {
-                                    for msg in commits {
-                                        match msg {
-                                            CommitMessage::Send(cr) => {
-                                                let (_, tid) = pin.io.request(
-                                                    cr.command,
-                                                    cr.target,
-                                                    cr.value,
-                                                    cr.peer.into(),
-                                                    Some(cr.query_id),
-                                                    Some(cr.token),
-                                                );
-                                                if let C::Custom(prog @ P::Sending(_)) =
-                                                    &mut query.write().unwrap().commit
-                                                {
-                                                    prog.sent_tid(tid);
+            match pin.queries.poll(now, cx.waker().clone()) {
+                QueryPoolEvent::Commit((query, cev)) => {
+                    use commit::{Commit as C, CommitEvent as E, Progress as P};
+                    // TODO add all commit handlers
+                    match cev {
+                        E::AutoStart((_, _)) => {
+                            let tids = pin.default_commit(&query);
+                            query.write().unwrap().commit =
+                                C::Auto(P::AwaitingReplies(BTreeSet::from_iter(tids)))
+                        }
+                        E::CustomStart((tx_commit_messages, _)) => {
+                            pin.queued_events.push_back(RpcEvent::ReadyToCommit {
+                                query,
+                                tx_commit_messages,
+                            });
+                        }
+                        E::SendRequests((commits, _)) => {
+                            for msg in commits {
+                                match msg {
+                                    CommitMessage::Send(cr) => {
+                                        let (_, tid) = pin.io.request(
+                                            cr.command,
+                                            cr.target,
+                                            cr.value,
+                                            cr.peer.into(),
+                                            Some(cr.query_id),
+                                            Some(cr.token),
+                                        );
+                                        if let C::Custom(prog @ P::Sending(_)) =
+                                            &mut query.write().unwrap().commit
+                                        {
+                                            prog.sent_tid(tid);
+                                        }
+                                    }
+                                    CommitMessage::Done => {
+                                        match &mut query.write().unwrap().commit {
+                                            C::Custom(prog @ P::Sending(_)) => {
+                                                // Done should only be emitted last. Any
+                                                // further rquests sent with `Send` are
+                                                // dropped
+                                                prog.transition_to_awaiting();
+                                                if prog.all_replies_recieved() {
+                                                    // if we'd already recieved all replies,
+                                                    // we're done
+                                                    *prog = Progress::Done;
                                                 }
                                             }
-                                            CommitMessage::Done => {
-                                                match &mut query.write().unwrap().commit {
-                                                    C::Custom(prog @ P::Sending(_)) => {
-                                                        // Done should only be emitted last. Any
-                                                        // further rquests sent with `Send` are
-                                                        // dropped
-                                                        prog.transition_to_awaiting();
-                                                        if prog.all_replies_recieved() {
-                                                            // if we'd already recieved all replies,
-                                                            // we're done
-                                                            *prog = Progress::Done;
-                                                        }
-                                                    }
-                                                    _ => {
-                                                        // We expect that only `Custom` sends
-                                                        // SendRequests. and only sends Done while
-                                                        // in `Sending`
-                                                        todo!()
-                                                    }
-                                                }
+                                            _ => {
+                                                // We expect that only `Custom` sends
+                                                // SendRequests. and only sends Done while
+                                                // in `Sending`
+                                                todo!()
                                             }
                                         }
                                     }
                                 }
-                                E::Done => {
-                                    todo!("Commit Done!")
-                                }
                             }
                         }
-                        QueryPoolEvent::Waiting(Some((query, event))) => {
-                            let id = query.read().unwrap().id();
-                            pin.inject_query_event(id, event);
-                        }
-                        QueryPoolEvent::Finished(q) => {
-                            trace!(
-                                "QueryPoolEvent::Finished. Query::id = {:?}",
-                                q.try_read().map(|x| x.id)
-                            );
-                            let event = pin.query_finished(&q);
-                            return Poll::Ready(Some(event));
-                        }
-                        QueryPoolEvent::Timeout(q) => {
-                            let event = pin.query_timeout(&q);
-                            trace!("{event:#?}");
-                            return Poll::Ready(Some(event));
-                        }
-                        QueryPoolEvent::Waiting(None) | QueryPoolEvent::Idle => {
-                            break;
+                        E::Done => {
+                            todo!("Commit Done!")
                         }
                     }
                 }
+                QueryPoolEvent::Waiting(Some((query, event))) => {
+                    let id = query.read().unwrap().id();
+                    pin.inject_query_event(id, event);
+                }
+                QueryPoolEvent::Finished(q) => {
+                    trace!(
+                        "QueryPoolEvent::Finished. Query::id = {:?}",
+                        q.try_read().map(|x| x.id)
+                    );
+                    let event = pin.query_finished(&q);
+                    pin.queued_events.push_back(event);
+                }
+                QueryPoolEvent::Timeout(q) => {
+                    let event = pin.query_timeout(&q);
+                    trace!("{event:#?}");
+                    pin.queued_events.push_back(event);
+                }
+                QueryPoolEvent::Waiting(None) | QueryPoolEvent::Idle => break,
             }
+        }
 
-            // No immediate event was produced as a result of a finished query or socket.
-            // If no new events have been queued either, signal `Pending` to
-            // be polled again later.
-            if pin.queued_events.is_empty() {
-                return Poll::Pending;
-            }
+        // Whatever turned up belongs to the `Stream` consumer, which is often not the task
+        // that drove us here. Only that task knows how to answer a request.
+        if pin.queued_events.len() > queued_before {
+            pin.wakers.wake_others(cx.waker());
         }
     }
 
     fn enque_stream_event(&mut self, event: RpcEvent) {
         self.queued_events.push_back(event);
-        if let Some(w) = self.stream_waker.take() {
-            w.wake()
-        }
+        self.wakers.wake_all();
     }
     pub async fn with_config(config: DhtConfig) -> crate::Result<Self> {
         let bites = config.local_id.unwrap_or_else(thirty_two_random_bytes);
@@ -842,7 +872,7 @@ impl RpcInner {
             bootstrapped: false,
             down_hints_in_progress: Vec::new(),
             pending_requests: Default::default(),
-            stream_waker: Default::default(),
+            wakers: Default::default(),
             pending_queries: Default::default(),
             pending_bootstrap: Default::default(),
             pending_query_streams: Default::default(),
@@ -1586,7 +1616,12 @@ impl Stream for RpcInner {
     type Item = RpcEvent;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.poll_next_inner(cx)
+        let pin = self.get_mut();
+        Pin::new(&mut *pin).poll_engine(cx);
+        match pin.queued_events.pop_front() {
+            Some(event) => Poll::Ready(Some(event)),
+            None => Poll::Pending,
+        }
     }
 }
 

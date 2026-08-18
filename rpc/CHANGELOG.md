@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A node no longer drops incoming requests while it is driving a query, request or
+  bootstrap of its own. Those futures have to poll the same state machine to make
+  progress, and used to discard the `RpcEvent`s that came out of it, so a
+  `RpcEvent::CustomRequest` that arrived at the wrong moment was lost and the peer that
+  sent it waited out its timeout. Events are now queued for whoever polls `Rpc` as a
+  `Stream`, and every registered poller is woken rather than only the most recent one.
+
 ### Removed
 
 
