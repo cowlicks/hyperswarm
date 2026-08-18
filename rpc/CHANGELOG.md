@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sent it waited out its timeout. Events are now queued for whoever polls `Rpc` as a
   `Stream`, and every registered poller is woken rather than only the most recent one.
 
+- `Rpc::respond`'s `closer_nodes` argument now means what the same argument means in JS
+  dht-rpc: `None` sends the closest nodes this node knows to the request's target, instead
+  of sending an empty list. The peers in that list are the only candidates a requester's
+  query iterator ever gains, so a handler that omitted them stranded every query at its
+  seed set. Pass `Some(nodes)` to name peers explicitly, and `Some(vec![])` for a reply
+  that is not part of a query walk.
+
 ### Removed
 
 

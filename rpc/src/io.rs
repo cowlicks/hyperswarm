@@ -397,11 +397,13 @@ impl IoHandler {
         Ok(rx)
     }
 
+    /// Send `closer_nodes` verbatim. Working out what belongs in it is
+    /// [`crate::Rpc::respond`]'s job - the routing table lives a layer up from here.
     pub fn response(
         &mut self,
         request: &RequestMsgData,
         value: Option<Vec<u8>>,
-        closer_nodes: Option<Vec<Peer>>,
+        closer_nodes: Vec<Peer>,
         peer: &Peer,
     ) -> crate::Result<Receiver<()>> {
         let id = (!self.ephemeral).then(|| self.id().0);
@@ -413,7 +415,7 @@ impl IoHandler {
                 to: peer.clone(),
                 id,
                 token,
-                closer_nodes: closer_nodes.unwrap_or_default(),
+                closer_nodes,
                 error: 0,
                 value,
             },

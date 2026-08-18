@@ -431,6 +431,14 @@ impl Rpc {
     ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
         self.inner.lock().unwrap().io.request2(o)
     }
+    /// Reply to a request.
+    ///
+    /// `closer_nodes` is what lets the requester's query keep walking: the peers in it are
+    /// the only candidates its iterator ever gains. Pass `None` to send the closest nodes
+    /// this node knows to the request's target, which is what a handler answering a query
+    /// wants and what JS dht-rpc's `req.reply()` does. Pass `Some` to say exactly who to
+    /// name - `Some(vec![])` for none at all, which suits a reply that isn't part of a
+    /// query walk.
     pub fn respond(
         &self,
         request: &RequestMsgData,
@@ -438,11 +446,14 @@ impl Rpc {
         closer_nodes: Option<Vec<Peer>>,
         peer: &Peer,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<()>> {
-        self.inner
-            .lock()
-            .unwrap()
-            .io
-            .response(request, value, closer_nodes, peer)
+        let mut inner = self.inner.lock().unwrap();
+        let closer_nodes = match (closer_nodes, request.target) {
+            (Some(nodes), _) => nodes,
+            (None, Some(target)) => inner.closer_nodes(IdBytes::from(target), K_VALUE.into()),
+            // Nothing to be closer to.
+            (None, None) => vec![],
+        };
+        inner.io.response(request, value, closer_nodes, peer)
     }
 
     pub async fn ping(&self, peer: Peer) -> Result<Arc<InResponse>> {
