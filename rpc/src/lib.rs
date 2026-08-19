@@ -686,6 +686,10 @@ pub struct DhtConfig {
     /// This node's own address, when it is already known rather than something to be
     /// learned from other nodes. See [`DhtConfig::set_address`].
     pub address: Option<SocketAddrV4>,
+    /// Whether a crate layered on top may fill an empty `bootstrap_nodes` in with its own
+    /// defaults. Cleared by [`DhtConfig::empty_bootstrap_nodes`], so that "join no
+    /// network" stays distinguishable from "no preference".
+    pub allow_default_bootstrap: bool,
 }
 
 impl Default for DhtConfig {
@@ -702,6 +706,7 @@ impl Default for DhtConfig {
             bootstrap_nodes: Vec::new(),
             socket: None,
             address: None,
+            allow_default_bootstrap: true,
             io_config: Default::default(),
         }
     }
@@ -729,6 +734,7 @@ impl DhtConfig {
     }
     pub fn empty_bootstrap_nodes(mut self) -> Self {
         self.bootstrap_nodes = vec![];
+        self.allow_default_bootstrap = false;
         self
     }
     /// Set the nodes to bootstrap from
