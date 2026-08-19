@@ -110,10 +110,13 @@ async fn rs_swarm_find_peer() -> Result<()> {
     // Client does find_peer
     let mut query = client.find_peer(&keypair.public, None)?;
     let mut found = false;
-    while let Some(Ok(Some(resp))) = query.next().await {
-        if resp.peer.public_key == keypair.public {
+    // Drain the whole query: nodes that hold no record still answer, and an empty answer
+    // says nothing about the ones still to come.
+    while let Some(result) = query.next().await {
+        if let Ok(Some(resp)) = result
+            && resp.peer.public_key == keypair.public
+        {
             found = true;
-            break;
         }
     }
 
@@ -138,10 +141,13 @@ async fn rs_swarm_unannounce() -> Result<()> {
     // Step 2: Verify found via lookup
     let mut lookup = looker.lookup(topic, Commit::No)?;
     let mut found_before = false;
-    while let Some(Ok(Some(resp))) = lookup.next().await {
-        if resp.peers.iter().any(|p| p.public_key == keypair.public) {
+    // Drain the whole query: nodes that hold no record still answer, and an empty answer
+    // says nothing about the ones still to come.
+    while let Some(result) = lookup.next().await {
+        if let Ok(Some(resp)) = result
+            && resp.peers.iter().any(|p| p.public_key == keypair.public)
+        {
             found_before = true;
-            break;
         }
     }
     assert!(found_before, "Expected to find key after announce");
@@ -152,10 +158,11 @@ async fn rs_swarm_unannounce() -> Result<()> {
     // Step 4: Verify gone via lookup
     let mut lookup = looker.lookup(topic, Commit::No)?;
     let mut found_after = false;
-    while let Some(Ok(Some(resp))) = lookup.next().await {
-        if resp.peers.iter().any(|p| p.public_key == keypair.public) {
+    while let Some(result) = lookup.next().await {
+        if let Ok(Some(resp)) = result
+            && resp.peers.iter().any(|p| p.public_key == keypair.public)
+        {
             found_after = true;
-            break;
         }
     }
     assert!(!found_after, "Expected key to be gone after unannounce");
