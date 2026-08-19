@@ -246,6 +246,18 @@ impl IoHandler {
         self.ephemeral
     }
 
+    /// A node stops being ephemeral once it has an id to stand behind - see
+    /// [`crate::RpcInner::adopt_address`].
+    pub fn set_ephemeral(&mut self, ephemeral: bool) {
+        self.ephemeral = ephemeral;
+    }
+
+    /// Take up the id the node has since settled on. Our [`Observer`] only moves when it
+    /// is asked to, so this has to be called after the id changes.
+    pub fn refresh_id(&mut self) {
+        self.id.update();
+    }
+
     pub fn id(&self) -> IdBytes {
         *self.id.get()
     }

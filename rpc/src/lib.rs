@@ -17,6 +17,7 @@ mod constants;
 mod io;
 mod kbucket;
 mod message;
+mod nat;
 mod periodic_job;
 mod query;
 mod stateobserver;
@@ -24,7 +25,7 @@ mod stream;
 mod util;
 
 pub use crate::{
-    cenc::generic_hash,
+    cenc::{generic_hash, id_from_address},
     commit::Commit,
     io::{InResponse, OutRequestBuilder},
     message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
@@ -64,6 +65,7 @@ use rand::{
 use crate::{
     cenc::validate_id,
     commit::{CommitMessage, Progress},
+    nat::NatSampler,
     kbucket::{
         Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,
     },
@@ -318,6 +320,21 @@ pub struct RpcInner {
     down_hints_in_progress: Vec<(u16, IdBytes, Instant)>,
     pending_requests: BTreeMap<Tid, Sender<Arc<InResponse>>>,
     wakers: Wakers,
+    /// Our own address, as the nodes we talk to report it back to us.
+    nat: NatSampler,
+    /// Whether this node may settle on an id once it knows its address. False when the
+    /// caller asked for a node that stays ephemeral, or pinned its id explicitly.
+    may_settle: bool,
+    /// Kept so the routing table can be rebuilt when the id changes.
+    kbucket_pending_timeout: Duration,
+    /// Set when the node settles on an id before it has finished bootstrapping. Every node
+    /// it spoke to on the way met it as an id-less stranger and kept no record of it, so it
+    /// has to go round once more and introduce itself.
+    resettle_bootstrap: bool,
+    /// The bootstrap query currently in flight, if any. Bootstrapping is single-flight:
+    /// starting a second one concurrently means neither knows which of them is the round
+    /// that introduced us under our settled id.
+    bootstrap_query: Option<QueryId>,
     pending_queries: BTreeMap<QueryId, Sender<Arc<QueryResult>>>,
     pending_bootstrap: Option<Sender<Arc<Bootstrapped>>>,
     pending_query_streams: BTreeMap<QueryId, mpsc::Sender<Arc<InResponse>>>,
@@ -366,6 +383,18 @@ impl Rpc {
 
     pub fn closer_nodes(&self, key: IdBytes) -> Vec<Peer> {
         self.inner.lock().unwrap().closer_nodes(key, K_VALUE.into())
+    }
+
+    /// Tell the node the address other nodes reach it on, settling its id immediately.
+    ///
+    /// Same purpose as [`DhtConfig::set_address`], for when the address isn't known until
+    /// after the socket is bound - a bootstrap node on an ephemeral port learns its own
+    /// port only from [`Rpc::local_addr`], and being the first node, has nobody to learn
+    /// it from.
+    pub fn set_address(&self, addr: SocketAddrV4) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.nat.add(addr);
+        inner.maybe_settle_id();
     }
 
     // TODO Error on timeout
@@ -654,6 +683,9 @@ pub struct DhtConfig {
     pub adaptive: bool,
     pub bootstrap_nodes: Vec<SocketAddr>,
     pub socket: Option<MessageDataStream>,
+    /// This node's own address, when it is already known rather than something to be
+    /// learned from other nodes. See [`DhtConfig::set_address`].
+    pub address: Option<SocketAddrV4>,
 }
 
 impl Default for DhtConfig {
@@ -669,6 +701,7 @@ impl Default for DhtConfig {
             adaptive: false,
             bootstrap_nodes: Vec::new(),
             socket: None,
+            address: None,
             io_config: Default::default(),
         }
     }
@@ -682,6 +715,16 @@ impl DhtConfig {
     }
     pub fn add_bootstrap_node<A: Into<SocketAddr>>(mut self, addr: A) -> Self {
         self.bootstrap_nodes.push(addr.into());
+        self
+    }
+    /// Tell the node the address other nodes reach it on, instead of leaving it to work
+    /// that out from what they report back.
+    ///
+    /// A node's id is the hash of this address, so a node that nobody talks to first -
+    /// a bootstrap node - can never learn it on its own and needs to be told. This is the
+    /// equivalent of the `_nat.add(host, port)` in JS dht-rpc's `DHT.bootstrapper`.
+    pub fn set_address(mut self, addr: SocketAddrV4) -> Self {
+        self.address = Some(addr);
         self
     }
     pub fn empty_bootstrap_nodes(mut self) -> Self {
@@ -834,13 +877,16 @@ impl RpcInner {
                         "QueryPoolEvent::Finished. Query::id = {:?}",
                         q.try_read().map(|x| x.id)
                     );
-                    let event = pin.query_finished(&q);
-                    pin.queued_events.push_back(event);
+                    if let Some(event) = pin.query_finished(&q) {
+                        pin.queued_events.push_back(event);
+                    }
                 }
                 QueryPoolEvent::Timeout(q) => {
                     let event = pin.query_timeout(&q);
                     trace!("{event:#?}");
-                    pin.queued_events.push_back(event);
+                    if let Some(event) = event {
+                        pin.queued_events.push_back(event);
+                    }
                 }
                 QueryPoolEvent::Waiting(None) | QueryPoolEvent::Idle => break,
             }
@@ -857,7 +903,86 @@ impl RpcInner {
         self.queued_events.push_back(event);
         self.wakers.wake_all();
     }
+
+    /// Note the address a peer reported seeing us at, and settle on an id if the answers
+    /// we have now agree.
+    fn sample_own_address(&mut self, to: &Peer) {
+        let SocketAddr::V4(addr) = to.addr else {
+            // An id is the hash of a v4 address; there is nothing to derive from a v6 one.
+            return;
+        };
+        self.nat.add(addr);
+        self.maybe_settle_id();
+    }
+
+    fn maybe_settle_id(&mut self) {
+        if !self.may_settle {
+            return;
+        }
+        let Some(addr) = self.nat.addr() else {
+            return;
+        };
+        let id = IdBytes::from(cenc::calculate_peer_id(&Peer::new(SocketAddr::V4(addr))));
+        if id == self.id.get() && !self.io.is_ephemeral() {
+            return;
+        }
+        self.settle_on_id(id, addr);
+    }
+
+    /// Take up the id derived from `addr` and rebuild everything keyed on the old one.
+    ///
+    /// Until this happens a node answers without an id, which is what keeps it out of
+    /// other nodes' routing tables: they check that a claimed id really is the hash of the
+    /// address it came from (`validate_id`), so a node that guessed would just be ignored.
+    fn settle_on_id(&mut self, id: IdBytes, addr: SocketAddrV4) {
+        debug!(
+            addr =? addr,
+            id =? id,
+            was_ephemeral = self.io.is_ephemeral(),
+            "settling on an id derived from our own address"
+        );
+
+        self.id.set(id);
+        self.io.refresh_id();
+        self.io.set_ephemeral(false);
+        self.queries.set_local_id(id);
+
+        // Distance is measured from our id, so every bucket a node sits in is decided by
+        // an id that just changed. Rebuild around the new one rather than leave the table
+        // sorted by an id we no longer have.
+        let mut old = std::mem::replace(
+            &mut self.kbuckets,
+            KBucketsTable::new(id, self.kbucket_pending_timeout),
+        );
+        let nodes: Vec<(IdBytes, Node)> = old
+            .iter()
+            .map(|entry| (*entry.node.key, entry.node.value.clone()))
+            .collect();
+        for (key, node) in nodes {
+            if key == id {
+                continue;
+            }
+            if let Entry::Absent(entry) = self.kbuckets.entry(&key) {
+                let _ = entry.insert(node, NodeStatus::Connected);
+            }
+        }
+
+        // Nobody can route to us under an id they have never seen, so go around again.
+        if self.bootstrapped {
+            self.bootstrap();
+        } else {
+            self.resettle_bootstrap = true;
+        }
+    }
     pub async fn with_config(config: DhtConfig) -> crate::Result<Self> {
+        // A node's id is the hash of its address, and it does not know its address yet -
+        // NAT means it cannot just read it off the socket. So it starts on a random id,
+        // like JS dht-rpc does, and stays ephemeral (claiming no id on the wire) until it
+        // has heard its address back from enough other nodes to settle on one.
+        //
+        // A caller that pins `local_id` is overriding all of that, so take them at their
+        // word and never re-derive it.
+        let pinned_id = config.local_id.is_some();
         let bites = config.local_id.unwrap_or_else(thirty_two_random_bytes);
         let id_bytes = IdBytes::from(bites);
         let local_id = id_bytes;
@@ -868,7 +993,10 @@ impl RpcInner {
             .map(Result::Ok)
             .unwrap_or_else(MessageDataStream::defualt_bind)?;
 
-        let io = IoHandler::new(id.view(), socket, config.io_config);
+        let stays_ephemeral = config.io_config.ephemeral;
+        let mut io_config = config.io_config;
+        io_config.ephemeral = stays_ephemeral || !pinned_id;
+        let io = IoHandler::new(id.view(), socket, io_config);
 
         let mut dht = Self {
             id,
@@ -884,10 +1012,22 @@ impl RpcInner {
             down_hints_in_progress: Vec::new(),
             pending_requests: Default::default(),
             wakers: Default::default(),
+            nat: NatSampler::default(),
+            may_settle: !stays_ephemeral && !pinned_id,
+            kbucket_pending_timeout: config.kbucket_pending_timeout,
+            resettle_bootstrap: false,
+            bootstrap_query: None,
             pending_queries: Default::default(),
             pending_bootstrap: Default::default(),
             pending_query_streams: Default::default(),
         };
+
+        // A node nobody talks to first can never learn its address by listening, so a
+        // bootstrap node has to be told what it is.
+        if let Some(addr) = config.address {
+            dht.nat.add(addr);
+            dht.maybe_settle_id();
+        }
 
         dht.bootstrap();
         Ok(dht)
@@ -905,6 +1045,11 @@ impl RpcInner {
         self.io.socket()
     }
     pub fn bootstrap(&mut self) {
+        // Already introducing ourselves. A second concurrent round would race the first
+        // over which of them gets to declare the bootstrap done.
+        if self.bootstrap_query.is_some() {
+            return;
+        }
         if !self.bootstrap_nodes.is_empty() {
             let target = self.id.get();
             let peers = self
@@ -914,7 +1059,7 @@ impl RpcInner {
                 .map(|e| PeerId::new(e.node.value.addr, e.node.key))
                 .collect::<Vec<_>>();
             let bootstrap_nodes: Vec<Peer> = self.bootstrap_nodes.iter().map(Peer::from).collect();
-            self.queries.bootstrap(target, peers, bootstrap_nodes);
+            self.bootstrap_query = Some(self.queries.bootstrap(target, peers, bootstrap_nodes));
         } else if !self.bootstrapped {
             let e = Arc::new(Bootstrapped {
                 stats: QueryStats::empty(),
@@ -1037,6 +1182,10 @@ impl RpcInner {
                 .send(resp_data.clone())
                 .inspect_err(|e| error!("Failed to send result to pending request: {e:?}"));
         }
+        // A reply's `to` is where the responder actually saw our packet come from, which
+        // makes it the one trustworthy report of our own address.
+        self.sample_own_address(&resp_data.response.to);
+
         if let Some(id) = validate_id(&resp_data.response.id, &resp_data.peer) {
             self.add_node(
                 id,
@@ -1451,11 +1600,11 @@ impl RpcInner {
 
     /// Handles a finished query.
     #[instrument(skip_all)]
-    fn query_finished(&mut self, query: &Arc<RwLock<Query>>) -> RpcEvent {
-        let is_find_node = matches!(
-            query.read().unwrap().command(),
-            Command::Internal(InternalCommand::FindNode)
-        );
+    fn query_finished(&mut self, query: &Arc<RwLock<Query>>) -> Option<RpcEvent> {
+        let was_bootstrap = self.bootstrap_query == Some(query.read().unwrap().id());
+        if was_bootstrap {
+            self.bootstrap_query = None;
+        }
 
         let result = query.read().unwrap().get_result();
 
@@ -1484,8 +1633,18 @@ impl RpcInner {
             }
         }
 
-        // first `find_node` query is issued as bootstrap
-        if is_find_node && !self.bootstrapped {
+        // the `find_node` query issued as bootstrap
+        if was_bootstrap && !self.bootstrapped {
+            // If we worked out our own id somewhere in the middle of that query, then for
+            // most of it we were an id-less stranger and nobody kept us. Introduce
+            // ourselves once more before calling the bootstrap done - the same second pass
+            // JS dht-rpc makes. `take` caps it at one extra round.
+            if std::mem::take(&mut self.resettle_bootstrap) {
+                debug!("settled on an id mid-bootstrap - going round again so peers see it");
+                self.bootstrap();
+                return None;
+            }
+
             debug!("Bootstrap process's FindNode query finished");
             self.bootstrapped = true;
             let e = Arc::new(Bootstrapped {
@@ -1495,7 +1654,7 @@ impl RpcInner {
                 _ = tx.send(e.clone());
             }
 
-            RpcEvent::Bootstrapped(e)
+            Some(RpcEvent::Bootstrapped(e))
         } else {
             let result = Arc::new(result);
             if let Some(tx) = self.pending_queries.remove(&result.query_id) {
@@ -1511,11 +1670,11 @@ impl RpcInner {
                 cmd = tracing::field::display(result.cmd),
                 "Query result ready"
             );
-            RpcEvent::QueryResult(result)
+            Some(RpcEvent::QueryResult(result))
         }
     }
     /// Handles a query that timed out.
-    fn query_timeout(&mut self, query: &Arc<RwLock<Query>>) -> RpcEvent {
+    fn query_timeout(&mut self, query: &Arc<RwLock<Query>>) -> Option<RpcEvent> {
         self.query_finished(query)
     }
 

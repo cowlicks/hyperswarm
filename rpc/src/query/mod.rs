@@ -68,6 +68,12 @@ impl Default for QueryConfig {
 }
 
 impl QueryPool {
+    /// Point queries started from now on at a new id, after the node settled on one
+    /// derived from its address. Queries already running keep the id they started with.
+    pub fn set_local_id(&mut self, local_id: IdBytes) {
+        self.local_id = local_id;
+    }
+
     /// Creates a new `QueryPool` with the given configuration.
     pub fn new(local_id: IdBytes, config: QueryConfig) -> Self {
         Self {

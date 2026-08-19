@@ -3,23 +3,6 @@
 //! strands every query at its seed set, and on a network bigger than one hop that looks
 //! exactly like a query that finished. `respond` therefore fills the list in when it isn't
 //! given one, the same way JS dht-rpc's `req.reply()` does.
-//!
-//! This test is `#[ignore]`d because it cannot pass yet, for a reason underneath the one it
-//! tests: **routing tables never populate**, so a handler has no closer nodes to send even
-//! when it asks for them.
-//!
-//! `on_request` and `on_response` only call `add_node` for a peer whose `validate_id`
-//! passes (`rpc/src/lib.rs`), and `validate_id` (`rpc/src/cenc.rs`) demands
-//! `msg.id == generic_hash(sender's ip:port)`. But a node's own id is
-//! `config.local_id.unwrap_or_else(thirty_two_random_bytes)` and nothing ever recomputes it
-//! from the address it bound, so the check never passes. Only the query path
-//! (`PeerState::Succeeded`) adds anyone, which is why a node ends up knowing just the peers
-//! it queried, and a bootstrap node - which never runs a query - knows nobody at all.
-//!
-//! Deriving the id from the bound address in `Rpc::with_config` makes this test pass and
-//! takes the bootstrap node from 0 known peers to 12. That is a change to what a node's
-//! identity *is*, though, and a real node needs its *external* address for it (JS learns
-//! that from the `to` field replies echo back), so it is left for its own change.
 
 use std::{collections::HashSet, net::SocketAddr};
 
@@ -33,8 +16,6 @@ const STORAGE_NODES: usize = 12;
 const ECHO: Command = Command::External(ExternalCommand(3));
 
 #[tokio::test]
-#[ignore = "blocked on node ids being random instead of derived from the node's address, \
-            which leaves every routing table empty - see this file's module docs"]
 async fn a_custom_command_query_walks_past_its_seed_node() -> Result<()> {
     let bootstrap = Rpc::with_config(
         DhtConfig::default()
@@ -43,6 +24,11 @@ async fn a_custom_command_query_walks_past_its_seed_node() -> Result<()> {
     )
     .await?;
     let bootstrap_addr = bootstrap.local_addr()?;
+    // The first node has nobody to learn its own address from, so it is told.
+    let SocketAddr::V4(v4) = bootstrap_addr else {
+        panic!("bound a v4 address")
+    };
+    bootstrap.set_address(v4);
 
     let responders = tokio::select! {
         _ = serve(bootstrap.clone()) => unreachable!("a node's event loop never finishes"),
@@ -66,14 +52,14 @@ async fn a_custom_command_query_walks_past_its_seed_node() -> Result<()> {
 async fn scenario(bootstrap_addr: SocketAddr) -> Result<HashSet<SocketAddr>> {
     let mut nodes = Vec::with_capacity(STORAGE_NODES);
     for _ in 0..STORAGE_NODES {
-        let node = Rpc::with_config(
-            DhtConfig::default()
-                .add_bootstrap_node(bootstrap_addr)
-                .bind("127.0.0.1:0")?,
-        )
-        .await?;
-        node.bootstrap().await?;
-        nodes.push(node);
+        nodes.push(
+            Rpc::with_config(
+                DhtConfig::default()
+                    .add_bootstrap_node(bootstrap_addr)
+                    .bind("127.0.0.1:0")?,
+            )
+            .await?,
+        );
     }
 
     // Deliberately *not* bootstrapped: an empty routing table means the query is seeded
@@ -86,10 +72,25 @@ async fn scenario(bootstrap_addr: SocketAddr) -> Result<HashSet<SocketAddr>> {
     )
     .await?;
 
-    let serving = futures::future::join_all(nodes.iter().map(|n| serve(n.clone())));
+    // Everyone joins at once *while* everyone is answering. Bootstrapping them one at a
+    // time instead would leave the ones already up unpolled, so their queries would sit
+    // there timing out against nodes that are technically alive but nobody is driving.
+    // The querier answers too: it is a node like any other, and once it has an id the
+    // others route to it, so leaving it deaf just makes everyone wait out a timeout on it.
+    let serving = futures::future::join_all(
+        nodes
+            .iter()
+            .chain(std::iter::once(&querier))
+            .map(|n| serve(n.clone())),
+    );
     tokio::select! {
         _ = serving => unreachable!("a node's event loop never finishes"),
-        result = responders_to_one_query(&querier) => result,
+        result = async {
+            for result in futures::future::join_all(nodes.iter().map(|n| n.bootstrap())).await {
+                result?;
+            }
+            responders_to_one_query(&querier).await
+        } => result,
     }
 }
 

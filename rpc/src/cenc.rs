@@ -84,13 +84,23 @@ impl VecEncodable for Peer {
 
 const IP_AND_PORT_NUM_BYTES: usize = 6;
 
-/// TODO this will panic for ipv6
-fn id_from_socket(addr: &SocketAddr) -> [u8; ID_SIZE] {
-    let addr = socket_into_v4(addr).expect("TODO panics for ipv6");
+/// The id of the node at `addr`.
+///
+/// A node's identity is the hash of the address it is reachable on, so that a claimed id
+/// can be checked against where the message actually came from - see
+/// [`crate::cenc::validate_id`]. A node that does not know its own address yet has no id
+/// to claim, and stays ephemeral until it learns one.
+pub fn id_from_address(addr: std::net::SocketAddrV4) -> crate::IdBytes {
     let mut from_buff = vec![0; IP_AND_PORT_NUM_BYTES];
     addr.encode(&mut from_buff).expect("should always fit");
 
-    generic_hash(&from_buff)
+    crate::IdBytes(generic_hash(&from_buff))
+}
+
+/// TODO this will panic for ipv6
+fn id_from_socket(addr: &SocketAddr) -> [u8; ID_SIZE] {
+    let addr = socket_into_v4(addr).expect("TODO panics for ipv6");
+    id_from_address(*addr).0
 }
 
 pub(crate) fn calculate_peer_id(from: &Peer) -> [u8; ID_SIZE] {

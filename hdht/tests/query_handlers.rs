@@ -31,6 +31,12 @@ impl RustTestnet {
         )
         .await?;
         let bootstrap_addr = bootstrap.local_addr()?;
+        // Nobody introduces the first node to itself, so it is told its own address. Its
+        // id is the hash of that, and without one no peer will keep it in a routing table.
+        let SocketAddr::V4(v4) = bootstrap_addr else {
+            panic!("bound a v4 address")
+        };
+        bootstrap.set_address(v4);
         bootstrap.drive();
 
         // Create additional nodes that bootstrap from the first

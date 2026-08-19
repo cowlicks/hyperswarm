@@ -196,6 +196,14 @@ impl Dht {
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.inner.read().unwrap().local_addr()
     }
+
+    /// Tell this node the address other nodes reach it on, which settles its id.
+    ///
+    /// Only a node that nobody introduces it to needs this - a bootstrap node has no peer
+    /// to learn its own address from. See [`dht_rpc::Rpc::set_address`].
+    pub fn set_address(&self, addr: std::net::SocketAddrV4) {
+        self.inner.read().unwrap().rpc.set_address(addr)
+    }
     pub fn peer_handshake(
         &self,
         args: PeerHandshakeArgs,

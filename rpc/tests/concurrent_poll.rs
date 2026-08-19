@@ -46,9 +46,21 @@ async fn incoming_requests_survive_a_concurrent_query() -> Result<()> {
 }
 
 async fn scenario(bootstrap_addr: SocketAddr) -> Result<usize> {
-    let server = joined_node(bootstrap_addr).await?;
-    let client = joined_node(bootstrap_addr).await?;
+    let server = node(bootstrap_addr).await?;
+    let client = node(bootstrap_addr).await?;
     let server_addr = server.local_addr()?;
+
+    // Both join at once, with both being polled. Joining them one after the other would
+    // leave the first one deaf while the second one tries to route through it, and the
+    // second would just sit there until the peer timeout gave up on it.
+    tokio::select! {
+        _ = futures::future::join_all([server.clone(), client.clone()].map(drive)) => {
+            unreachable!("a node's event loop never finishes")
+        }
+        result = futures::future::try_join(server.bootstrap(), client.bootstrap()) => {
+            result?;
+        }
+    }
 
     // The server's state machine is polled *only* by its own queries for the whole window
     // the client is sending in. Nothing here polls the server as a `Stream` yet, so every
@@ -99,15 +111,13 @@ async fn hammer(rpc: &Rpc, server_addr: SocketAddr) {
     while pending.next().await.is_some() {}
 }
 
-async fn joined_node(bootstrap_addr: SocketAddr) -> Result<Rpc> {
-    let rpc = Rpc::with_config(
+async fn node(bootstrap_addr: SocketAddr) -> Result<Rpc> {
+    Ok(Rpc::with_config(
         DhtConfig::default()
             .add_bootstrap_node(bootstrap_addr)
             .bind("127.0.0.1:0")?,
     )
-    .await?;
-    rpc.bootstrap().await?;
-    Ok(rpc)
+    .await?)
 }
 
 async fn drive(mut rpc: Rpc) {
