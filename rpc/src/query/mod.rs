@@ -273,7 +273,7 @@ impl Query {
         Self {
             id,
             parallelism,
-            peer_iter: ClosestPeersIter::new(target, bootstrap),
+            peer_iter: ClosestPeersIter::new(local_id, target, bootstrap),
             cmd,
             stats: QueryStats::empty(),
             value,

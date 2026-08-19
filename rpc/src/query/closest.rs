@@ -46,6 +46,11 @@ pub(crate) struct ClosestPeersIter {
     /// the peer in the iterator.
     pub target: IdBytes,
 
+    /// The id of the node running this query. A query never contacts the node that
+    /// started it: it already knows everything that node does, and a node cannot answer
+    /// its own request while it is blocked waiting for the reply.
+    local_id: IdBytes,
+
     /// The internal iterator state.
     state: State,
 
@@ -94,12 +99,13 @@ impl Default for ClosestPeersIterConfig {
 impl ClosestPeersIter {
     /// Creates a new iterator with a default configuration.
     #[instrument(skip_all)]
-    pub fn new<I>(target: IdBytes, known_closest_peers: I) -> Self
+    pub fn new<I>(local_id: IdBytes, target: IdBytes, known_closest_peers: I) -> Self
     where
         I: IntoIterator<Item = Peer>,
     {
         Self::with_config(
             ClosestPeersIterConfig::default(),
+            local_id,
             target,
             known_closest_peers,
         )
@@ -109,6 +115,7 @@ impl ClosestPeersIter {
     #[instrument(skip_all)]
     pub fn with_config<I>(
         config: ClosestPeersIterConfig,
+        local_id: IdBytes,
         target: IdBytes,
         known_closest_peers: I,
     ) -> Self
@@ -120,17 +127,18 @@ impl ClosestPeersIter {
             known_closest_peers
                 .into_iter()
                 .map(|p| {
-                    let id = calculate_peer_id(&p);
-                    let distance = target.distance(id.as_slice());
+                    let id = IdBytes::from(calculate_peer_id(&p));
+                    let distance = target.distance(id.0.as_slice());
                     (
                         distance,
                         IterPeer {
-                            id: id.into(),
+                            id,
                             state: PeerState::NotContacted,
                             addr: p.addr,
                         },
                     )
                 })
+                .filter(|(_, peer)| peer.id != local_id)
                 .take(K_VALUE.into()),
         );
         debug!(
@@ -145,6 +153,7 @@ impl ClosestPeersIter {
         ClosestPeersIter {
             config,
             target,
+            local_id,
             state,
             closest_peers,
             num_waiting: 0,
@@ -236,6 +245,10 @@ impl ClosestPeersIter {
         );
         for peer in closer_peers {
             let peer = IterPeer::from(peer.clone());
+            // Peers hand back whoever they think is closest, and that can include us.
+            if peer.id == self.local_id {
+                continue;
+            }
             let distance = peer.distance(self.target.as_ref());
 
             let is_first_insert = match self.closest_peers.entry(distance) {
