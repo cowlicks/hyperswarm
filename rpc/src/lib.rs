@@ -30,7 +30,7 @@ pub use crate::{
     io::{InResponse, OutRequestBuilder},
     message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
     periodic_job::PeriodicJob,
-    query::{CommandQuery, CommandQueryResponse, QueryId, QueryResult},
+    query::{ClosestPeersIterConfig, CommandQuery, CommandQueryResponse, QueryId, QueryResult},
 };
 
 #[cfg(test)]

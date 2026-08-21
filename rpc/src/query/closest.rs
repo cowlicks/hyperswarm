@@ -101,20 +101,6 @@ impl Default for ClosestPeersIterConfig {
 }
 
 impl ClosestPeersIter {
-    /// Creates a new iterator with a default configuration.
-    #[instrument(skip_all)]
-    pub fn new<I>(local_id: IdBytes, target: IdBytes, known_closest_peers: I) -> Self
-    where
-        I: IntoIterator<Item = Peer>,
-    {
-        Self::with_config(
-            ClosestPeersIterConfig::default(),
-            local_id,
-            target,
-            known_closest_peers,
-        )
-    }
-
     /// Creates a new iterator with the given configuration.
     #[instrument(skip_all)]
     pub fn with_config<I>(

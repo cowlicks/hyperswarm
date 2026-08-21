@@ -1,6 +1,5 @@
 use std::{
     fmt::Display,
-    num::NonZeroUsize,
     sync::{Arc, RwLock},
     task::Waker,
     time::Duration,
@@ -20,12 +19,14 @@ use crate::{
     commit::{Commit, CommitEvent},
     constants::DEFAULT_COMMIT_CHANNEL_SIZE,
     io::InResponse,
-    kbucket::{ALPHA_VALUE, K_VALUE},
+    kbucket::K_VALUE,
 };
 
 mod closest;
 mod peers;
 pub mod table;
+
+pub use closest::ClosestPeersIterConfig;
 
 use self::{
     peers::PeersIterState,
@@ -50,19 +51,16 @@ pub struct QueryConfig {
     /// Timeout of a single query.
     pub timeout: Duration,
 
-    /// The replication factor to use.
-    pub replication_factor: NonZeroUsize,
-
-    /// Allowed level of parallelism for iterative queries.
-    pub parallelism: NonZeroUsize,
+    /// Tuning for each query's [`ClosestPeersIter`]: parallelism, number of results,
+    /// and the per-peer timeout.
+    pub closest_peers_iter_config: ClosestPeersIterConfig,
 }
 
 impl Default for QueryConfig {
     fn default() -> Self {
         QueryConfig {
             timeout: Duration::from_secs(60),
-            replication_factor: NonZeroUsize::new(K_VALUE.get()).expect("K_VALUE > 0"),
-            parallelism: ALPHA_VALUE,
+            closest_peers_iter_config: Default::default(),
         }
     }
 }
@@ -137,13 +135,13 @@ impl QueryPool {
         let query = Query::new(
             id,
             cmd,
-            self.config.parallelism,
             self.local_id,
             target,
             value,
             peers,
             bootstrap,
             commit,
+            self.config.closest_peers_iter_config.clone(),
         );
         self.queries.insert(id, Arc::new(RwLock::new(query)));
         if let Some(waker) = &self.waker {
@@ -243,9 +241,6 @@ pub enum QueryPoolEvent {
 pub struct Query {
     /// identifier for this stream
     pub id: QueryId,
-    /// The permitted parallelism, i.e. number of pending results.
-    #[expect(unused)] // TODO
-    parallelism: NonZeroUsize,
     /// The peer iterator that drives the query state.
     pub(crate) peer_iter: ClosestPeersIter,
     /// The rpc command of this stream
@@ -268,18 +263,22 @@ impl Query {
     pub fn new(
         id: QueryId,
         cmd: Command,
-        parallelism: NonZeroUsize,
         local_id: IdBytes,
         target: IdBytes,
         value: Option<Vec<u8>>,
         peers: Vec<PeerId>,
         bootstrap: Vec<Peer>,
         commit: Commit,
+        closest_peers_iter_config: ClosestPeersIterConfig,
     ) -> Self {
         Self {
             id,
-            parallelism,
-            peer_iter: ClosestPeersIter::new(local_id, target, bootstrap),
+            peer_iter: ClosestPeersIter::with_config(
+                closest_peers_iter_config,
+                local_id,
+                target,
+                bootstrap,
+            ),
             cmd,
             stats: QueryStats::empty(),
             value,
