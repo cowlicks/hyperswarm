@@ -65,10 +65,10 @@ use rand::{
 use crate::{
     cenc::validate_id,
     commit::{CommitMessage, Progress},
-    nat::NatSampler,
     kbucket::{
         Distance, Entry, EntryView, InsertResult, K_VALUE, KBucketsTable, NodeStatus, distance,
     },
+    nat::NatSampler,
     util::pretty_bytes,
 };
 use compact_encoding::EncodingError;
@@ -397,13 +397,24 @@ impl Rpc {
         inner.maybe_settle_id();
     }
 
+    /// Join the network and resolve when done
     // TODO Error on timeout
     pub fn bootstrap(&self) -> BootstrapFuture {
         let (tx, rx) = oneshot::channel();
         {
             let mut inner = self.inner.lock().unwrap();
-            inner.bootstrap();
             _ = inner.pending_bootstrap.insert(tx);
+            inner.bootstrap();
+
+            // check if already bootstrapped
+            if inner.bootstrapped
+                && inner.bootstrap_query.is_none() // this *should* be true always?
+                && let Some(tx) = inner.pending_bootstrap.take()
+            {
+                let _ = tx.send(Arc::new(Bootstrapped {
+                    stats: QueryStats::empty(),
+                }));
+            }
         }
         BootstrapFuture {
             inner: self.inner.clone(),

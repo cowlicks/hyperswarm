@@ -82,8 +82,12 @@ pub struct ClosestPeersIterConfig {
     /// If a successful result is not reported for a peer within this timeout
     /// window, the iterator considers the peer unresponsive and will not wait for
     /// the peer when evaluating the termination conditions, until and unless a
-    /// result is delivered. Defaults to `10` seconds.
+    /// result is delivered. Defaults to [`Self::DEFAULT_PEER_TIMEOUT`].
     pub peer_timeout: Duration,
+}
+
+impl ClosestPeersIterConfig {
+    const DEFAULT_PEER_TIMEOUT: Duration = Duration::from_secs(10);
 }
 
 impl Default for ClosestPeersIterConfig {
@@ -91,7 +95,7 @@ impl Default for ClosestPeersIterConfig {
         ClosestPeersIterConfig {
             parallelism: ALPHA_VALUE,
             num_results: K_VALUE,
-            peer_timeout: Duration::from_secs(10),
+            peer_timeout: Self::DEFAULT_PEER_TIMEOUT,
         }
     }
 }

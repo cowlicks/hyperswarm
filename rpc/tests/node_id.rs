@@ -131,6 +131,28 @@ async fn an_id_pinned_by_the_caller_is_left_alone() -> Result<()> {
     Ok(())
 }
 
+/// `bootstrap()` means "make sure I am on the network", so on a node that already is it
+/// has nothing to do and should say so at once.
+///
+/// The case that bites is a bootstrap node: it has no bootstrap nodes of its own, so it
+/// counts as bootstrapped from the moment it is built, and `RpcInner::bootstrap` then does
+/// nothing at all - leaving the caller waiting on a reply that nobody was ever going to
+/// send. It surfaces the moment anything brings a set of nodes up together without first
+/// working out which of them are already up.
+#[tokio::test]
+async fn bootstrapping_a_node_that_is_already_bootstrapped_returns() -> Result<()> {
+    let rpc = bootstrapper().await?;
+    assert!(rpc.is_bootstrapped(), "a bootstrapper starts bootstrapped");
+
+    // Twice, because the second call is the one with no work left to do either way.
+    for round in 0..2 {
+        tokio::time::timeout(std::time::Duration::from_secs(5), rpc.bootstrap())
+            .await
+            .unwrap_or_else(|_| panic!("bootstrap() round {round} never returned"))?;
+    }
+    Ok(())
+}
+
 /// The first node on a network has nobody to learn its address from, so it is told.
 async fn bootstrapper() -> Result<Rpc> {
     let rpc = Rpc::with_config(
