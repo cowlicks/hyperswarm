@@ -124,6 +124,9 @@ pub struct Dht {
 }
 
 impl Dht {
+    pub fn id(&self) -> IdBytes {
+        self.inner.read().unwrap().rpc.id()
+    }
     pub async fn with_config(config: DhtConfig) -> Result<Self> {
         Ok(Self {
             inner: Arc::new(RwLock::new(DhtInner::with_config(config).await?)),
