@@ -89,7 +89,7 @@ pub fn run_code(
     let script_path = working_dir.path().join(script_file_name);
     let script_file = File::create(&script_path)?;
 
-    write!(&script_file, "{}", &code_string)?;
+    write!(&script_file, "{}", code_string)?;
 
     let working_dir_path = working_dir.path().display().to_string();
     // copy dirs into working dir
@@ -244,7 +244,7 @@ impl Testnet {
     pub async fn new() -> Result<Self> {
         let mut repl = make_repl().await;
         let r = repl
-            .run_tcp(
+            .run(
                 "
 createTestnet = require('hyperdht/testnet.js');
 testnet = await createTestnet();
@@ -266,7 +266,7 @@ testnet = await createTestnet();
     pub async fn get_node_address(&mut self, node_index: usize) -> Result<SocketAddr> {
         Ok(self
             .repl
-            .json_run_tcp::<String, _>(format!(
+            .json_run::<String, _>(format!(
                 "
 bs_node = testnet.nodes[{node_index}]
 outputJson(`${{bs_node.host}}:${{bs_node.port}}`)
@@ -286,7 +286,7 @@ outputJson(`${{bs_node.host}}:${{bs_node.port}}`)
     pub async fn make_topic(&mut self, topic: &str) -> Result<[u8; 32]> {
         Ok(self
             .repl
-            .json_run_tcp(format!(
+            .json_run(format!(
                 "
 const b4a = require('b4a')
 topic = b4a.alloc(32);
@@ -302,7 +302,7 @@ outputJson([...topic])
         let node_index = "testnet.nodes.length - 1";
         let found_pk_js: Vec<Vec<u8>> = self
             .repl
-            .json_run_tcp(format!(
+            .json_run(format!(
                 "
 lookup_node = testnet.nodes[{node_index}];
 query = await lookup_node.lookup(topic);

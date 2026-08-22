@@ -33,7 +33,7 @@ fn sign_announce(
 
 async fn cmp_buf(repl: &mut Repl, rs_buf: &[u8], js_name: &str) -> Result<bool> {
     let res_vec = repl
-        .run_tcp(format!("output([...{js_name}].toString())"))
+        .run(format!("output([...{js_name}].toString())"))
         .await?;
     let resjs_buf_str = String::from_utf8_lossy(&res_vec);
     let rs_buf_str = buf_to_js_comparable_str(rs_buf);
@@ -50,7 +50,7 @@ fn buf_to_js_comparable_str(x: &[u8]) -> String {
 async fn compare_rs_namespace_values_to_js() -> crate::Result<()> {
     let mut repl = make_repl().await;
     let result = repl
-        .run_tcp(
+        .run(
             "
 const { NS } = require('hyperdht/lib/constants');
 namespace = NS
@@ -63,7 +63,7 @@ output([...namespace.ANNOUNCE].toString());
         String::from_utf8_lossy(&result)
     );
     let result = repl
-        .run_tcp("output([...namespace.UNANNOUNCE].toString())")
+        .run("output([...namespace.UNANNOUNCE].toString())")
         .await?;
     assert_eq!(
         buf_to_js_comparable_str(&namespace::UNANNOUNCE),
@@ -111,7 +111,7 @@ writeJson([...{name}])"
 #[tokio::test]
 async fn announce_signature_is_same() -> Result<()> {
     let mut repl = make_repl().await;
-    repl.run_tcp(KEYPAIR_JS).await?;
+    repl.run(KEYPAIR_JS).await?;
     let target: [u8; 32] = make_array(&mut repl, "target", "Buffer.alloc(32).fill(1)").await?;
     let token: [u8; 32] = make_array(&mut repl, "token", "Buffer.alloc(32).fill(2)").await?;
     let from_id: [u8; 32] = make_array(&mut repl, "from_id", "Buffer.alloc(32).fill(3)").await?;
@@ -153,7 +153,7 @@ async fn announce_signature_with_relays_is_same() -> Result<()> {
     let relay_addresses = vec![one, two, three];
 
     let mut repl = make_repl().await;
-    repl.run_tcp(KEYPAIR_JS).await?;
+    repl.run(KEYPAIR_JS).await?;
     let target: [u8; 32] = make_array(&mut repl, "target", "Buffer.alloc(32).fill(1)").await?;
     let token: [u8; 32] = make_array(&mut repl, "token", "Buffer.alloc(32).fill(2)").await?;
     let from_id: [u8; 32] = make_array(&mut repl, "from_id", "Buffer.alloc(32).fill(3)").await?;
@@ -197,7 +197,7 @@ write(stringify([...signature]))
 #[tokio::test]
 async fn test_sign_and_encode_announce() -> Result<()> {
     let mut repl = make_repl().await;
-    repl.run_tcp(KEYPAIR_JS).await?;
+    repl.run(KEYPAIR_JS).await?;
     let target: [u8; 32] = make_array(&mut repl, "target", "Buffer.alloc(32).fill(1)").await?;
     let token: [u8; 32] = make_array(&mut repl, "token", "Buffer.alloc(32).fill(2)").await?;
     let from_id: [u8; 32] = make_array(&mut repl, "from_id", "Buffer.alloc(32).fill(3)").await?;
@@ -245,7 +245,7 @@ async fn test_sign_and_encode_announce_with_relays() -> Result<()> {
     let relay_addresses = vec![one, two, three];
 
     let mut repl = make_repl().await;
-    repl.run_tcp(KEYPAIR_JS).await?;
+    repl.run(KEYPAIR_JS).await?;
     let target: [u8; 32] = make_array(&mut repl, "target", "Buffer.alloc(32).fill(1)").await?;
     let token: [u8; 32] = make_array(&mut repl, "token", "Buffer.alloc(32).fill(2)").await?;
     let from_id: [u8; 32] = make_array(&mut repl, "from_id", "Buffer.alloc(32).fill(3)").await?;
@@ -293,7 +293,7 @@ write(stringify([...c.encode(m.announce, ann)]))
 #[tokio::test]
 async fn announce_decode_is_same() -> Result<()> {
     let mut repl = make_repl().await;
-    repl.run_tcp(KEYPAIR_JS).await?;
+    repl.run(KEYPAIR_JS).await?;
     let target: [u8; 32] = make_array(&mut repl, "target", "Buffer.alloc(32).fill(1)").await?;
     let token: [u8; 32] = make_array(&mut repl, "token", "Buffer.alloc(32).fill(2)").await?;
     let from_id: [u8; 32] = make_array(&mut repl, "from_id", "Buffer.alloc(32).fill(3)").await?;
@@ -335,7 +335,7 @@ write(stringify([...encoded_announce]))
     let (ann, rest) = <AnnounceRequestValue as CompactEncoding>::decode(&rs_ann_enc)?;
     assert!(rest.is_empty());
 
-    repl.run_tcp(
+    repl.run(
         "
     decoded_announce = c.decode(m.announce, encoded_announce);
     ",
@@ -343,7 +343,7 @@ write(stringify([...encoded_announce]))
     .await?;
 
     let _x = repl
-        .run_tcp("output([...decoded_announce.signature].toString())")
+        .run("output([...decoded_announce.signature].toString())")
         .await?;
 
     assert!(cmp_buf(&mut repl, &*ann.signature, "decoded_announce.signature").await?);

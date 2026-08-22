@@ -122,7 +122,7 @@ async fn js_announces_rs_looksup() -> Result<()> {
     // with js announc on topic with the node's default keypair
     let _res = tn
         .repl
-        .run_tcp(
+        .run(
             "
 ann_node = testnet.nodes[testnet.nodes.length - 1];
 query = await ann_node.announce(topic, ann_node.defaultKeyPair);
@@ -143,7 +143,7 @@ await query.finished();
     // get the public key js announced with
     let js_pk: Vec<u8> = tn
         .repl
-        .json_run_tcp("outputJson([...ann_node.defaultKeyPair.publicKey])")
+        .json_run("outputJson([...ann_node.defaultKeyPair.publicKey])")
         .await?;
     // check js pub key matches the ones we found in rust
     assert!(!rs_lookup_keys.is_empty());
@@ -181,7 +181,7 @@ async fn dht_lookup() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
-        .json_run_tcp(
+        .json_run(
             "
 server_addr = deferred();
 
@@ -228,7 +228,7 @@ async fn js_server_listen_rs_find_peer() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
-        .json_run_tcp(
+        .json_run(
             "
 server_addr = deferred();
 server_rx_data = deferred();
@@ -272,7 +272,7 @@ async fn dht_peer_handshake() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
-        .json_run_tcp(
+        .json_run(
             "
 server_addr = deferred();
 server_rx_data = deferred();
@@ -309,7 +309,7 @@ outputJson([...pub_key]);
     assert_eq!(msg, "from rust");
 
     tn.repl
-        .run_tcp("await SOCKET.write(Buffer.from('from js'))")
+        .run("await SOCKET.write(Buffer.from('from js'))")
         .await?;
     let Some(CipherEvent::Message(rx_from_js)) = conn.next().await else {
         todo!()
@@ -326,7 +326,7 @@ async fn test_rs_connects_to_js() -> Result<()> {
     let (mut tn, dht) = adht_setup!();
     let pub_key: [u8; 32] = tn
         .repl
-        .json_run_tcp(
+        .json_run(
             "
 server_addr = deferred();
 server_rx_data = deferred();
@@ -358,7 +358,7 @@ outputJson([...pub_key]);
     assert_eq!(msg, "from rust");
 
     tn.repl
-        .run_tcp("await SOCKET.write(Buffer.from('from js'))")
+        .run("await SOCKET.write(Buffer.from('from js'))")
         .await?;
     let Some(CipherEvent::Message(rx_from_js)) = conn.next().await else {
         todo!()
@@ -376,7 +376,7 @@ async fn test_js_connects_to_rs() -> Result<()> {
     dht.bootstrap().await?;
 
     tn.repl
-        .run_tcp(
+        .run(
             "
 DHT = require('hyperdht');
 public_key = deferred();
@@ -411,7 +411,7 @@ secret_key.resolve([...kp.secretKey]);
     // wait for announce to happen
     wait!(500);
     tn.repl
-        .run_tcp(
+        .run(
             "
 client_node = testnet.nodes[testnet.nodes.length - 2];
 socket = client_node.connect(kp.publicKey);
@@ -622,7 +622,7 @@ async fn rsrsjs_relay_connection_flow() -> Result<()> {
 
     let pub_key: [u8; 32] = tn
         .repl
-        .json_run_tcp(
+        .json_run(
             "
 server_port = deferred();
 server_rx_data = deferred();
@@ -681,7 +681,7 @@ outputJson([...pub_key]);
     let server_rx_data: String = tn.repl.get_name("server_rx_data").await?;
     assert_eq!(server_rx_data.as_bytes(), b"hello from client");
     tn.repl
-        .run_tcp("await SOCKET.write(Buffer.from('from js'))")
+        .run("await SOCKET.write(Buffer.from('from js'))")
         .await?;
 
     let CipherEvent::Message(msg) = client_conn.next().await.unwrap() else {
@@ -702,7 +702,7 @@ async fn rsjsjs_relay_connection_flow() -> Result<()> {
 
     let pub_key: [u8; 32] = tn
         .repl
-        .json_run_tcp(
+        .json_run(
             "
 server_port = deferred();
 relay_addr = deferred();
@@ -763,7 +763,7 @@ outputJson([...pub_key]);
     let server_rx_data: String = tn.repl.get_name("server_rx_data").await?;
     assert_eq!(server_rx_data.as_bytes(), b"hello from client");
     tn.repl
-        .run_tcp("await SOCKET.write(Buffer.from('from js'))")
+        .run("await SOCKET.write(Buffer.from('from js'))")
         .await?;
 
     let CipherEvent::Message(msg) = client_conn.next().await.unwrap() else {

@@ -17,7 +17,7 @@ async fn test_async_rpc_request_ping() -> Result<()> {
     let (mut tn, rpc) = rpc_setup!();
     let _pub_key: Vec<u8> = tn
         .repl
-        .run_tcp(
+        .run(
             "
 server_addr = deferred();
 
@@ -35,12 +35,12 @@ outputJson([...pub_key]);
         .await?;
     let port: usize = tn
         .repl
-        .json_run_tcp("outputJson(server.dht.io.serverSocket._port)")
+        .json_run("outputJson(server.dht.io.serverSocket._port)")
         .await?;
     // For FIND_NODE test
     //let idbytes: Vec<u8> = tn
     //    .repl
-    //    .json_run_tcp("outputJson([...server.dht.id])")
+    //    .json_run("outputJson([...server.dht.id])")
     //    .await?;
     //let idbytes: [u8; 32] = idbytes.try_into().unwrap();
     //let command = commands::PING_NAT;
@@ -59,7 +59,7 @@ async fn test_async_rpc_query_find_node() -> Result<()> {
     let (mut tn, rpc) = rpc_setup!();
     let _pub_key: Vec<u8> = tn
         .repl
-        .run_tcp(
+        .run(
             "
 server_addr = deferred();
 
@@ -77,13 +77,10 @@ outputJson([...pub_key]);
         .await?;
     let _port: usize = tn
         .repl
-        .json_run_tcp("outputJson(server.dht.io.serverSocket._port)")
+        .json_run("outputJson(server.dht.io.serverSocket._port)")
         .await?;
     // For FIND_NODE test
-    let idbytes: Vec<u8> = tn
-        .repl
-        .json_run_tcp("outputJson([...server.dht.id])")
-        .await?;
+    let idbytes: Vec<u8> = tn.repl.json_run("outputJson([...server.dht.id])").await?;
     let idbytes: [u8; 32] = idbytes.try_into().unwrap();
     let command = hyperdht::commands::FIND_PEER;
     log();

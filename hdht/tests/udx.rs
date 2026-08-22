@@ -17,7 +17,7 @@ struct UdxStuff {
 /// js socket named 'a' and socket named 'jstream'
 async fn udx_setup(repl: &mut Repl) -> Result<UdxStuff> {
     let js_port = repl
-        .run_tcp(
+        .run(
             "
 UDX = require('udx-native')
 u = new UDX()
@@ -44,7 +44,7 @@ output(a.address().port.toString());
             js_id,
         )
         .unwrap();
-    repl.run_tcp(format!(
+    repl.run(format!(
         "
 jstream = u.createStream({js_id})
 jstream.connect(a, {rs_id}, {rs_port}, '127.0.0.1')
@@ -63,7 +63,7 @@ jstream.connect(a, {rs_id}, {rs_port}, '127.0.0.1')
 async fn udx_does_stream_get_consumed_by_socket() -> Result<()> {
     let mut repl = make_repl().await;
     let o = repl
-        .run_tcp(
+        .run(
             "
 UDX = require('udx-native')
 u = new UDX()
@@ -118,7 +118,7 @@ async fn udx_js_rs_socket() -> Result<()> {
     let UdxStuff {
         socket, rs_port, ..
     } = udx_setup(&mut repl).await?;
-    repl.run_tcp(format!("a.send(Buffer.from('hello'), {rs_port})"))
+    repl.run(format!("a.send(Buffer.from('hello'), {rs_port})"))
         .await?;
     let (_, msg) = socket.recv().await?;
     assert_eq!(msg, b"hello");
@@ -126,7 +126,7 @@ async fn udx_js_rs_socket() -> Result<()> {
     let c = socket.clone();
     assert_eq!(socket.local_addr()?.port(), c.local_addr()?.port());
 
-    repl.run_tcp(format!("a.send(Buffer.from('yo'), {rs_port})"))
+    repl.run(format!("a.send(Buffer.from('yo'), {rs_port})"))
         .await?;
     let (_, msg) = c.recv().await?;
     assert_eq!(msg, b"yo");
@@ -138,7 +138,7 @@ async fn udx_js_stream_to_rs_stream() -> Result<()> {
     let mut repl = make_repl().await;
     let UdxStuff { mut stream, .. } = udx_setup(&mut repl).await?;
 
-    repl.run_tcp(
+    repl.run(
         "
 jstream.write(Buffer.from('hello'))
 jstream.end()
@@ -160,7 +160,7 @@ async fn udx_rs_stream_to_js_stream() -> Result<()> {
     stream.write_all(b"hello").await?;
 
     let res = repl
-        .run_tcp(
+        .run(
             "
 got_msg = deferred();
 jstream.on('data', function (data) {
@@ -182,7 +182,7 @@ async fn udx_js_stream_rs_socket_ustrrsock() -> Result<()> {
     let mut repl = make_repl().await;
     let UdxStuff { socket, .. } = udx_setup(&mut repl).await?;
 
-    repl.run_tcp(
+    repl.run(
         "
 jstream.write(Buffer.from('hello'))
 jstream.end()
