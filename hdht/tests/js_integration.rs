@@ -83,7 +83,7 @@ createKeyPair = require('hyperdht/lib/crypto.js').createKeyPair;
 let seed = new Uint8Array(32);
 seed[0] = 1;
 keyPair = createKeyPair(seed)
-write(stringify([[...keyPair.publicKey], [...keyPair.secretKey]]))
+output(stringify([[...keyPair.publicKey], [...keyPair.secretKey]]))
 ",
         )
         .await?;
@@ -98,7 +98,7 @@ async fn make_array<const C: usize>(repl: &mut Repl, name: &str, def: &str) -> R
     let js_str = format!(
         "
 {name} = {def};
-writeJson([...{name}])"
+outputJson([...{name}])"
     );
     let vec: Vec<u8> = repl.json_run(js_str).await?;
     Ok(vec
@@ -134,7 +134,7 @@ ann = {
 }
 
 signature = await Persistent.signAnnounce(target, token, from_id, ann, keyPair)
-write(stringify([...signature]))
+output(stringify([...signature]))
 ",
         )
         .await?;
@@ -180,7 +180,7 @@ ann = {
 }
 
 signature = await Persistent.signAnnounce(target, token, from_id, ann, keyPair)
-write(stringify([...signature]))
+output(stringify([...signature]))
 ",
         )
         .await?;
@@ -220,7 +220,7 @@ ann = {
 }
 
 ann.signature = await Persistent.signAnnounce(target, token, from_id, ann, keyPair)
-write(stringify([...c.encode(m.announce, ann)]))
+output(stringify([...c.encode(m.announce, ann)]))
 ",
         )
         .await?;
@@ -272,7 +272,7 @@ ann = {
 }
 
 ann.signature = await Persistent.signAnnounce(target, token, from_id, ann, keyPair)
-write(stringify([...c.encode(m.announce, ann)]))
+output(stringify([...c.encode(m.announce, ann)]))
 ",
         )
         .await?;
@@ -317,7 +317,7 @@ ann = {
 
 ann.signature = await Persistent.signAnnounce(target, token, from_id, ann, keyPair)
 encoded_announce = c.encode(m.announce, ann);
-write(stringify([...encoded_announce]))
+output(stringify([...encoded_announce]))
 ",
         )
         .await?;
@@ -360,7 +360,7 @@ write(stringify([...encoded_announce]))
         .json_run(
             "
 verified = Persistent.prototype.verifyAnnounce({ value: encoded_announce, target, token }, from_id);
-writeJson(verified);
+outputJson(verified);
 ",
         )
         .await?;

@@ -18,7 +18,7 @@ async fn rust_discovers_js_server() -> Result<()> {
     // JS: Create a swarm and announce on a topic
     let topic = tn.make_topic("test-topic").await?;
     tn.repl
-        .run_tcp(format!(
+        .run(format!(
             r#"
 const Hyperswarm = require('hyperswarm');
 const swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
@@ -62,7 +62,7 @@ async fn js_discovers_rust_server() -> Result<()> {
 
     // JS: Use hyperdht directly to lookup peers (no connection attempt)
     tn.repl
-        .run_tcp(format!(
+        .run(format!(
             r#"
 const DHT = require('hyperdht');
 const dht = new DHT({{ bootstrap: ['{}'] }});
@@ -96,7 +96,7 @@ async fn js_discovers_rust_peers() -> Result<()> {
     // JS: Create a swarm and announce on a topic
     let topic = tn.make_topic("test-topic").await?;
     tn.repl
-        .run_tcp(format!(
+        .run(format!(
             r#"
 const Hyperswarm = require('hyperswarm');
 swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
@@ -122,7 +122,7 @@ await swarm.flush();  // Wait for announce to complete
     // Wait for discovery
     wait!(1000);
 
-    let n_peers: usize = tn.repl.json_run_tcp("outputJson(swarm.peers.size)").await?;
+    let n_peers: usize = tn.repl.json_run("outputJson(swarm.peers.size)").await?;
     assert!(dbg!(n_peers) > 0, "Should discover JS peer");
     Ok(())
 }
@@ -137,7 +137,7 @@ async fn rust_swarm_connects_to_js_swarm_exchanges_messages() -> Result<()> {
 
     // JS: Create a Hyperswarm server that announces on topic
     tn.repl
-        .run_tcp(format!(
+        .run(format!(
             r#"
 const Hyperswarm = require('hyperswarm');
 js_swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
@@ -180,7 +180,7 @@ await js_swarm.join(topic, {{ server: true, client: false }}).flushed();
 
     // JS sends to Rust
     tn.repl
-        .run_tcp("(await js_conn).write(Buffer.from('hello from js'))")
+        .run("(await js_conn).write(Buffer.from('hello from js'))")
         .await?;
 
     let Some(CipherEvent::Message(msg)) = rust_conn.next().await else {
@@ -209,7 +209,7 @@ async fn js_swarm_connects_to_rust_swarm_exchanges_messages() -> Result<()> {
 
     // JS: Create a hyperswarm client that joins topic
     tn.repl
-        .run_tcp(format!(
+        .run(format!(
             r#"
 const Hyperswarm = require('hyperswarm');
 js_swarm = new Hyperswarm({{ bootstrap: ['{}'] }});
@@ -244,7 +244,7 @@ js_swarm.join(topic, {{ server: false, client: true }});
 
     // JS sends to Rust
     tn.repl
-        .run_tcp("(await js_conn).write(Buffer.from('hello from js client'))")
+        .run("(await js_conn).write(Buffer.from('hello from js client'))")
         .await?;
 
     let Some(CipherEvent::Message(msg)) = rust_conn.next().await else {
