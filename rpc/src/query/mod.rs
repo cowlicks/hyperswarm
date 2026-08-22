@@ -455,7 +455,7 @@ fn poll_commit(commit: &mut Commit, query_id: QueryId) -> Poll<Option<CommitEven
         C::Auto(P::Sending(_)) => Poll::Pending,
         C::Custom(P::Sending((rx, _tids))) => {
             let mut out = vec![];
-            while let Some(e) = rx.try_next().ok().flatten() {
+            while let Ok(e) = rx.try_recv() {
                 out.push(e)
             }
             if !out.is_empty() {

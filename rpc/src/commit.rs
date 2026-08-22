@@ -95,7 +95,7 @@ impl Progress {
         let P::Sending((rx, _tids)) = self else {
             panic!("poll while not sending");
         };
-        rx.try_next().ok().flatten()
+        rx.try_recv().ok()
     }
     pub fn sent_tid(&mut self, tid: Tid) -> bool {
         match self {
