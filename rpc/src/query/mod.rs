@@ -288,38 +288,29 @@ impl Query {
         }
     }
 
-    // TODO use binary search ot insert
-    // TODO in theory, new elements distances get smaller. So maybe reverse the list.
+    /// Store the reply if it is closer than any of the [`K_VALUE`] closer nodes.
     #[instrument(skip_all)]
     fn maybe_update_closest_replies(&mut self, data: &Arc<InResponse>) -> Option<usize> {
         let reply_distance = self.peer_iter.target.distance(data.response.id?);
-        let replace = self.closest_replies.len() >= K_VALUE.into();
+        let pos = self
+            .closest_replies
+            .iter()
+            .position(|cur| {
+                reply_distance
+                    < self
+                        .peer_iter
+                        .target
+                        .distance(cur.response.id.expect("TODO this should be a PeerId"))
+            })
+            .unwrap_or(self.closest_replies.len());
 
-        if self.closest_replies.is_empty() {
-            self.closest_replies.insert(0, data.clone());
-            return Some(0);
-        }
-        for (i, cur) in self.closest_replies.iter().enumerate() {
-            if reply_distance
-                < self
-                    .peer_iter
-                    .target
-                    .distance(cur.response.id.expect("TODO this should be a PeerId"))
-            {
-                if replace {
-                    self.closest_replies[i] = data.clone();
-                } else {
-                    self.closest_replies.insert(i, data.clone());
-                }
-                trace!(
-                    closest_replies.len = self.closest_replies.len(),
-                    "Inerted response at [{i}]"
-                );
-                return Some(i);
-            }
-        }
-        trace!("Response farther than all current replies");
-        None
+        self.closest_replies.insert(pos, data.clone());
+        self.closest_replies.truncate(K_VALUE.into());
+        trace!(
+            closest_replies.len = self.closest_replies.len(),
+            "Inserted response at [{pos}]"
+        );
+        Some(pos)
     }
     pub fn command(&self) -> Command {
         self.cmd

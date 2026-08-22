@@ -42,9 +42,9 @@ pub use queue::{PeerQueue, QueuedPeer};
 pub use retry::{RetryEntry, RetryTimer};
 
 // Re-export from dependencies
+use dht_rpc::PeriodicJob;
 pub use dht_rpc::{DhtConfig, IdBytes as Topic};
 pub use hyperdht::{Connection, Keypair, PublicKey, adht::ConnectFuture};
-use dht_rpc::PeriodicJob;
 
 const DEFAULT_AUTO_CONNECT_JOB_INTERVAL: Duration = Duration::from_millis(100);
 // TODO when we need more options, turn JoinOpts into a struct and make this enum a field.
