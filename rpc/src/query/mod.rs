@@ -648,3 +648,156 @@ impl Display for QueryId {
         write!(f, "QueryId({})", self.0)
     }
 }
+
+#[cfg(test)]
+mod closest_replies_test {
+    //! `closest_replies` is the list a commit writes to, so a reply dropped here is a node
+    //! that answered and will still never be written to. It used to keep only the running
+    //! record minima - a reply survived solely if it was nearer than everything seen
+    //! before it - which left roughly `ln(n)` of `n` replies, and exactly one whenever the
+    //! nearest happened to answer first.
+
+    use super::*;
+    use crate::{
+        ExternalCommand, InternalCommand,
+        message::{ReplyMsgData, RequestMsgData},
+    };
+    use std::net::SocketAddr;
+
+    /// A reply from a node at distance `n` from the target, which is all zeroes here - so
+    /// the id doubles as the distance and smaller is nearer.
+    fn reply_at_distance(n: u8) -> Arc<InResponse> {
+        let mut id = [0u8; 32];
+        id[31] = n;
+        let peer = Peer::new(SocketAddr::from(([127, 0, 0, 1], 1000 + u16::from(n))));
+        Arc::new(InResponse {
+            request: Box::new(RequestMsgData {
+                tid: 0,
+                to: peer.clone(),
+                command: Command::Internal(InternalCommand::FindNode),
+                id: None,
+                token: None,
+                target: None,
+                value: None,
+            }),
+            response: ReplyMsgData {
+                tid: 0,
+                to: peer.clone(),
+                id: Some(id),
+                token: None,
+                closer_nodes: vec![],
+                error: 0,
+                value: None,
+            },
+            peer,
+            query_id: None,
+        })
+    }
+
+    fn query() -> Query {
+        Query::new(
+            QueryId(0),
+            Command::External(ExternalCommand(0)),
+            IdBytes::from([0u8; 32]),
+            IdBytes::from([0u8; 32]),
+            None,
+            vec![],
+            vec![],
+            Commit::No,
+            ClosestPeersIterConfig::default(),
+        )
+    }
+
+    /// The distances held, nearest first.
+    fn held(query: &Query) -> Vec<u8> {
+        query
+            .closest_replies
+            .iter()
+            .map(|reply| reply.response.id.unwrap()[31])
+            .collect()
+    }
+
+    fn k() -> u8 {
+        u8::try_from(usize::from(K_VALUE)).expect("K_VALUE fits a u8")
+    }
+
+    /// The order that used to break it: the nearest answers first, so every later reply is
+    /// farther than everything already held and used to be dropped on the floor. However
+    /// many nodes answered, one entry survived - and the commit wrote to one node.
+    #[test]
+    fn replies_arriving_nearest_first_are_all_kept() {
+        let mut query = query();
+        for n in 1..=5 {
+            query.maybe_update_closest_replies(&reply_at_distance(n));
+        }
+        assert_eq!(held(&query), vec![1, 2, 3, 4, 5]);
+    }
+
+    /// The mirror image, and the reason this went unnoticed: it passes with the bug too,
+    /// because every reply improves on the last.
+    #[test]
+    fn replies_arriving_farthest_first_are_all_kept() {
+        let mut query = query();
+        for n in (1..=5).rev() {
+            query.maybe_update_closest_replies(&reply_at_distance(n));
+        }
+        assert_eq!(held(&query), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn replies_are_held_nearest_first_whatever_order_they_arrive() {
+        let mut query = query();
+        for n in [3, 1, 5, 2, 4] {
+            query.maybe_update_closest_replies(&reply_at_distance(n));
+        }
+        assert_eq!(held(&query), vec![1, 2, 3, 4, 5]);
+    }
+
+    /// Past the cap it has to be the *farthest* entry that goes. Overwriting in place
+    /// discarded whichever entry sat where the new one belonged - which was nearer than
+    /// everything after it, so the near end eroded with every extra reply.
+    #[test]
+    fn past_the_cap_the_farthest_reply_is_the_one_dropped() {
+        let mut query = query();
+        // Fill with the k farthest, then offer the k nearest, nearest last.
+        for n in 1..=k() {
+            query.maybe_update_closest_replies(&reply_at_distance(k() + n));
+        }
+        assert_eq!(query.closest_replies.len(), usize::from(K_VALUE));
+
+        for n in (1..=k()).rev() {
+            query.maybe_update_closest_replies(&reply_at_distance(n));
+        }
+        assert_eq!(
+            query.closest_replies.len(),
+            usize::from(K_VALUE),
+            "the cap still holds"
+        );
+        assert_eq!(
+            held(&query),
+            (1..=k()).collect::<Vec<_>>(),
+            "the k nearest survived and the farthest were evicted"
+        );
+    }
+
+    #[test]
+    fn a_reply_farther_than_all_k_is_not_kept() {
+        let mut query = query();
+        for n in 1..=k() {
+            query.maybe_update_closest_replies(&reply_at_distance(n));
+        }
+        query.maybe_update_closest_replies(&reply_at_distance(k() + 1));
+        assert_eq!(held(&query), (1..=k()).collect::<Vec<_>>());
+    }
+
+    /// An ephemeral node claims no id, so there is no distance to sort it by and no id for
+    /// a commit to address. Not an error, just not a candidate.
+    #[test]
+    fn a_reply_without_an_id_is_not_a_candidate() {
+        let mut query = query();
+        let mut reply = reply_at_distance(1);
+        Arc::get_mut(&mut reply).unwrap().response.id = None;
+        assert_eq!(query.maybe_update_closest_replies(&reply), None);
+        assert!(query.closest_replies.is_empty());
+    }
+}
