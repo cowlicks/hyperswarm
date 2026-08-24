@@ -121,7 +121,7 @@ impl Stream for SwarmInner {
     type Item = Result<SwarmEvent>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        _ = Pin::new(&mut self.dht).poll_next(cx);
+        let _x = Pin::new(&mut self.dht).poll_next(cx);
 
         if self.waker.is_none() {
             self.waker = Some(cx.waker().clone());
