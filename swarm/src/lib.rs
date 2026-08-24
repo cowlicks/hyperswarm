@@ -111,6 +111,7 @@ struct SwarmInner {
     server: Option<Server>,
 }
 
+#[derive(Debug)]
 pub enum SwarmEvent {
     AnnounceComplete(Result<IdBytes>),
     LookupComplete(Result<IdBytes>),
