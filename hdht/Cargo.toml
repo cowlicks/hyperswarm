@@ -12,7 +12,7 @@ keywords = ["dat", "peer-to-peer", "networking"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
-dht-rpc = { path = "../rpc", version = "0.0.2" }
+dht-rpc = { path = "../rpc", version = "0.0.3" }
 rand = "0.7.3"
 arrayvec = "0.5.1"
 uint = "0.8.3"

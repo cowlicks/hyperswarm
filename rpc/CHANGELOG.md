@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Removed
+
+
+
+## [0.0.3] - 2026-08-24
+
+### Added
+
 - `DhtConfig::set_address` / `Rpc::set_address`, telling a node the address other nodes
   reach it on. A node's id is the hash of that address, and a bootstrap node has no peer to
   learn it from, so it has to be told - the equivalent of JS dht-rpc's
@@ -66,5 +76,6 @@ Initial release
 ### Removed
 
 <!-- next-url -->
-[Unreleased]: https://github.com/cowlicks/hyperswarm/compare/dht-rpc-v0.0.2...HEAD
+[Unreleased]: https://github.com/cowlicks/hyperswarm/compare/dht-rpc-v0.0.3...HEAD
+[0.0.3]: https://github.com/cowlicks/hyperswarm/compare/dht-rpc-v0.0.2...dht-rpc-v0.0.3
 [0.0.2]: https://github.com/cowlicks/hyperswarm/compare/dht-rpc-v0.1.0...dht-rpc-v0.0.2
