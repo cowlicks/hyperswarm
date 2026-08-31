@@ -8,8 +8,7 @@ use std::{
 use dht_rpc::IdBytes;
 use futures::{Sink, SinkExt, Stream, StreamExt, join};
 use hypercore_handshake::CipherEvent;
-use hyperdht::Connection;
-use hyperdht::adht::Dht;
+use hyperdht::{Connection, adht::Dht};
 use hyperswarm::{DhtConfig, Error, JoinOpts, Swarm, SwarmConfig};
 use test_utils::{Result, Testnet, rusty_nodejs_repl::wait};
 

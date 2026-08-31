@@ -30,6 +30,7 @@ use crate::cenc::HandshakeSteps;
 
 mod cenc;
 mod crypto;
+mod nat;
 mod next_router;
 mod persistent;
 mod server;

@@ -48,11 +48,7 @@ async fn a_joining_node_settles_on_the_id_of_its_own_address() -> Result<()> {
 #[tokio::test]
 async fn a_node_behind_a_nat_settles_on_its_external_address() -> Result<()> {
     let net = Network::new();
-    let nat = net.add_nat(
-        "203.0.113.1".parse()?,
-        NatConfig::port_restricted_cone(),
-        1,
-    );
+    let nat = net.add_nat("203.0.113.1".parse()?, NatConfig::port_restricted_cone(), 1);
 
     // The bootstrap node sits on the public side, reachable uninvited, and is told its own
     // address because it is first and has nobody to learn it from.

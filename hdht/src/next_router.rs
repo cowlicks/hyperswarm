@@ -19,7 +19,7 @@ use tracing::instrument;
 use crate::{
     Error, PeerHandshakeResponse,
     cenc::{
-        NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
+        Firewall, NoisePayload, NoisePayloadBuilder, PeerHandshakePayloadBuilder, UdxInfoBuilder,
     },
     next_router::connection::Connection,
 };
@@ -112,7 +112,7 @@ impl Router {
             Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
         let udx_local_id = self.id_maker.new_id();
         let np = NoisePayloadBuilder::default()
-            .firewall(firewall::OPEN)
+            .firewall(Firewall::Open)
             .addresses4(local_addrs4)
             .udx(Some(
                 UdxInfoBuilder::default()

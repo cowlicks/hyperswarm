@@ -496,16 +496,70 @@ macro_rules! else_zero {
     };
 }
 
-/// Values usued for firewall encoding
-#[expect(
-    unused,
-    reason = "all values are included for completeness. Not all are in use yet"
-)]
-pub mod firewall {
-    pub const UNKNOWN: usize = 0;
-    pub const OPEN: usize = 1;
-    pub const CONSISTENT: usize = 2;
-    pub const RANDOM: usize = 3;
+/// What a peer has worked out about its own NAT, and the value that decides which
+/// holepunching strategy a pair of peers can use.
+///
+/// The discriminants are wire values, but they are deliberately not ordered, so ask the
+/// predicates rather than comparing. JS writes `firewall >= FIREWALL.RANDOM`
+/// (`js/hyperdht/lib/holepuncher.js:99`), which reads as a ranking but only works because
+/// `RANDOM` happens to be the largest value: it means `== Random`. There is no axis along
+/// which these four actually sort. `Unknown` is the worst case, since a peer that has not
+/// classified itself cannot punch at all, yet it holds the lowest value; and
+/// [`Firewall::is_predictable`] groups `Open` with `Consistent`, which numeric order splits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Firewall {
+    /// Not enough samples yet. Such a peer cannot punch, because neither side can tell
+    /// which strategy would work.
+    #[default]
+    Unknown = 0,
+    /// Reachable without punching at all.
+    Open = 1,
+    /// Behind a NAT that gives out the same external port whoever it is talking to, so a
+    /// third party's report of that port is worth aiming at.
+    Consistent = 2,
+    /// Behind a NAT that picks a fresh external port per destination, so the port a third
+    /// party reports is not the port this peer's counterpart will see.
+    Random = 3,
+}
+
+impl Firewall {
+    /// Whether a third party's report of this peer's address can be aimed at directly.
+    ///
+    /// The strategy table never distinguishes `Open` from `Consistent`: an unfirewalled peer
+    /// is just the easiest kind of predictable one. `coerceFirewall`
+    /// (`js/hyperdht/lib/holepuncher.js:333`) collapses the two the same way.
+    pub fn is_predictable(self) -> bool {
+        matches!(self, Firewall::Open | Firewall::Consistent)
+    }
+}
+
+impl CompactEncoding for Firewall {
+    fn encoded_size(&self) -> Result<usize, EncodingError> {
+        Ok(1)
+    }
+
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
+        encode_usize_var(&(*self as usize), buffer)
+    }
+
+    fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let (discriminant, rest) = decode_usize(buffer)?;
+        let firewall = match discriminant {
+            0 => Firewall::Unknown,
+            1 => Firewall::Open,
+            2 => Firewall::Consistent,
+            3 => Firewall::Random,
+            x => {
+                return Err(EncodingError::invalid_data(&format!(
+                    "Invalid value [{x}] for decoding Firewall"
+                )));
+            }
+        };
+        Ok((firewall, rest))
+    }
 }
 
 // NB: in JS version, error & firewall are ncedoded as variable sized uints. But they add a
@@ -518,7 +572,7 @@ pub struct NoisePayload {
     pub version: usize,
     #[builder(default = NO_ERROR_NOISE_PAYLOAD_VALUE)]
     pub error: usize,
-    pub firewall: usize,
+    pub firewall: Firewall,
     #[builder(default = None)]
     pub holepunch: Option<HolepunchInfo>,
     pub addresses4: Option<Vec<SocketAddrV4>>,
@@ -612,7 +666,7 @@ impl CompactEncoding for NoisePayload {
                 rest,
             ));
         }
-        let ((flags, error, firewall), rest) = map_decode!(rest, [usize, usize, usize]);
+        let ((flags, error, firewall), rest) = map_decode!(rest, [usize, usize, Firewall]);
 
         let (holepunch, rest) = if flags & 1 << 0 != 0 {
             map_first!(HolepunchInfo::decode(rest)?, Some)

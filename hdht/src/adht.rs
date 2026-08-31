@@ -28,8 +28,8 @@ use tracing::{error, info, instrument, trace, warn};
 use crate::{
     DEFAULT_BOOTSTRAP, Error, Keypair, Result, Server,
     cenc::{
-        AnnounceRequestValue, HandshakeSteps, NoisePayload, NoisePayloadBuilder,
-        PeerHandshakePayload, PeerHandshakePayloadBuilder, UdxInfoBuilder, firewall,
+        AnnounceRequestValue, Firewall, HandshakeSteps, NoisePayload, NoisePayloadBuilder,
+        PeerHandshakePayload, PeerHandshakePayloadBuilder, UdxInfoBuilder,
     },
     commands,
     crypto::PublicKey,
@@ -666,7 +666,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             return Err(Error::Ipv6NotSupported);
         };
         let server_np = NoisePayloadBuilder::default()
-            .firewall(firewall::OPEN)
+            .firewall(Firewall::Open)
             .addresses4(Some(vec![local_addr]))
             .udx(Some(
                 UdxInfoBuilder::default()
@@ -927,7 +927,7 @@ target = [{target:?}], token = [{token:?}], value = [{value:?}]",
             Cipher::new_dht_init(None, &remote_public_key, &crate::namespace::PEER_HANDSHAKE)?;
         let udx_local_id = self.id_maker.new_id();
         let np = NoisePayloadBuilder::default()
-            .firewall(firewall::OPEN)
+            .firewall(Firewall::Open)
             .addresses4(Some(vec![addr]))
             .udx(Some(
                 UdxInfoBuilder::default()
