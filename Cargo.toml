@@ -7,3 +7,10 @@ members = [
   "test_utils"
 ]
 resolver = "2"
+
+# `udx::Transport` and `UdxSocket::send_with_ttl` are unreleased. Tests run DHT nodes on a
+# simulated network through the former, and holepunching will need the latter. Without the
+# patch, this workspace and `tapnat` would each resolve their own copy of `UdxSocket` and
+# the two would not be the same type. Drop it once udx is released.
+[patch.crates-io]
+udx = { path = "../async-udx" }

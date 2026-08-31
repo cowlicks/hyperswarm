@@ -40,6 +40,9 @@ features = ["rt", "net", "sync"]
 [dev-dependencies]
 pretty_env_logger = "0.4.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+# Simulated NATs, so tests can cover what a node does when its own address is not the
+# address the network reaches it on.
+tapnat = { path = "../../tapnat" }
 
 [dev-dependencies.rusty_nodejs_repl]
 version = "0.2.2"

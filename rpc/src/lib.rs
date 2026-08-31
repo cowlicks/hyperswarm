@@ -31,6 +31,10 @@ pub use crate::{
     message::{ReplyMsgData, RequestMsgData, RequestMsgDataInner},
     periodic_job::PeriodicJob,
     query::{ClosestPeersIterConfig, CommandQuery, CommandQueryResponse, QueryId, QueryResult},
+    // `DhtConfig::socket` is public, so the type it holds has to be nameable from outside:
+    // it is how a caller runs a node on a socket it built itself, such as one on a
+    // simulated network, rather than one bound by `DhtConfig::bind`.
+    stream::MessageDataStream,
 };
 
 #[cfg(test)]
@@ -80,7 +84,6 @@ use self::{
         Query, QueryConfig, QueryEvent, QueryPool, QueryPoolEvent, QueryStats, table::PeerState,
     },
     stateobserver::State,
-    stream::MessageDataStream,
 };
 pub use crate::io::Tid;
 

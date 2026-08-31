@@ -7,8 +7,10 @@
 
 use std::net::{SocketAddr, SocketAddrV4};
 
-use dht_rpc::{DhtConfig, IdBytes, Rpc, id_from_address};
+use dht_rpc::{DhtConfig, IdBytes, MessageDataStream, Rpc, id_from_address};
 use futures::StreamExt;
+use tapnat::{NatConfig, Network};
+use udx::UdxSocket;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -30,6 +32,71 @@ async fn a_joining_node_settles_on_the_id_of_its_own_address() -> Result<()> {
                 node.id(),
                 id_from_address(v4(node.local_addr()?)),
                 "the id a node settled on is not the hash of the address it is reachable on"
+            );
+            Ok::<_, Box<dyn std::error::Error>>(())
+        } => result?,
+    }
+    Ok(())
+}
+
+/// The same thing, with a NAT in the way, which is the case the test above cannot express.
+///
+/// On loopback the address a node bound and the address the network reaches it on are the
+/// same value, so that test passes whether or not a node really learns its address from
+/// what peers echo back. Put a NAT in between and the two diverge: the id has to follow the
+/// external address, and reading the socket would give the wrong answer.
+#[tokio::test]
+async fn a_node_behind_a_nat_settles_on_its_external_address() -> Result<()> {
+    let net = Network::new();
+    let nat = net.add_nat(
+        "203.0.113.1".parse()?,
+        NatConfig::port_restricted_cone(),
+        1,
+    );
+
+    // The bootstrap node sits on the public side, reachable uninvited, and is told its own
+    // address because it is first and has nobody to learn it from.
+    let bootstrap_addr = "198.51.100.10:49737".parse()?;
+    let mut config = DhtConfig::default()
+        .empty_bootstrap_nodes()
+        .set_address(v4(bootstrap_addr));
+    config.socket = Some(socket_on(net.bind(bootstrap_addr)?));
+    let bootstrap = Rpc::with_config(config).await?;
+
+    // The joining node sits behind the NAT, knowing only a private address.
+    let internal = "192.168.1.5:1234".parse()?;
+
+    tokio::select! {
+        _ = drive(bootstrap.clone()) => unreachable!("a node's event loop never finishes"),
+        result = async {
+            let mut config = DhtConfig::default().add_bootstrap_node(bootstrap_addr);
+            config.socket = Some(socket_on(net.bind_behind(nat, internal)?));
+            let node = Rpc::with_config(config).await?;
+            node.bootstrap().await?;
+
+            let external = net
+                .external_addr_for(nat, internal, bootstrap_addr)
+                .expect("reaching the bootstrap node should have opened a mapping");
+            assert_ne!(external, internal, "the NAT should have translated something");
+
+            assert_eq!(
+                node.local_addr()?,
+                internal,
+                "the node itself still only knows the address it bound"
+            );
+            assert!(
+                !node.is_ephemeral(),
+                "a node that has learned its address should stand behind an id"
+            );
+            assert_eq!(
+                node.id(),
+                id_from_address(v4(external)),
+                "the id should be the hash of the address peers actually reach it on"
+            );
+            assert_ne!(
+                node.id(),
+                id_from_address(v4(internal)),
+                "and not the hash of the private address it bound, which nobody can route to"
             );
             Ok::<_, Box<dyn std::error::Error>>(())
         } => result?,
@@ -181,6 +248,15 @@ async fn joined_node(bootstrap_addr: SocketAddr) -> Result<Rpc> {
     .await?;
     rpc.bootstrap().await?;
     Ok(rpc)
+}
+
+/// The equivalent of `DhtConfig::bind`, but on a simulated network instead of the host's.
+///
+/// Everything downstream of this is unchanged and unaware: the node runs its ordinary
+/// event loop, over an ordinary `UdxSocket`, which happens to be reading and writing
+/// datagrams that never leave the process.
+fn socket_on(transport: tapnat::HostTransport) -> MessageDataStream {
+    MessageDataStream::new(UdxSocket::with_transport(transport))
 }
 
 fn v4(addr: SocketAddr) -> SocketAddrV4 {
