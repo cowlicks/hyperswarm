@@ -18,6 +18,32 @@ const NO_ERROR_NOISE_PAYLOAD_VALUE: usize = 0;
 
 use crate::crypto::{PublicKey, Signature2};
 
+// `macro_rules!` are textually scoped, so these sit at the top: anything defined below may
+// use them, which keeps types free to be ordered by what they mean rather than by which
+// helpers they happen to need.
+
+macro_rules! ternary {
+    ($cond:expr,  $if_true:expr, $if_false:expr) => {
+        if $cond { $if_true } else { $if_false }
+    };
+    (let Some($name:ident) = $opt:expr, $if_true:expr, $if_false:expr) => {
+        if let Some($name) = $opt {
+            $if_true
+        } else {
+            $if_false
+        }
+    };
+}
+
+macro_rules! else_zero {
+    ($cond:expr,  $if_true:expr) => {
+        ternary!($cond, $if_true, 0)
+    };
+    (let Some($name:ident) = $opt:expr, $if_true:expr) => {
+        ternary!(let Some($name) = $opt, $if_true, 0)
+    };
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Peer {
     pub public_key: PublicKey,
@@ -291,6 +317,139 @@ impl CompactEncoding for Holepunch {
     }
 }
 
+/// The negotiation that rides inside [`Holepunch::payload`], encrypted end to end.
+///
+/// [`Holepunch`] itself is the envelope, and relays read it to know where to forward. This is
+/// the part only the two peers can read, which is why the firewall verdict and the addresses
+/// to aim at live here: a relay has no business learning either, and a peer must not be able
+/// to talk a third party into punching somewhere on its behalf.
+///
+/// Port of `holepunchPayload` in `js/hyperdht/lib/messages.js:253`.
+// Nothing constructs one until the relay path and the puncher land. `allow` rather than
+// `expect` for the same reason as `nat.rs`: the round-trip tests below make these live under
+// `--all-targets` but not under a plain lib build, so an expectation would be unfulfilled in
+// one of the two configurations.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_builder::Builder)]
+#[builder(pattern = "owned")]
+pub struct HolepunchPayload {
+    /// Nonzero means the sender is abandoning the punch, and says why.
+    #[builder(default = 0)]
+    pub error: usize,
+    /// What the sender worked out about its own NAT. This is the value the strategy table in
+    /// `js/hyperdht/lib/holepuncher.js:188` dispatches on, one half from each peer.
+    #[builder(default = Firewall::Unknown)]
+    pub firewall: Firewall,
+    /// Which round of the punch this is. Rounds let both sides stay in step, since a punch
+    /// only works if the two bursts overlap in time.
+    #[builder(default = 0)]
+    pub round: usize,
+    /// The sender already has a working connection, so everyone can stop.
+    #[builder(default = false)]
+    pub connected: bool,
+    /// The sender is punching now, which is the cue for the receiver to punch back.
+    #[builder(default = false)]
+    pub punching: bool,
+    /// Where the sender believes it can be reached.
+    ///
+    /// For a [`Firewall::Random`] peer these carry a host and a zero port, because there is no
+    /// port worth naming. Note the flag is set even for an empty list, matching JS, which
+    /// tests only `m.addresses` and not its length.
+    #[builder(default = None)]
+    pub addresses: Option<Vec<SocketAddrV4>>,
+    /// Where the sender is seeing the *receiver*, which is how a peer behind a NAT learns the
+    /// address it has to tell everyone else about.
+    #[builder(default = None)]
+    pub remote_address: Option<SocketAddrV4>,
+    #[builder(default = None)]
+    pub token: Option<[u8; 32]>,
+    #[builder(default = None)]
+    pub remote_token: Option<[u8; 32]>,
+}
+
+impl CompactEncoding for HolepunchPayload {
+    fn encoded_size(&self) -> Result<usize, EncodingError> {
+        // JS reserves one byte each for these four rather than sizing the varints, and
+        // over-reserving would desync `encode`, so copy it exactly. Same choice as
+        // `NoisePayload`, and it breaks identically if any of them ever exceeds 127.
+        Ok(1 + 1 + 1 + 1 /* flags + error + firewall + round */
+            + else_zero!(let Some(x) = &self.addresses, x.encoded_size()?)
+            + else_zero!(self.remote_address.is_some(), SOCKET_ADDR_V4_ENCODED_SIZE)
+            + else_zero!(self.token.is_some(), 32)
+            + else_zero!(self.remote_token.is_some(), 32))
+    }
+
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> Result<&'a mut [u8], EncodingError> {
+        let mut flags = 0_usize;
+        flags |= else_zero!(self.connected, 1 << 0);
+        flags |= else_zero!(self.punching, 1 << 1);
+        flags |= else_zero!(self.addresses.is_some(), 1 << 2);
+        flags |= else_zero!(self.remote_address.is_some(), 1 << 3);
+        flags |= else_zero!(self.token.is_some(), 1 << 4);
+        flags |= else_zero!(self.remote_token.is_some(), 1 << 5);
+
+        let mut rest = map_encode!(buffer, flags, self.error, self.firewall, self.round);
+
+        if let Some(addrs) = &self.addresses {
+            rest = addrs.encode(rest)?;
+        }
+        if let Some(addr) = &self.remote_address {
+            rest = addr.encode(rest)?;
+        }
+        if let Some(token) = &self.token {
+            rest = write_array(token, rest)?;
+        }
+        if let Some(token) = &self.remote_token {
+            rest = write_array(token, rest)?;
+        }
+        Ok(rest)
+    }
+
+    fn decode(buffer: &[u8]) -> Result<(Self, &[u8]), EncodingError>
+    where
+        Self: Sized,
+    {
+        let ((flags, error, firewall, round), rest) =
+            map_decode!(buffer, [usize, usize, Firewall, usize]);
+
+        let (addresses, rest) = if flags & (1 << 2) != 0 {
+            map_first!(<Vec<SocketAddrV4> as CompactEncoding>::decode(rest)?, Some)
+        } else {
+            (None, rest)
+        };
+        let (remote_address, rest) = if flags & (1 << 3) != 0 {
+            map_first!(SocketAddrV4::decode(rest)?, Some)
+        } else {
+            (None, rest)
+        };
+        let (token, rest) = if flags & (1 << 4) != 0 {
+            map_first!(take_array::<32>(rest)?, Some)
+        } else {
+            (None, rest)
+        };
+        let (remote_token, rest) = if flags & (1 << 5) != 0 {
+            map_first!(take_array::<32>(rest)?, Some)
+        } else {
+            (None, rest)
+        };
+
+        Ok((
+            Self {
+                error,
+                firewall,
+                round,
+                connected: flags & (1 << 0) != 0,
+                punching: flags & (1 << 1) != 0,
+                addresses,
+                remote_address,
+                token,
+                remote_token,
+            },
+            rest,
+        ))
+    }
+}
+
 #[derive(Debug)]
 pub struct HolepunchInfo {
     id: usize,
@@ -472,28 +631,6 @@ impl CompactEncoding for RelayThroughInfo {
             rest,
         ))
     }
-}
-
-macro_rules! ternary {
-    ($cond:expr,  $if_true:expr, $if_false:expr) => {
-        if $cond { $if_true } else { $if_false }
-    };
-    (let Some($name:ident) = $opt:expr, $if_true:expr, $if_false:expr) => {
-        if let Some($name) = $opt {
-            $if_true
-        } else {
-            $if_false
-        }
-    };
-}
-
-macro_rules! else_zero {
-    ($cond:expr,  $if_true:expr) => {
-        ternary!($cond, $if_true, 0)
-    };
-    (let Some($name:ident) = $opt:expr, $if_true:expr) => {
-        ternary!(let Some($name) = $opt, $if_true, 0)
-    };
 }
 
 /// What a peer has worked out about its own NAT, and the value that decides which
@@ -722,6 +859,94 @@ mod test {
     use super::*;
     use compact_encoding::EncodingError;
     use dht_rpc::IdBytes;
+
+    /// Encode, compare against bytes the real JS encoder produced, then decode back.
+    ///
+    /// The golden bytes are what make this worth more than a round trip: a Rust-only round
+    /// trip passes just as happily when both directions are wrong in the same way.
+    /// Regenerate with `node -e` against `test_utils/js/hyperdht`, using
+    /// `c.encode(messages.holepunchPayload, ..)`.
+    fn matches_js(value: &HolepunchPayload, expected: &[u8]) -> Result<(), EncodingError> {
+        let mut buf = vec![0u8; value.encoded_size()?];
+        let rest = value.encode(&mut buf)?;
+        assert!(
+            rest.is_empty(),
+            "encoded_size over-reserved by {} bytes",
+            rest.len()
+        );
+        assert_eq!(buf, expected, "encoded bytes differ from the JS encoder");
+
+        let (decoded, rest) = HolepunchPayload::decode(&buf)?;
+        assert!(rest.is_empty(), "decode left {} bytes unread", rest.len());
+        assert_eq!(&decoded, value, "did not survive a round trip");
+        Ok(())
+    }
+
+    fn v4(s: &str) -> SocketAddrV4 {
+        s.parse().expect("test address should parse")
+    }
+
+    #[test]
+    fn holepunch_payload_with_every_field_set() -> Result<(), EncodingError> {
+        matches_js(
+            &HolepunchPayload {
+                error: 3,
+                firewall: Firewall::Consistent,
+                round: 7,
+                connected: true,
+                punching: true,
+                addresses: Some(vec![v4("192.168.1.2:1234"), v4("10.11.12.13:6547")]),
+                remote_address: Some(v4("127.0.0.1:80")),
+                token: Some([1u8; 32]),
+                remote_token: Some([2u8; 32]),
+            },
+            &[
+                63, 3, 2, 7, 2, 192, 168, 1, 2, 210, 4, 10, 11, 12, 13, 147, 25, 127, 0, 0, 1, 80,
+                0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                2, 2, 2, 2, 2, 2, 2, 2, 2,
+            ],
+        )
+    }
+
+    /// Every optional field absent. Four bytes, one each for flags, error, firewall and round.
+    #[test]
+    fn holepunch_payload_with_nothing_set() -> Result<(), EncodingError> {
+        matches_js(
+            &HolepunchPayloadBuilder::default().build().unwrap(),
+            &[0, 0, 0, 0],
+        )
+    }
+
+    /// An empty address list is not the same as no address list, and JS agrees: it sets the
+    /// flag on `m.addresses` alone, without testing its length, unlike `noisePayload` right
+    /// above it. So the flag byte is 4 and a zero-length array follows.
+    #[test]
+    fn holepunch_payload_keeps_an_empty_address_list() -> Result<(), EncodingError> {
+        matches_js(
+            &HolepunchPayloadBuilder::default()
+                .addresses(Some(vec![]))
+                .build()
+                .unwrap(),
+            &[4, 0, 0, 0, 0],
+        )
+    }
+
+    /// What a peer behind a random NAT actually sends: its host with a zero port, because it
+    /// has no port worth naming.
+    #[test]
+    fn holepunch_payload_from_a_random_nat() -> Result<(), EncodingError> {
+        matches_js(
+            &HolepunchPayloadBuilder::default()
+                .firewall(Firewall::Random)
+                .round(1)
+                .punching(true)
+                .addresses(Some(vec![v4("203.0.113.1:0")]))
+                .build()
+                .unwrap(),
+            &[6, 0, 3, 1, 1, 203, 0, 113, 1, 0, 0],
+        )
+    }
 
     #[test]
     fn socket_addr_enc_dec() -> Result<(), EncodingError> {
