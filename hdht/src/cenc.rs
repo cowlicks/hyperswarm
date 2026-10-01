@@ -18,10 +18,6 @@ const NO_ERROR_NOISE_PAYLOAD_VALUE: usize = 0;
 
 use crate::crypto::{PublicKey, Signature2};
 
-// `macro_rules!` are textually scoped, so these sit at the top: anything defined below may
-// use them, which keeps types free to be ordered by what they mean rather than by which
-// helpers they happen to need.
-
 macro_rules! ternary {
     ($cond:expr,  $if_true:expr, $if_false:expr) => {
         if $cond { $if_true } else { $if_false }
@@ -263,7 +259,11 @@ impl CompactEncoding for PeerHandshakePayload {
 }
 
 #[derive(Debug)]
-#[expect(unused, reason = "will be used when we implement holepunching")]
+// Nothing constructs one until the relay path lands. `allow` rather than `expect` for the
+// same reason as `HolepunchPayload` below: the round-trip test makes these live under
+// `--all-targets` but not under a plain lib build, so an expectation would be unfulfilled in
+// one of the two configurations.
+#[expect(dead_code)]
 pub struct Holepunch {
     mode: HandshakeSteps,
     id: usize,
@@ -275,6 +275,7 @@ impl CompactEncoding for Holepunch {
     fn encoded_size(&self) -> Result<usize, EncodingError> {
         Ok(
             1 /* flags */ + self.mode.encoded_size()? + encoded_size_usize(self.id)
+             + self.payload.encoded_size()?
              + (if self.peer_address.is_some() { SOCKET_ADDR_V4_ENCODED_SIZE } else { 0 }),
         )
     }
@@ -948,6 +949,62 @@ mod test {
         )
     }
 
+    /// `encoded_size` has to account for the payload, which is the only variable-length field
+    /// in the envelope. It did not, so `encode` ran off the end of the buffer it was handed.
+    /// The empty-payload case still passes without the fix, because the one byte JS reserves
+    /// for the flags happens to cover the payload's length varint, so both are exercised here.
+    #[test]
+    fn holepunch_envelope_round_trip() -> Result<(), EncodingError> {
+        for (name, value) in [
+            (
+                "every field set",
+                Holepunch {
+                    mode: HandshakeSteps::FromRelay,
+                    id: 42,
+                    payload: vec![1, 2, 3],
+                    peer_address: Some(v4("192.168.1.2:1234")),
+                },
+            ),
+            (
+                "no peer address",
+                Holepunch {
+                    mode: HandshakeSteps::Reply,
+                    id: 300,
+                    payload: vec![9; 200],
+                    peer_address: None,
+                },
+            ),
+            (
+                "nothing set",
+                Holepunch {
+                    mode: HandshakeSteps::FromClient,
+                    id: 0,
+                    payload: vec![],
+                    peer_address: None,
+                },
+            ),
+        ] {
+            let mut buf = vec![0u8; value.encoded_size()?];
+            let rest = value.encode(&mut buf)?;
+            assert!(
+                rest.is_empty(),
+                "{name}: encoded_size over-reserved by {} bytes",
+                rest.len()
+            );
+
+            let (decoded, rest) = Holepunch::decode(&buf)?;
+            assert!(rest.is_empty(), "{name}: decode left {} bytes", rest.len());
+            assert_eq!(decoded.mode, value.mode, "{name}: mode");
+            assert_eq!(decoded.id, value.id, "{name}: id");
+            assert_eq!(decoded.payload, value.payload, "{name}: payload");
+            assert_eq!(
+                decoded.peer_address, value.peer_address,
+                "{name}: peer_address"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn socket_addr_enc_dec() -> Result<(), EncodingError> {
         let sa: SocketAddrV4 = "192.168.1.2:1234".parse().unwrap();
@@ -1020,7 +1077,7 @@ mod test {
         let mut peer_buff = vec![0u8; CompactEncoding::encoded_size(&announce.peer).unwrap()];
         announce.peer.encode(&mut peer_buff).unwrap();
 
-        println!("rsep = {:?}", &peer_buff);
+        println!("rsep = {:?}", peer_buff);
         let signable = make_signable_announce_or_unannounce(
             target,
             &TOKEN,
