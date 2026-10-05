@@ -529,6 +529,28 @@ impl Swarm {
     }
 }
 
+impl std::fmt::Debug for Swarm {
+    /// Takes the inner read lock, and reports nothing if it is already held, so that
+    /// formatting a `Swarm` can never block or deadlock a task that is mid-poll.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("Swarm");
+        match self.inner.try_read() {
+            Ok(inner) => s
+                .field("topics", &inner.discoveries.len())
+                .field("connections", &inner.connections.len())
+                .field("peers", &inner.peers.len()),
+            Err(_) => s.field("locked", &true),
+        }
+        .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ConnectionStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionStream").finish_non_exhaustive()
+    }
+}
+
 impl Stream for Swarm {
     type Item = Result<SwarmEvent>;
 
